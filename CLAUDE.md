@@ -1,0 +1,128 @@
+﻿# CLAUDE.md
+
+Guidance for Claude Code (and other agents) working in this repository. Read this first.
+
+## What Ion Drive Is
+
+Ion Drive is an open-source, **self-hosted platform for accelerated custom business software development** — think "self-hosted Firebase meets an infinitely configurable ERP/headless CMS." Users define **data objects** (tables), relationships, and logic **at runtime**, and the platform automatically exposes them as REST, GraphQL, and MCP APIs. The primary audience is **backend developers building with agentic LLMs**: the platform is designed to minimize boilerplate and context needed for AI-driven development.
+
+The core product is the **self-hosted OSS version**. A hosted variant will exist later but is not the focus.
+
+## Current Status
+
+- **License:** Apache 2.0 (core/cli/client/admin); MIT (blocks). **Org/naming:** GitHub `ionshift/ion-drive`; npm scope `@ionshift/*` (e.g. `@ionshift/ion-drive-core`). Trademarks: IonShift, IonShift Labs, IonShift Technologies LLC, Ion Drive — see `NOTICE`. Multi-tenancy: **database-per-tenant** by default (schema-per-tenant is a planned lighter option).
+- **Phase 0 (Scaffolding): done.** Monorepo, tooling, Docker, configs all in place.
+- **Phase 1 (Schema Engine): done and wired.** `SchemaManager` and friends work; `/api/v1/schema` routes are live in `server.ts`.
+- **Phase 2 (Dynamic API): DONE and wired.** All four surfaces are registered in `server.ts` and verified end-to-end against Postgres:
+  - **REST** — `api/data-routes.ts`, parameterized catch-all (`/api/v1/data/:object[/:id|/bulk]`); new objects are live immediately, no restart.
+  - **OpenAPI** — `api/openapi-routes.ts` at `/api/v1/openapi.json`, generated from the live registry.
+  - **GraphQL** — `api/graphql/*` (graphql-js + graphql-yoga, **not Pothos** — see ADR-009) at `/api/v1/graphql`, schema cached by registry version.
+  - **MCP** — `mcp/plugin.ts` serves the existing `mcp/server.ts` over stateless Streamable HTTP at `/api/v1/mcp`.
+  - All three data surfaces (REST/GraphQL/MCP) go through the shared `DataService`. 19 unit tests (`*.test.ts`) cover query-parsing, REST routing, and GraphQL build/execution.
+- **Phase 4 (Auth, RBAC, Secrets): DONE and verified end-to-end.** See ADR-010.
+  - **Auth** — `auth/` behind a pluggable `AuthProvider` interface; **Better Auth** is the default (`better-auth-adapter.ts`, email/password, `/api/auth/*`). Its tables are created at boot via its programmatic migration runner. First user to sign up auto-becomes admin.
+  - **Sessions/API keys** — `session-middleware.ts` resolves `request.auth` (API-key-first via `X-API-Key`/`Bearer iond_…`, then session). `api-key-manager.ts` stores SHA-256 hashes in `_ion_api_keys`.
+  - **RBAC** — `auth/rbac/` roles (`_ion_roles`) with embedded permission grants (resource × action, `manage`/`*` supersets); `permission-engine.ts` evaluates; enforcement is **opt-in via `ION_REQUIRE_AUTH`** (`enforcement.ts` global hook + `requirePermission` guards). Seeds admin/editor/viewer.
+  - **Secrets/config** — `config/` AES-256-GCM `Encryptor`, `SecretsManager` (`_ion_secrets`, values never listed), `ConfigStore` (`_ion_config`).
+  - **Admin API** — `api/admin-routes.ts`: `/api/v1/{me,roles,users,secrets,config,api-keys}`.
+  - Deps: `better-auth` bundles its own Zod 4 + Kysely 0.28; our code stays on Zod 3; **core Kysely was bumped to 0.28** to satisfy the peer. MCP SDK already supports Zod 3||4.
+- **Phase 3 (Admin console): DONE and browser-verified** (signup→admin, dashboard, object designer creating a real object all confirmed live). React 19 + Vite SPA in `packages/admin`, TanStack Router/Query, tailwind v4 tokens wired via `@theme`. Pages: Login (signup/signin), Dashboard, Objects list + designer, functional **DataGrid** (browse/create/edit/delete records), Users (role assignment), Roles (permission editor), Secrets, Settings (API keys). Talks to the backend via `lib/api.ts` (cookie auth) through the Vite `/api` proxy. The Airtable-grade grid is deliberately deferred — the current grid is functional, not fancy.
+- **Phase 5 (Observability & Scheduled Tasks): DONE and verified end-to-end.** See ADR-012.
+  - **Telemetry** — `telemetry/` behind `startTelemetry(config, log)` (OpenTelemetry `NodeSDK`). **Manual instrumentation** (no auto-instrumentation packages): `installRequestTracing(server)` adds global Fastify hooks for per-request spans + `ion.http.server.*` metrics; `metrics.ts` records custom `ion.schema.changes`/`ion.task.*`; `log-bridge.ts` is a pino→OTel logs stream; `span-attributes.ts` holds the `ion.*` attribute keys + surface classifier. Traces/logs export over OTLP/HTTP (gated by `ION_OTEL_ENABLED`); metrics are served **in-process** at **`GET /metrics`** (Prometheus text, on by default via `ION_METRICS_ENABLED`) and/or pushed over OTLP. All `record*` helpers are no-ops when the SDK is off.
+  - **Tasks** — `tasks/` engine: `TaskStore` (`_ion_tasks` + `_ion_task_runs`), `TaskRunner` with a handler registry (built-ins `noop`/`log`/`http_request`; extensible) that runs under an abort/timeout and records each run + span + metric, and a **croner**-based `TaskScheduler` (`protect` prevents overlap; validates cron eagerly). The `TaskEngine` facade validates definitions and reloads the scheduler on every mutation. REST at **`/api/v1/tasks`** (`api/task-routes.ts`, RBAC resource `tasks`, self-guarding like admin routes); gated by `ION_TASKS_ENABLED` (default on). In-process/single-node — no cross-replica locking yet.
+  - Deps added: `@opentelemetry/*` (sdk-node, OTLP + Prometheus exporters, sdk-metrics/logs, api, api-logs, resources, semantic-conventions) and `croner`. 12 new unit tests; 20-check live smoke verified against Postgres.
+- **Phase 6 (Building Blocks): DONE and verified end-to-end.** See ADR-013.
+  - **Block runtime** — `blocks/` behind a `BlockEngine` facade: a Zod-validated `block-manifest` parser, a step-wise `BlockInstaller` (objects → relationships → seed → tasks → roles; each idempotent-friendly — existing items are skipped and reported), and a `_ion_blocks` ledger (`BlockStore`) that records the manifest snapshot + created objects for clean uninstall. A block is a **manifest the server applies through its own APIs** (`SchemaManager`/`DataService`/`TaskEngine`/`RoleManager`), so REST/GraphQL/MCP light up for its objects with no extra wiring.
+  - **REST** — `api/block-routes.ts` at **`/api/v1/blocks`** (list/get/`preview`/`install`/uninstall), RBAC resource `blocks`, self-guarding like admin/task routes; gated by `ION_BLOCKS_ENABLED` (default on). Install supports `?dryRun`/`?force`; uninstall supports `?dropData`. Dependency + data-loss guards are enforced **server-side** (not just the CLI).
+  - **Content-agnostic engine** — core bundles **no** catalog; it installs whatever validated manifest it's handed. This keeps the package graph acyclic (`core → blocks → cli`) and lets remote/self-hosted registries work by URL.
+  - **Official catalog** — `packages/blocks` (`@ionshift/ion-drive-blocks`): `crm`, `invoicing` (depends on `crm`), `communications`. Manifests are authored in TypeScript (`satisfies BlockManifestInput`, compiler-checked); `pnpm --filter @ionshift/ion-drive-blocks emit` writes the distributable `block.json` files (drift-guarded by a test). Depends on core for **types only**.
+  - **CLI** — `packages/cli` is now **fully implemented** (no longer a stub): `init`/`list`/`add`/`remove`/`dev`, with client-side recursive dependency resolution (topological sort, prune already-installed) and **space-themed** output (`ui.ts`: nebula-gradient banner, cosmic palette, moon-phase orbit spinner, rounded panels, aligned tables — chalk-only). It resolves manifests from the bundled catalog (offline) or a remote URL and POSTs them to a running server.
+  - Incidental platform fix: `renderDefaultExpression` in `ddl-executor.ts` now quotes literal column defaults (so an enum default like `lead` no longer errors as a column reference); passes SQL expressions/keywords/numbers/casts through.
+  - Deps added: `@ionshift/ion-drive-blocks` (new workspace package); CLI already had `commander`/`chalk`/`ora`/`prompts`. 25 new unit tests (core 56 total; blocks 7; cli 4) + a full live lifecycle smoke (install → cross-block dep resolution → guarded uninstall) against Postgres.
+- **Phase 7 (Polish, Docs & Launch Prep): DONE and verified end-to-end.** See ADR-014.
+  - **Query language:** filter operators are **case-insensitive + aliased** (`name[NEQ]=John`, `age[GT]=30`, plus `ne`/`!=`/`<>`/`>`/`>=`/`<`/`<=`/`contains`→ilike/`notin`→nin/`null`/`notnull`); a bare `field=value` still means `eq`. A free-text **`search`** param (alias `q`) matches `ILIKE '%term%'` (escaped) across the object's **text-like columns** (categories `text` + `enum`), AND-ed with filters. **Pagination** supports both `page`/`pageSize` **and** offset-based `limit`/`offset` (offset-based wins; reported page/pageSize derived — `DataService.resolveWindow`). Filters+search go through one shared `DataService.applyConditions` used by both the data and count queries, so totals include search. Reflected on **all** surfaces: REST (`?search=`/`?q=` + operators + `limit`/`offset`), GraphQL (`search`/`limit`/`offset` args), MCP (`query_data`), OpenAPI. `in`/`nin` coerce list items (`age[in]=18,21` → numbers).
+  - **Client SDK** — `packages/client` (`@ionshift/ion-drive-client`): a **zero-runtime-dependency** package (global `fetch`; Node + browser), modeled on **Supabase's postgrest-js** (researched vs Firestore). Pure `QueryBuilder` (`.eq/.neq/.gt/…/.in/.nin/.is/.not/.match/.search/.order/.sort/.limit/.offset/.range/.page/.pageSize/.expand/.select` → `URLSearchParams`) + standalone `query()`. `IonDriveClient.from(object)` → `Resource<T>`: `.select(cols?)`/`.query()` begin a read; `.insert`(single→row / array→bulk)/`.update`/`.delete`/`.get`/`.bulkDelete` for writes. Reads use a bound `ResourceQuery` that is **thenable** — `await`-ing the chain executes it (no `.list()` needed; `.list()/.all()/.first()/.single()/.maybeSingle()` also available). Unwraps envelopes, 404→null/false, **throws** typed `IonDriveError` (not Supabase's `{data,error}` — matches our throwing model). Types re-declared (not imported from core). Leaf of the package graph. 28 unit tests.
+  - **CLI bootstrap:** `ion-drive init` scaffolds an optional client starter under `ion/` (`client.ts` + a paged-search `example.ts` + README) via `scaffold.ts`; flags `--starter`/`--skip-starter` (else prompts). Never clobbers existing files.
+  - **Docs (`docs/`):** `getting-started.md`, `concepts/{data-objects,building-blocks}.md`, `api/{querying,rest,graphql,mcp}.md`, `deployment/docker.md`; root `CONTRIBUTING.md`; refreshed `README.md`. Incidental fix: the production `docker/Dockerfile` builder now copies **all** workspace manifests (added `blocks`, `client`) so `--frozen-lockfile` resolves.
+- **Phase 9 (Extensibility Core — plugins, message bus, auditing): DONE and verified end-to-end.** See ADR-015 and `docs/extensibility_core_plan.md`.
+  - **Service registry + plugin host** — `runtime/`: a lightweight `ServiceRegistry` (typed-token keyed, last-write-wins) + `definePlugin`/`loadPlugins` host. Plugins (programmatic `createServer(cfg, { plugins })` or `ION_PLUGINS` env specifiers, dynamically imported) run their `setup` after core registers defaults but before dependents are built, so they can **replace** a service seamlessly. No DI library — extends the `AuthProvider` port precedent (ADR-010).
+  - **Provider ports + defaults** — each swappable capability is a port + in-core default registered under a token: `cache/` (`CacheProvider`/`MemoryCache`, `CACHE_SERVICE`), `email/` (`EmailProvider`/`LogEmailProvider`, `EMAIL_SERVICE`), `logging/` (`LoggerProvider`/`PinoLoggerProvider` over the existing pino+OTel logger, `LOGGER_SERVICE`), and the bus (`MESSAGE_BUS`). External plugins (Redis, SendGrid, RabbitMQ) override by token — those repos are follow-ups.
+  - **Message bus** — `messaging/`: the default is a Postgres **transactional outbox**. `OutboxBus.publish(event, trx)` inserts into `_ion_events` inside the caller's transaction (no dual-write gap); an `EventDispatcher` drains it to subscribers, claiming each `(event, consumer_group)` via `_ion_event_deliveries` + `SKIP LOCKED` for **at-most-once per consumer group across instances** (a `perInstance` flag gives once-per-instance instead). Topics are `data.<object>.<op>`; patterns use `*`/`#` (AMQP-style, `topic-match.ts`). Built-in handlers `log_event` + `persist_event` (`handlers.ts`, writes an event into a data object via a `RecordWriter`). `NoopBus` when `ION_EVENTS_ENABLED=false`. `computeDiff` (`diff.ts`) excludes `SYSTEM_MANAGED_COLUMNS` (new in `schema/types.ts`).
+  - **CRUD events** — `DataService` wraps `create/update/delete/bulk*` in a transaction and emits `data.<object>.<op>` with `{ object, id, op, before, after, diff }` (before-image read in-txn for updates; `… RETURNING` for deletes/bulk). No-op when the bus is `NoopBus`. New `insertSilent` writes without emitting (used by `persist_event` to avoid recursion). Actor identity (`created_by`/`updated_by`) is **deferred** — payloads carry no `actorId` yet.
+  - **Blocks declare subscriptions** — `blockManifestSchema` gains `subscriptions` (`{ event, consumer, handler, perInstance?, config? }`); installer step `applySubscriptions` (idempotent) + `BlockEngine.initialize()` re-registers installed blocks' subscriptions from the `_ion_blocks` snapshot at boot. `@ionshift/ion-drive-blocks` gains an **`audit`** block: an `audit_log` object + a `data.#`→`audit`/`persist_event` subscription (one row per change, cluster-once).
+  - Wired in `server.ts` (registry → defaults → `loadPlugins` → resolve bus → `DataService` → built-in handlers → `BlockEngine` → dispatcher start after routes; `runReady`/`runShutdown` + dispatcher stop in shutdown). New config: `ION_PLUGINS`, `ION_EVENTS_ENABLED` (default on), `ION_EVENTS_POLL_INTERVAL_MS`. New public exports in `index.ts`. New system tables `_ion_events`/`_ion_event_deliveries` live in the **tenant DB** (co-located with data for the atomic outbox). Docs: `docs/concepts/{events,plugins}.md`. 49 new core unit tests + a 9-check live audit smoke against Postgres.
+- **Known pre-existing repo state:** `pnpm test` at the root still fails because `packages/admin` has a `test` script but no test files (vitest exits 1 on "No test files found") — `core`/`cli`/`blocks`/`client` all ship tests, so only admin is affected; run `pnpm --filter @ionshift/ion-drive-core test` for the core suite (115 tests as of Phase 9). Biome reports a few pre-existing cognitive-complexity **warnings** (schema-manager, openapi-routes, query-parser, admin DataGrid) — warnings, not errors; lint passes.
+
+Always check the actual code before trusting this list; update this section as phases complete.
+
+## Repository Layout
+
+```
+packages/
+  core/    @ionshift/ion-drive-core  — Fastify backend: schema engine, dynamic APIs, MCP, auth/RBAC/secrets. The heart of the project.
+  admin/   @ionshift/ion-drive-admin — React 19 + Vite admin SPA (Phase 3, functional). Pure API consumer via lib/api.ts.
+  cli/     @ionshift/ion-drive-cli   — space-themed CLI (Phase 6): init/list/add/remove/dev + registry client & resolver + starter scaffold (Phase 7). Talks to a running server over HTTP.
+  blocks/  @ionshift/ion-drive-blocks — official building-block catalog (Phase 6): crm, invoicing, communications. TS manifests → emitted block.json. Types-only dep on core.
+  client/  @ionshift/ion-drive-client — zero-dependency typed query builder + REST client SDK (Phase 7). No internal deps (leaf); browser- and Node-safe.
+docker/    docker-compose (dev Postgres) + observability overlay + Dockerfile
+docs/
+  implementation_plan.md    — the 7-phase master plan
+  research/                 — competitive research, tech decisions, and ADRs (read before changing architecture)
+```
+
+### `packages/core/src` map
+- `schema/` — runtime DDL engine. `SchemaManager` orchestrates `MetadataStore` (persistence in `_ion_*` system tables), `DdlExecutor` (CREATE/ALTER/DROP via Kysely), `SchemaRegistry` (in-memory cache), `ChangeValidator` (safety/impact analysis). Every mutation: build ChangeSet → validate → execute DDL → record metadata → record migration → update registry.
+- `data/` — `DataService` + `query-parser` for runtime CRUD against dynamic tables. The query layer supports case-insensitive/aliased filter operators, a free-text `search`/`q` term (OR `ILIKE` across text-like columns), sorting, page-based (`page`/`pageSize`) **and** offset-based (`limit`/`offset`) pagination, expand, and select (Phase 7 / ADR-014); filters+search share `DataService.applyConditions`, pagination resolves via `DataService.resolveWindow`.
+- `api/` — Fastify route generators, all wired in `server.ts`: `schema-routes`, `data-routes`, `openapi-routes`, `graphql/`, `admin-routes`, `task-routes` (Phase 5), and `block-routes` (Phase 6).
+- `mcp/` — MCP server exposing schema introspection + CRUD as tools (wired at `/api/v1/mcp`). **First-class citizen — keep it in lockstep with the REST/GraphQL surface.**
+- `db/` — Kysely connection factories (`createSystemDb`, `createTenantDb`).
+- `telemetry/` — OpenTelemetry integration (Phase 5). `otel-setup` (SDK lifecycle + `/metrics` render), `request-tracing` (global Fastify span/metric hooks), `metrics` (custom instruments), `log-bridge` (pino→OTel), `span-attributes` (`ion.*` keys).
+- `tasks/` — scheduled/background task engine (Phase 5). `TaskEngine` facade over `TaskStore` (`_ion_tasks`/`_ion_task_runs`), `TaskRunner` (handler registry), `TaskScheduler` (croner). **Keep REST/observability consistent with the rest of the surface.**
+- `blocks/` — building-block runtime (Phase 6). `BlockEngine` facade over `block-manifest` (Zod parse/validate), `BlockInstaller` (applies a manifest via the schema/data/task/role APIs), and `BlockStore` (`_ion_blocks` ledger). **Content-agnostic** — installs any submitted manifest; the catalog lives in `@ionshift/ion-drive-blocks`, not here. REST in `api/block-routes.ts`.
+- `auth/` — pluggable auth (`AuthProvider`/Better Auth), sessions/API keys, and `rbac/` (roles, permission engine, enforcement).
+- `runtime/` — extensibility seam (Phase 9). `ServiceRegistry` (typed-token keyed container) + `definePlugin`/`loadPlugins` plugin host. The composition root plugins hook into.
+- `messaging/` — message bus (Phase 9). `MessageBus` port; default `OutboxBus` (Postgres transactional outbox, `_ion_events`) + `EventDispatcher` (consumer-group delivery via `_ion_event_deliveries` + `SKIP LOCKED`); `computeDiff`, `topic-match`, built-in handlers, `NoopBus`. `DataService` publishes `data.<object>.<op>` events here. **Keep event topics/payloads consistent across surfaces.**
+- `cache/`, `email/`, `logging/` — infrastructure provider ports + in-core defaults (`CacheProvider`/`MemoryCache`, `EmailProvider`/`LogEmailProvider`, `LoggerProvider`/`PinoLoggerProvider`), each with a registry token a plugin overrides (Phase 9).
+- `config/` — env/file config loading + platform tables, secrets, encryption. `server.ts` — Fastify assembly + entry point. `index.ts` — public package exports.
+
+## Tech Stack & Key Decisions
+
+TypeScript (ESM, NodeNext) · Node 22+ · Fastify 5 · PostgreSQL 17 · **Kysely** (query builder, not an ORM) · Zod · `@modelcontextprotocol/sdk` · pino · React 19 + Vite (admin) · Better Auth (planned default, pluggable) · OpenTelemetry → Grafana/Loki/Prometheus/Tempo (planned) · pnpm + Turborepo · Vitest · Biome.
+
+The non-obvious choices are deliberate and documented in `docs/research/architecture-decisions.md` (ADRs). The load-bearing ones:
+- **Fastify over NestJS** — NestJS's decorator/module system fights runtime-dynamic route registration, which is our core mechanic. Routes can't change after `listen()`; plan for graceful re-registration on schema change.
+- **Kysely over Prisma/Drizzle** — only option that does runtime DDL without static schema files. Tenant data tables are **not** compile-time typed (validated at runtime); only the `_ion_*` system tables are typed via `SystemDatabase`.
+- **GraphQL uses graphql-js directly + graphql-yoga** (schema reflected from the registry at runtime — see ADR-009). Pothos was reconsidered and rejected: its value is compile-time inference, moot for runtime-defined objects. Do not use Apollo/type-graphql (static decorators) either.
+
+Do not swap any of these without updating the relevant ADR and flagging it to the user.
+
+## Conventions
+
+- **Formatting/linting = Biome.** Single quotes, semicolons, trailing commas (all), 2-space indent, 100-col width. Run `pnpm lint:fix` rather than hand-formatting. Imports are auto-organized.
+- **ESM only** — always use explicit `.js` extensions in relative imports (e.g. `./schema/index.js`), even from `.ts` source. `import type` for type-only imports.
+- **TS is strict**, incl. `noUncheckedIndexedAccess`, `noUnusedLocals/Parameters`. `noExplicitAny` and `noNonNullAssertion` are warnings — avoid both.
+- **Every module gets a top-of-file JSDoc block** explaining its role and, for the schema engine, the operation flow. Match the existing density — files here are heavily and clearly commented for LLM readability. That readability is a product goal, not incidental.
+- Classes for stateful services (`SchemaManager`, `DataService`); plain functions returning Fastify plugins for route generators (`registerXxxRoutes(...)`). Custom typed errors (e.g. `DataServiceError`) rather than bare throws.
+- Keep the **REST, GraphQL, and MCP surfaces consistent** — a capability added to one should be reflected in the others and in the OpenAPI spec.
+
+## Commands
+
+Run from repo root (Turborepo fans out to packages):
+```bash
+pnpm install
+docker compose -f docker/docker-compose.yml up -d   # Postgres for dev
+pnpm dev            # start dev servers (core watches via tsx)
+pnpm test           # vitest (unit)
+pnpm test:integration  # requires Postgres
+pnpm typecheck
+pnpm lint:fix       # Biome check + autofix
+pnpm build          # tsc per package
+```
+Per-package: `pnpm --filter @ionshift/ion-drive-core <script>`.
+
+## Working Notes
+
+- This is **not yet a git repo** (no `.git`). Don't run git operations unless the user asks and initializes one.
+- Platform is Windows; the shell is PowerShell (a Bash tool is also available). Prefer the dedicated file/search tools.
+- When you make a real architectural decision, record it as a new ADR in `docs/research/architecture-decisions.md` and keep `docs/implementation_plan.md` and this file's Status section current.
+- The `_ion_*` system tables (`_ion_objects`, `_ion_fields`, `_ion_relationships`, `_ion_migrations`) are the platform's own metadata — distinct from user-defined data objects. Don't confuse the two layers.

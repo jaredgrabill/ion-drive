@@ -1,0 +1,325 @@
+/**
+ * Block installer — materialises a validated manifest into a running instance.
+ *
+ * Installing a block is deliberately just a *scripted sequence of the same
+ * operations a human performs by hand*: create objects through the
+ * {@link SchemaManager}, wire relationships, seed rows through the
+ * {@link DataService}, register tasks through the {@link TaskEngine}, and seed
+ * roles through the {@link RoleManager}. That reuse is the whole point — a block
+ * can never do anything the platform's own APIs can't, so the REST/GraphQL/MCP
+ * surfaces light up for a block's objects with zero extra wiring.
+ *
+ * Every step is **idempotent-friendly**: objects/tasks/roles that already exist
+ * are skipped (and reported) rather than erroring, so re-running an install or
+ * layering blocks that share objects is safe. `dryRun` computes the same report
+ * without touching the database, powering the CLI/console preview.
+ */
+
+import type { RoleManager } from '../auth/rbac/role-manager.js';
+import type { DataService } from '../data/data-service.js';
+import type { MessageBus } from '../messaging/message-bus.js';
+import type { SchemaManager } from '../schema/schema-manager.js';
+import type { TaskEngine } from '../tasks/index.js';
+import {
+  type BlockInstallReport,
+  type BlockManifest,
+  type InstalledBlock,
+  toDataObjectDefinition,
+  toRelationshipDefinition,
+  toSubscriptionInput,
+  toTaskInput,
+} from './block-types.js';
+
+export class BlockInstallError extends Error {
+  constructor(
+    message: string,
+    readonly warnings: string[] = [],
+  ) {
+    super(message);
+    this.name = 'BlockInstallError';
+  }
+}
+
+export interface BlockInstallerServices {
+  schemaManager: SchemaManager;
+  dataService: DataService;
+  /** Optional — required only if a manifest declares tasks. */
+  taskEngine?: TaskEngine;
+  /** Optional — required only if a manifest declares roles. */
+  roleManager?: RoleManager;
+  /** Optional — required only if a manifest declares subscriptions. */
+  bus?: MessageBus;
+}
+
+export interface InstallOptions {
+  /** Compute the report without writing anything. */
+  dryRun?: boolean;
+}
+
+export interface UninstallOptions {
+  /** Drop tables even if they contain rows. Without this, a non-empty table blocks uninstall. */
+  dropData?: boolean;
+}
+
+export class BlockInstaller {
+  constructor(private readonly services: BlockInstallerServices) {}
+
+  /**
+   * Applies a manifest through five ordered steps (objects → relationships →
+   * seed → tasks → roles), returning a report of everything created/skipped. On
+   * a real (non-dry) run, throws {@link BlockInstallError} if a step fails.
+   */
+  async install(
+    manifest: BlockManifest,
+    options: InstallOptions = {},
+  ): Promise<BlockInstallReport> {
+    const dryRun = options.dryRun ?? false;
+    const report: BlockInstallReport = {
+      block: manifest.name,
+      version: manifest.version,
+      dryRun,
+      objectsCreated: [],
+      objectsSkipped: [],
+      relationshipsCreated: [],
+      recordsSeeded: {},
+      tasksCreated: [],
+      rolesCreated: [],
+      rolesSkipped: [],
+      subscriptionsRegistered: [],
+      warnings: [],
+    };
+
+    await this.applyObjects(manifest, report, dryRun);
+    await this.applyRelationships(manifest, report, dryRun);
+    await this.applySeed(manifest, report, dryRun);
+    await this.applyTasks(manifest, report, dryRun);
+    await this.applyRoles(manifest, report, dryRun);
+    this.applySubscriptions(manifest, report, dryRun);
+
+    return report;
+  }
+
+  private async applyObjects(
+    manifest: BlockManifest,
+    report: BlockInstallReport,
+    dryRun: boolean,
+  ): Promise<void> {
+    const { schemaManager } = this.services;
+    for (const obj of manifest.objects) {
+      if (schemaManager.getObject(obj.name)) {
+        report.objectsSkipped.push(obj.name);
+        continue;
+      }
+      report.objectsCreated.push(obj.name);
+      if (dryRun) continue;
+
+      const result = await schemaManager.createObject(toDataObjectDefinition(obj));
+      if (!result.success) {
+        const detail = result.preview.errors.map((e) => e.message).join('; ');
+        throw new BlockInstallError(
+          `Failed to create object "${obj.name}": ${detail || 'validation failed'}`,
+          report.warnings,
+        );
+      }
+    }
+  }
+
+  private async applyRelationships(
+    manifest: BlockManifest,
+    report: BlockInstallReport,
+    dryRun: boolean,
+  ): Promise<void> {
+    const { schemaManager } = this.services;
+    for (const rel of manifest.relationships) {
+      // Both endpoints must resolve (from this block or an already-installed one).
+      const missingEndpoint = this.unresolvedEndpoint(rel, dryRun);
+      if (missingEndpoint) {
+        report.warnings.push(`Skipped relationship "${rel.name}": missing ${missingEndpoint}`);
+        continue;
+      }
+      report.relationshipsCreated.push(rel.name);
+      if (dryRun) continue;
+
+      const result = await schemaManager.addRelationship(toRelationshipDefinition(rel));
+      if (!result.success) {
+        const detail = result.preview.errors.map((e) => e.message).join('; ');
+        throw new BlockInstallError(
+          `Failed to create relationship "${rel.name}": ${detail || 'validation failed'}`,
+          report.warnings,
+        );
+      }
+    }
+  }
+
+  /** Returns the name of an unresolved relationship endpoint, or null if both resolve. */
+  private unresolvedEndpoint(
+    rel: BlockManifest['relationships'][number],
+    dryRun: boolean,
+  ): string | null {
+    const { schemaManager } = this.services;
+    if (!schemaManager.getObject(rel.sourceObjectName) && !dryRun) return rel.sourceObjectName;
+    if (!schemaManager.getObject(rel.targetObjectName) && !dryRun) return rel.targetObjectName;
+    return null;
+  }
+
+  private async applySeed(
+    manifest: BlockManifest,
+    report: BlockInstallReport,
+    dryRun: boolean,
+  ): Promise<void> {
+    for (const [objectName, records] of Object.entries(manifest.seed)) {
+      report.recordsSeeded[objectName] = records.length;
+      if (dryRun || records.length === 0) continue;
+      await this.services.dataService.bulkCreate(objectName, records);
+    }
+  }
+
+  private async applyTasks(
+    manifest: BlockManifest,
+    report: BlockInstallReport,
+    dryRun: boolean,
+  ): Promise<void> {
+    if (manifest.tasks.length === 0) return;
+    const { taskEngine } = this.services;
+    if (!taskEngine) {
+      report.warnings.push('Block declares tasks but the task engine is disabled — skipped.');
+      return;
+    }
+    for (const task of manifest.tasks) {
+      if (await taskEngine.store.getByName(task.name)) {
+        report.warnings.push(`Task "${task.name}" already exists — skipped.`);
+        continue;
+      }
+      report.tasksCreated.push(task.name);
+      if (dryRun) continue;
+      await taskEngine.create(toTaskInput(task));
+    }
+  }
+
+  private async applyRoles(
+    manifest: BlockManifest,
+    report: BlockInstallReport,
+    dryRun: boolean,
+  ): Promise<void> {
+    if (manifest.roles.length === 0) return;
+    const { roleManager } = this.services;
+    if (!roleManager) {
+      report.warnings.push('Block declares roles but RBAC is unavailable — skipped.');
+      return;
+    }
+    for (const role of manifest.roles) {
+      if (await roleManager.getByName(role.name)) {
+        report.rolesSkipped.push(role.name);
+        continue;
+      }
+      report.rolesCreated.push(role.name);
+      if (dryRun) continue;
+      await roleManager.create({
+        name: role.name,
+        description: role.description ?? null,
+        permissions: role.permissions.map((p) => ({ resource: p.resource, actions: p.actions })),
+      });
+    }
+  }
+
+  /**
+   * Registers the block's event subscriptions on the message bus. Runs after
+   * the schema/tasks/roles so the objects a handler may write to already exist.
+   * Idempotent: a block's consumers are cleared before (re)subscribing, so a
+   * reinstall doesn't accumulate duplicate subscriptions. A subscription naming
+   * an unregistered handler is reported and skipped (rather than failing the
+   * whole install), mirroring the other steps' idempotent-friendly behaviour.
+   */
+  private applySubscriptions(
+    manifest: BlockManifest,
+    report: BlockInstallReport,
+    dryRun: boolean,
+  ): void {
+    if (manifest.subscriptions.length === 0) return;
+    const { bus } = this.services;
+    if (!bus) {
+      report.warnings.push(
+        'Block declares subscriptions but the message bus is disabled — skipped.',
+      );
+      return;
+    }
+
+    const valid = manifest.subscriptions.filter((sub) => {
+      if (bus.hasHandler(sub.handler)) return true;
+      report.warnings.push(
+        `Subscription for consumer "${sub.consumer}" references unknown handler "${sub.handler}" — skipped.`,
+      );
+      return false;
+    });
+    for (const sub of valid) {
+      report.subscriptionsRegistered.push(`${sub.consumer} ← ${sub.event}`);
+    }
+    if (dryRun) return;
+
+    for (const consumer of new Set(valid.map((s) => s.consumer))) {
+      bus.unsubscribeConsumer(consumer);
+    }
+    for (const sub of valid) {
+      bus.subscribe(toSubscriptionInput(sub, manifest.name));
+    }
+  }
+
+  /** Removes every subscription a block registered (by consumer group). */
+  private unsubscribeBlock(installed: InstalledBlock): void {
+    const { bus } = this.services;
+    if (!bus) return;
+    for (const consumer of new Set(
+      (installed.manifest.subscriptions ?? []).map((s) => s.consumer),
+    )) {
+      bus.unsubscribeConsumer(consumer);
+    }
+  }
+
+  /**
+   * Removes an installed block: unsubscribes its event consumers, deletes the
+   * tasks it declared, and drops the objects it created (newest-first so FK
+   * dependents go before their targets). Refuses to drop a table that still
+   * holds rows unless `dropData` is set.
+   */
+  async uninstall(installed: InstalledBlock, options: UninstallOptions = {}): Promise<string[]> {
+    const { schemaManager, taskEngine } = this.services;
+    const dropData = options.dropData ?? false;
+
+    this.unsubscribeBlock(installed);
+
+    // Delete tasks this block declared (by name).
+    if (taskEngine) {
+      for (const task of installed.manifest.tasks ?? []) {
+        const existing = await taskEngine.store.getByName(task.name);
+        if (existing) await taskEngine.remove(existing.id);
+      }
+    }
+
+    if (!dropData) await this.assertObjectsEmpty(installed);
+
+    // Drop objects newest-first (reverse creation order handles FK dependents).
+    const removed: string[] = [];
+    for (const name of [...installed.createdObjects].reverse()) {
+      if (!schemaManager.getObject(name)) continue;
+      const result = await schemaManager.deleteObject(name);
+      if (result.success) removed.push(name);
+    }
+    return removed;
+  }
+
+  /** Throws {@link BlockInstallError} if any of the block's objects hold rows. */
+  private async assertObjectsEmpty(installed: InstalledBlock): Promise<void> {
+    const { schemaManager, dataService } = this.services;
+    const nonEmpty: string[] = [];
+    for (const name of installed.createdObjects) {
+      if (!schemaManager.getObject(name)) continue;
+      const { pagination } = await dataService.list(name, { pagination: { page: 1, pageSize: 1 } });
+      if (pagination.totalCount > 0) nonEmpty.push(`${name} (${pagination.totalCount} rows)`);
+    }
+    if (nonEmpty.length > 0) {
+      throw new BlockInstallError(
+        `Refusing to uninstall "${installed.name}": these objects hold data — ${nonEmpty.join(', ')}. Re-run with dropData to remove them.`,
+      );
+    }
+  }
+}

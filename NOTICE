@@ -1,0 +1,64 @@
+NOTICE
+======
+
+Ion Drive
+Copyright 2026 IonShift Technologies LLC
+
+This product is licensed under the Apache License, Version 2.0 (the "License").
+You may not use this product except in compliance with the License.
+You may obtain a copy of the License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+---
+
+TRADEMARK NOTICE
+================
+
+The following are registered or unregistered trademarks and service marks of
+IonShift Technologies LLC. The Apache License 2.0 does not grant permission to
+use these trade names, trademarks, service marks, or product names of the
+Licensor, except as required for reasonable and customary use in describing the
+origin of the Work and reproducing the content of this NOTICE file.
+
+  - "IonShift" — word mark and brand name
+  - "IonShift Labs" — word mark and brand name
+  - "IonShift Technologies LLC" — legal entity and brand name
+  - "Ion Drive" — product name and word mark
+  - The IonShift logo and associated logo marks
+  - The Ion Drive logo and associated logo marks
+  - Any distinctive visual trade dress associated with the above
+
+Use of these marks in a way that implies sponsorship, endorsement, or
+affiliation with IonShift Technologies LLC requires prior written permission.
+
+For permission requests, write to:
+  IonShift Technologies LLC
+  https://github.com/ionshift
+
+---
+
+THIRD-PARTY NOTICES
+===================
+
+This software incorporates components from third-party projects. Their
+respective licenses are included in the node_modules directories or listed
+in the package.json dependency manifests of each package.
+
+Notable third-party components include:
+  - Fastify (MIT) — https://fastify.dev
+  - Kysely (MIT) — https://kysely.dev
+  - Better Auth (MIT) — https://better-auth.com
+  - Zod (MIT) — https://zod.dev
+  - OpenTelemetry SDK for Node.js (Apache 2.0) — https://opentelemetry.io
+  - graphql-js (MIT) — https://graphql.org
+  - graphql-yoga (MIT) — https://the-guild.dev/graphql/yoga-server
+  - Model Context Protocol SDK (MIT) — https://modelcontextprotocol.io
+  - React (MIT) — https://react.dev
+  - Vite (MIT) — https://vitejs.dev
+  - Turborepo (MIT) — https://turbo.build

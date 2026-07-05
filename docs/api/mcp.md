@@ -1,0 +1,70 @@
+# MCP Server
+
+Ion Drive's Model Context Protocol server is a **first-class citizen**: any
+MCP-compatible LLM agent can introspect your schema and CRUD your data with zero
+integration code. It is served over stateless **Streamable HTTP** at
+**`/api/v1/mcp`**, backed by the same `DataService` as the REST and GraphQL
+surfaces.
+
+## Connecting
+
+Point an MCP client at `http://localhost:3000/api/v1/mcp`. In a client config
+(e.g. Claude Desktop / Claude Code) this is an HTTP MCP server entry. When
+`ION_REQUIRE_AUTH` is enabled, include an API key header (`X-API-Key: iond_…`).
+
+## Tools
+
+### Schema
+
+| Tool | Description |
+|:---|:---|
+| `list_objects` | List all data objects with field counts and descriptions. |
+| `get_object` | Full definition of one object (fields, types, constraints). |
+| `list_column_types` | All available column types with their Postgres mappings. |
+| `create_object` | Create a new object (system fields added automatically). |
+| `add_field` | Add a field (column) to an existing object. |
+| `delete_object` | Delete an object and its table (**destroys data**). |
+
+### Data
+
+| Tool | Description |
+|:---|:---|
+| `query_data` | List records with `search`, `filters`, `sort`, and pagination. |
+| `get_record` | Fetch a single record by id. |
+| `create_record` | Create a record. |
+| `update_record` | Update a record by id. |
+| `delete_record` | Delete a record by id. |
+
+`query_data` mirrors the REST/GraphQL query language:
+
+```jsonc
+{
+  "object_name": "contacts",
+  "search": "acme",                    // free-text across text-like columns
+  "filters": [
+    { "field": "status", "operator": "neq", "value": "archived" }
+  ],
+  "sort": [ { "field": "created_at", "direction": "desc" } ],
+  "page": 1,
+  "page_size": 25
+}
+```
+
+## Resources
+
+- `ion-drive://schema/overview` — a JSON summary of every object and its fields,
+  ideal as context for a model before it starts working.
+
+## Prompts
+
+- `explore-schema` — summarise all objects and relationships.
+- `design-object` — help design a new object from a plain-language description,
+  then call `create_object` with the result.
+
+## Why MCP is first-class
+
+Ion Drive is built for backend developers working with agentic LLMs. Because the
+same object definitions drive REST, GraphQL, **and** MCP, an agent that can talk
+MCP gets the identical query semantics — search, operators, coercion,
+pagination — that your application code uses. Keep the surfaces in lockstep: a
+capability added to one should be reflected in the others.

@@ -1,0 +1,144 @@
+{
+  "$schema": "https://ion-drive.dev/schema/block.json",
+  "name": "communications",
+  "version": "0.1.0",
+  "title": "Communications",
+  "description": "Email templates and a notification log for outbound messaging.",
+  "author": "Ion Shift Labs <hello@ionshiftlabs.com>",
+  "categories": [
+    "messaging",
+    "notifications"
+  ],
+  "envVars": {
+    "NOTIFICATIONS_WEBHOOK_URL": "Delivery webhook the notifications-sweep task posts to."
+  },
+  "meta": {
+    "icon": "📡",
+    "docs": "https://ion-drive.dev/blocks/communications"
+  },
+  "objects": [
+    {
+      "name": "email_templates",
+      "displayName": "Email Templates",
+      "description": "Reusable, categorised email bodies with subject lines.",
+      "fields": [
+        {
+          "name": "name",
+          "displayName": "Name",
+          "columnType": "short_text",
+          "isRequired": true,
+          "isUnique": true
+        },
+        {
+          "name": "subject",
+          "displayName": "Subject",
+          "columnType": "short_text",
+          "isRequired": true
+        },
+        {
+          "name": "body",
+          "displayName": "Body",
+          "columnType": "rich_text",
+          "isRequired": true
+        },
+        {
+          "name": "category",
+          "displayName": "Category",
+          "columnType": "enum",
+          "constraints": {
+            "enumValues": [
+              "onboarding",
+              "billing",
+              "marketing",
+              "transactional"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "notifications",
+      "displayName": "Notifications",
+      "description": "Outbound message log across channels.",
+      "fields": [
+        {
+          "name": "title",
+          "displayName": "Title",
+          "columnType": "short_text",
+          "isRequired": true
+        },
+        {
+          "name": "body",
+          "displayName": "Body",
+          "columnType": "long_text"
+        },
+        {
+          "name": "channel",
+          "displayName": "Channel",
+          "columnType": "enum",
+          "defaultValue": "email",
+          "constraints": {
+            "enumValues": [
+              "email",
+              "sms",
+              "push",
+              "in_app"
+            ]
+          }
+        },
+        {
+          "name": "status",
+          "displayName": "Status",
+          "columnType": "enum",
+          "defaultValue": "pending",
+          "constraints": {
+            "enumValues": [
+              "pending",
+              "sent",
+              "failed"
+            ]
+          },
+          "isIndexed": true
+        },
+        {
+          "name": "recipient",
+          "displayName": "Recipient",
+          "columnType": "short_text"
+        },
+        {
+          "name": "sent_at",
+          "displayName": "Sent At",
+          "columnType": "datetime"
+        }
+      ]
+    }
+  ],
+  "seed": {
+    "email_templates": [
+      {
+        "name": "welcome",
+        "subject": "Welcome aboard, {{name}}! 🚀",
+        "body": "Hi {{name}}, thanks for joining us. We are thrilled to have you.",
+        "category": "onboarding"
+      },
+      {
+        "name": "invoice-reminder",
+        "subject": "Invoice {{number}} is due soon",
+        "body": "A friendly reminder that invoice {{number}} for {{amount}} is due on {{due_date}}.",
+        "category": "billing"
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "name": "notifications-sweep",
+      "description": "Posts pending notifications to the delivery webhook (on-demand; configure the URL).",
+      "type": "http_request",
+      "enabled": false,
+      "config": {
+        "method": "POST",
+        "url": "${NOTIFICATIONS_WEBHOOK_URL}"
+      }
+    }
+  ]
+}

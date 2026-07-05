@@ -1,0 +1,40 @@
+{
+  "name": "@ionshift/ion-drive-client",
+  "version": "0.1.0",
+  "description": "Ion Drive client SDK — a zero-dependency, typed query builder and fetch client for the Ion Drive REST API. Works in Node and the browser.",
+  "license": "Apache-2.0",
+  "author": "IonShift Technologies LLC",
+  "homepage": "https://github.com/ionshift/ion-drive",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ionshift/ion-drive.git",
+    "directory": "packages/client"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "keywords": ["ion-drive", "client", "sdk", "query-builder", "rest"],
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "vitest": "^3.0.0",
+    "rimraf": "^6.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

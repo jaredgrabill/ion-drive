@@ -1,0 +1,42 @@
+{
+  "name": "@ionshift/ion-drive-blocks",
+  "version": "0.1.0",
+  "description": "Ion Drive official building blocks — ready-made business domains (CRM, invoicing, communications) distributed shadcn-style.",
+  "license": "MIT",
+  "author": "IonShift Technologies LLC",
+  "homepage": "https://github.com/ionshift/ion-drive",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ionshift/ion-drive.git",
+    "directory": "packages/blocks"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "blocks"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "emit": "tsx scripts/emit-manifests.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@ionshift/ion-drive-core": "workspace:*",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0",
+    "rimraf": "^6.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

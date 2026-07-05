@@ -1,0 +1,374 @@
+/**
+ * Metadata Store — CRUD operations for Ion Drive schema metadata.
+ *
+ * This module reads and writes data object definitions, field definitions,
+ * and relationship definitions to Ion Drive's system tables. It is the
+ * single source of truth for what data objects exist and how they're structured.
+ *
+ * The Metadata Store does NOT execute DDL — that's the DDL Executor's job.
+ * This separation ensures we can validate, preview, and record changes
+ * before they touch the actual database schema.
+ */
+
+import type { Kysely } from 'kysely';
+import type {
+  IonField,
+  IonIndex,
+  IonObject,
+  IonRelationship,
+  SystemDatabase,
+} from '../db/types.js';
+import type { DataObjectDefinition, FieldDefinition, RelationshipDefinition } from './types.js';
+
+export class MetadataStore {
+  constructor(private readonly db: Kysely<SystemDatabase>) {}
+
+  // -------------------------------------------------------------------------
+  // Data Objects
+  // -------------------------------------------------------------------------
+
+  async listObjects(): Promise<IonObject[]> {
+    return this.db.selectFrom('_ion_objects').selectAll().orderBy('name', 'asc').execute();
+  }
+
+  async getObject(name: string): Promise<IonObject | undefined> {
+    return this.db
+      .selectFrom('_ion_objects')
+      .selectAll()
+      .where('name', '=', name)
+      .executeTakeFirst();
+  }
+
+  async getObjectById(id: string): Promise<IonObject | undefined> {
+    return this.db.selectFrom('_ion_objects').selectAll().where('id', '=', id).executeTakeFirst();
+  }
+
+  async createObject(definition: DataObjectDefinition): Promise<IonObject> {
+    const result = await this.db
+      .insertInto('_ion_objects')
+      .values({
+        name: definition.name,
+        display_name: definition.displayName,
+        description: definition.description ?? null,
+        table_name: definition.tableName,
+        is_system: definition.isSystem ?? false,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return result;
+  }
+
+  async updateObject(name: string, updates: Partial<DataObjectDefinition>): Promise<IonObject> {
+    const values: Record<string, unknown> = { updated_at: new Date() };
+    if (updates.displayName !== undefined) values.display_name = updates.displayName;
+    if (updates.description !== undefined) values.description = updates.description;
+
+    const result = await this.db
+      .updateTable('_ion_objects')
+      .set(values)
+      .where('name', '=', name)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return result;
+  }
+
+  async deleteObject(name: string): Promise<void> {
+    await this.db.deleteFrom('_ion_objects').where('name', '=', name).execute();
+  }
+
+  // -------------------------------------------------------------------------
+  // Fields
+  // -------------------------------------------------------------------------
+
+  async getFields(objectId: string): Promise<IonField[]> {
+    return this.db
+      .selectFrom('_ion_fields')
+      .selectAll()
+      .where('object_id', '=', objectId)
+      .orderBy('sort_order', 'asc')
+      .orderBy('created_at', 'asc')
+      .execute();
+  }
+
+  async getField(objectId: string, fieldName: string): Promise<IonField | undefined> {
+    return this.db
+      .selectFrom('_ion_fields')
+      .selectAll()
+      .where('object_id', '=', objectId)
+      .where('name', '=', fieldName)
+      .executeTakeFirst();
+  }
+
+  async createField(objectId: string, field: FieldDefinition): Promise<IonField> {
+    return this.db
+      .insertInto('_ion_fields')
+      .values({
+        object_id: objectId,
+        name: field.name,
+        display_name: field.displayName,
+        column_name: field.columnName,
+        column_type: field.columnType,
+        is_required: field.isRequired ?? false,
+        is_unique: field.isUnique ?? false,
+        is_indexed: field.isIndexed ?? false,
+        is_primary: field.isPrimary ?? false,
+        is_system: field.isSystem ?? false,
+        default_value: field.defaultValue ?? null,
+        constraints: field.constraints ? JSON.stringify(field.constraints) : null,
+        sort_order: field.sortOrder ?? 0,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  async createFields(objectId: string, fields: FieldDefinition[]): Promise<IonField[]> {
+    if (fields.length === 0) return [];
+
+    return this.db
+      .insertInto('_ion_fields')
+      .values(
+        fields.map((field) => ({
+          object_id: objectId,
+          name: field.name,
+          display_name: field.displayName,
+          column_name: field.columnName,
+          column_type: field.columnType,
+          is_required: field.isRequired ?? false,
+          is_unique: field.isUnique ?? false,
+          is_indexed: field.isIndexed ?? false,
+          is_primary: field.isPrimary ?? false,
+          is_system: field.isSystem ?? false,
+          default_value: field.defaultValue ?? null,
+          constraints: field.constraints ? JSON.stringify(field.constraints) : null,
+          sort_order: field.sortOrder ?? 0,
+        })),
+      )
+      .returningAll()
+      .execute();
+  }
+
+  async updateField(fieldId: string, updates: Partial<FieldDefinition>): Promise<IonField> {
+    const values: Record<string, unknown> = { updated_at: new Date() };
+    if (updates.displayName !== undefined) values.display_name = updates.displayName;
+    if (updates.isRequired !== undefined) values.is_required = updates.isRequired;
+    if (updates.isUnique !== undefined) values.is_unique = updates.isUnique;
+    if (updates.isIndexed !== undefined) values.is_indexed = updates.isIndexed;
+    if (updates.defaultValue !== undefined) values.default_value = updates.defaultValue;
+    if (updates.constraints !== undefined) {
+      values.constraints = updates.constraints ? JSON.stringify(updates.constraints) : null;
+    }
+    if (updates.sortOrder !== undefined) values.sort_order = updates.sortOrder;
+
+    return this.db
+      .updateTable('_ion_fields')
+      .set(values)
+      .where('id', '=', fieldId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  async deleteField(fieldId: string): Promise<void> {
+    await this.db.deleteFrom('_ion_fields').where('id', '=', fieldId).execute();
+  }
+
+  // -------------------------------------------------------------------------
+  // Relationships
+  // -------------------------------------------------------------------------
+
+  async getRelationships(objectId: string): Promise<IonRelationship[]> {
+    return this.db
+      .selectFrom('_ion_relationships')
+      .selectAll()
+      .where((eb) =>
+        eb.or([eb('source_object_id', '=', objectId), eb('target_object_id', '=', objectId)]),
+      )
+      .execute();
+  }
+
+  async getAllRelationships(): Promise<IonRelationship[]> {
+    return this.db.selectFrom('_ion_relationships').selectAll().execute();
+  }
+
+  async createRelationship(
+    rel: RelationshipDefinition,
+    sourceObjectId: string,
+    targetObjectId: string,
+    sourceFieldId?: string,
+    targetFieldId?: string,
+  ): Promise<IonRelationship> {
+    return this.db
+      .insertInto('_ion_relationships')
+      .values({
+        name: rel.name,
+        display_name: rel.displayName,
+        type: rel.type,
+        source_object_id: sourceObjectId,
+        target_object_id: targetObjectId,
+        source_field_id: sourceFieldId ?? null,
+        target_field_id: targetFieldId ?? null,
+        junction_table: null,
+        junction_source_column: null,
+        junction_target_column: null,
+        cascade_delete: rel.cascadeDelete ?? false,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  async deleteRelationship(relationshipId: string): Promise<void> {
+    await this.db.deleteFrom('_ion_relationships').where('id', '=', relationshipId).execute();
+  }
+
+  // -------------------------------------------------------------------------
+  // Indexes
+  // -------------------------------------------------------------------------
+
+  async getIndexes(objectId: string): Promise<IonIndex[]> {
+    return this.db
+      .selectFrom('_ion_indexes')
+      .selectAll()
+      .where('object_id', '=', objectId)
+      .execute();
+  }
+
+  async createIndex(
+    objectId: string,
+    index: {
+      name: string;
+      indexName: string;
+      columns: string[];
+      isUnique?: boolean;
+      isAuto?: boolean;
+    },
+  ): Promise<IonIndex> {
+    return this.db
+      .insertInto('_ion_indexes')
+      .values({
+        object_id: objectId,
+        name: index.name,
+        index_name: index.indexName,
+        columns: JSON.stringify(index.columns) as unknown as string,
+        is_unique: index.isUnique ?? false,
+        is_auto: index.isAuto ?? false,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  async deleteIndex(indexId: string): Promise<void> {
+    await this.db.deleteFrom('_ion_indexes').where('id', '=', indexId).execute();
+  }
+
+  // -------------------------------------------------------------------------
+  // Migrations
+  // -------------------------------------------------------------------------
+
+  async getLatestMigrationVersion(): Promise<number> {
+    const result = await this.db
+      .selectFrom('_ion_migrations')
+      .select(this.db.fn.max('version').as('max_version'))
+      .executeTakeFirst();
+
+    return (result?.max_version as number | null) ?? 0;
+  }
+
+  async recordMigration(migration: {
+    version: number;
+    description?: string;
+    changes: Record<string, unknown>;
+    sqlUp: string;
+    sqlDown?: string;
+    appliedBy?: string;
+  }): Promise<void> {
+    await this.db
+      .insertInto('_ion_migrations')
+      .values({
+        version: migration.version,
+        description: migration.description ?? null,
+        changes: JSON.stringify(migration.changes),
+        sql_up: migration.sqlUp,
+        sql_down: migration.sqlDown ?? null,
+        applied_by: migration.appliedBy ?? null,
+      })
+      .execute();
+  }
+
+  // -------------------------------------------------------------------------
+  // Full Object Hydration
+  // -------------------------------------------------------------------------
+
+  /**
+   * Loads a complete DataObjectDefinition including all fields and relationships.
+   * This is the method used by the Schema Registry to build the in-memory cache.
+   */
+  async getFullObjectDefinition(name: string): Promise<DataObjectDefinition | null> {
+    const obj = await this.getObject(name);
+    if (!obj) return null;
+
+    const fields = await this.getFields(obj.id);
+    const relationships = await this.getRelationships(obj.id);
+
+    // We need to resolve object names for relationships
+    const objectMap = new Map<string, IonObject>();
+    for (const rel of relationships) {
+      if (!objectMap.has(rel.source_object_id)) {
+        const o = await this.getObjectById(rel.source_object_id);
+        if (o) objectMap.set(o.id, o);
+      }
+      if (!objectMap.has(rel.target_object_id)) {
+        const o = await this.getObjectById(rel.target_object_id);
+        if (o) objectMap.set(o.id, o);
+      }
+    }
+
+    return {
+      id: obj.id,
+      name: obj.name,
+      displayName: obj.display_name,
+      description: obj.description ?? undefined,
+      tableName: obj.table_name,
+      isSystem: obj.is_system,
+      fields: fields.map((f) => ({
+        id: f.id,
+        name: f.name,
+        displayName: f.display_name,
+        columnName: f.column_name,
+        columnType: f.column_type as FieldDefinition['columnType'],
+        isRequired: f.is_required,
+        isUnique: f.is_unique,
+        isIndexed: f.is_indexed,
+        isPrimary: f.is_primary,
+        isSystem: f.is_system,
+        defaultValue: f.default_value,
+        constraints: f.constraints as FieldDefinition['constraints'],
+        sortOrder: f.sort_order,
+      })),
+      relationships: relationships.map((r) => ({
+        id: r.id,
+        name: r.name,
+        displayName: r.display_name,
+        type: r.type as RelationshipDefinition['type'],
+        sourceObjectName: objectMap.get(r.source_object_id)?.name ?? '',
+        targetObjectName: objectMap.get(r.target_object_id)?.name ?? '',
+        cascadeDelete: r.cascade_delete,
+      })),
+    };
+  }
+
+  /**
+   * Loads all object definitions. Used during startup to populate the Schema Registry.
+   */
+  async getAllObjectDefinitions(): Promise<DataObjectDefinition[]> {
+    const objects = await this.listObjects();
+    const definitions: DataObjectDefinition[] = [];
+
+    for (const obj of objects) {
+      const def = await this.getFullObjectDefinition(obj.name);
+      if (def) definitions.push(def);
+    }
+
+    return definitions;
+  }
+}

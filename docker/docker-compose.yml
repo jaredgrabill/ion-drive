@@ -1,0 +1,48 @@
+# Ion Drive — Docker Compose (Development)
+#
+# Usage:
+#   docker compose up -d        # Start services
+#   docker compose down         # Stop services
+#   docker compose logs -f      # Follow logs
+
+services:
+  # --- PostgreSQL ---
+  postgres:
+    image: postgres:17-alpine
+    container_name: ion-drive-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ion
+      POSTGRES_PASSWORD: ion
+      POSTGRES_DB: ion_drive
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ion -d ion_drive"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Ion Drive Core (dev mode — use local source) ---
+  # Uncomment to run Ion Drive in Docker instead of locally
+  # ion-drive:
+  #   build:
+  #     context: ..
+  #     dockerfile: docker/Dockerfile
+  #   container_name: ion-drive-core
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     ION_DATABASE_URL: postgresql://ion:ion@postgres:5432/ion_drive
+  #     NODE_ENV: development
+  #     ION_LOG_LEVEL: debug
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+volumes:
+  pgdata:
+    driver: local

@@ -1,0 +1,24 @@
+/**
+ * Ion Drive telemetry (Phase 5, Observability).
+ *
+ * Public surface for the OpenTelemetry integration:
+ *  - {@link startTelemetry} — start the SDK; returns a handle for the `/metrics`
+ *    route and clean shutdown.
+ *  - {@link installRequestTracing} — installs global Fastify hooks emitting
+ *    per-request spans and `ion.http.server.*` metrics.
+ *  - {@link recordSchemaChange}, {@link recordTaskRun} — custom metric helpers
+ *    used by the schema engine and task runner.
+ *  - {@link createOtelLogStream} — pino → OTel logs bridge stream.
+ */
+
+export { startTelemetry } from './otel-setup.js';
+export type { TelemetryHandle, TelemetryLogger } from './otel-setup.js';
+export { installRequestTracing } from './request-tracing.js';
+export {
+  recordHttpRequest,
+  recordSchemaChange,
+  recordTaskRun,
+  resetMetrics,
+} from './metrics.js';
+export { createOtelLogStream } from './log-bridge.js';
+export { ION_ATTR, surfaceForPath } from './span-attributes.js';
