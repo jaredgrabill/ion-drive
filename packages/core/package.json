@@ -1,6 +1,6 @@
 {
   "name": "@ion-drive/core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Ion Drive core engine — schema management, dynamic APIs, MCP server, and platform runtime",
   "license": "Apache-2.0",
   "author": "IonShift Technologies LLC",
@@ -20,7 +20,10 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "NOTICE"],
+  "files": [
+    "dist",
+    "NOTICE"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -67,7 +70,7 @@
     "zod": "^3.24.0"
   },
   "peerDependencies": {
-    "@ion-drive/admin": ">=0.1.0"
+    "@ion-drive/admin": ">=1.0.0"
   },
   "peerDependenciesMeta": {
     "@ion-drive/admin": {
