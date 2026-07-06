@@ -46,7 +46,7 @@ describe('scaffoldProject', () => {
     expect(isProjectDir(dir)).toBe(true);
   });
 
-  it('generates per-project secrets and pins @ionshift deps to the release train', () => {
+  it('generates per-project secrets and pins @ion-drive deps to the release train', () => {
     scaffoldProject(dir);
     const env = readFileSync(join(dir, '.env'), 'utf8');
     const keys = [...env.matchAll(/ION_(?:ENCRYPTION_KEY|AUTH_SECRET)=([0-9a-f]{64})/g)];
@@ -56,10 +56,8 @@ describe('scaffoldProject', () => {
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
       dependencies: Record<string, string>;
     };
-    expect(pkg.dependencies['@ionshift/ion-drive-core']).toMatch(/^\^\d+\.\d+\.\d+$/);
-    expect(pkg.dependencies['@ionshift/ion-drive-admin']).toBe(
-      pkg.dependencies['@ionshift/ion-drive-core'],
-    );
+    expect(pkg.dependencies['@ion-drive/core']).toMatch(/^\^\d+\.\d+\.\d+$/);
+    expect(pkg.dependencies['@ion-drive/admin']).toBe(pkg.dependencies['@ion-drive/core']);
   });
 
   it('writes a barrel with the add/remove markers', () => {

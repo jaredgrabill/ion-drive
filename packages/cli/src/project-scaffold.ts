@@ -33,9 +33,9 @@ function packageJson(name: string): string {
         typecheck: 'tsc --noEmit',
       },
       dependencies: {
-        '@ionshift/ion-drive-admin': `^${CLI_VERSION}`,
-        '@ionshift/ion-drive-client': `^${CLI_VERSION}`,
-        '@ionshift/ion-drive-core': `^${CLI_VERSION}`,
+        '@ion-drive/admin': `^${CLI_VERSION}`,
+        '@ion-drive/client': `^${CLI_VERSION}`,
+        '@ion-drive/core': `^${CLI_VERSION}`,
         tsx: '^4.19.0',
         zod: '^3.24.0',
       },
@@ -77,7 +77,7 @@ const SERVER_TS = `/**
  * Run \`npm run dev\` (tsx watch) — editing anything here or under /blocks
  * hot-reloads the server.
  */
-import { createServer } from '@ionshift/ion-drive-core';
+import { createServer } from '@ion-drive/core';
 import { blocks } from './blocks/index.js';
 
 // Load .env before config is read (absent file is fine on first boot).
@@ -164,7 +164,7 @@ dist/
 function readme(name: string): string {
   return `# ${name}
 
-An [Ion Drive](https://github.com/ionshift/ion-drive) application backend — runtime-defined
+An [Ion Drive](https://github.com/jaredgrabill/ion-drive) application backend — runtime-defined
 data objects exposed automatically over REST, GraphQL, and MCP.
 
 ## Run it
@@ -192,14 +192,14 @@ server hot-reloads. \`blocks/index.ts\` is the explicit list of loaded blocks
 
 - \`server.ts\` — composition root (yours to edit)
 - \`blocks/\` — vendored building blocks (yours to edit)
-- \`ion/\` — typed client starter using \`@ionshift/ion-drive-client\`
+- \`ion/\` — typed client starter using \`@ion-drive/client\`
 - \`AGENTS.md\` — instructions for AI coding agents working in this repo
 `;
 }
 
 const AGENTS_MD = `# Agent instructions — Ion Drive project
 
-This is an [Ion Drive](https://github.com/ionshift/ion-drive) backend: data objects (tables)
+This is an [Ion Drive](https://github.com/jaredgrabill/ion-drive) backend: data objects (tables)
 are defined **at runtime** and automatically exposed over REST, GraphQL, and MCP.
 
 ## Talking to the platform

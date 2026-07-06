@@ -26,7 +26,7 @@ import type {
   TaskTrigger,
 } from './task-types.js';
 
-const TRACER_NAME = '@ionshift/ion-drive-core';
+const TRACER_NAME = '@ion-drive/core';
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** Result payloads are truncated to keep the history table small. */
 const MAX_RESULT_BYTES = 8_192;

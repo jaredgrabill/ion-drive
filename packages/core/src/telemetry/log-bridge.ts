@@ -16,7 +16,7 @@
 import { Writable } from 'node:stream';
 import { SeverityNumber, logs } from '@opentelemetry/api-logs';
 
-const LOGGER_NAME = '@ionshift/ion-drive-core';
+const LOGGER_NAME = '@ion-drive/core';
 
 /** Maps a pino numeric level to an OTel severity number + text. */
 function severityFor(level: number): { number: SeverityNumber; text: string } {

@@ -3,7 +3,7 @@
  *
  * These mirror the wire shapes returned by the Ion Drive REST API (the
  * `{ data, pagination }` envelope and friends). They are intentionally
- * re-declared here rather than imported from `@ionshift/ion-drive-core` so the client
+ * re-declared here rather than imported from `@ion-drive/core` so the client
  * stays a **zero-dependency** package that runs unchanged in the browser.
  */
 

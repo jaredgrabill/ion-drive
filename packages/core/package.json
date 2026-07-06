@@ -1,13 +1,13 @@
 {
-  "name": "@ionshift/ion-drive-core",
+  "name": "@ion-drive/core",
   "version": "0.1.0",
   "description": "Ion Drive core engine — schema management, dynamic APIs, MCP server, and platform runtime",
   "license": "Apache-2.0",
   "author": "IonShift Technologies LLC",
-  "homepage": "https://github.com/ionshift/ion-drive",
+  "homepage": "https://github.com/jaredgrabill/ion-drive",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ionshift/ion-drive.git",
+    "url": "https://github.com/jaredgrabill/ion-drive.git",
     "directory": "packages/core"
   },
   "type": "module",
@@ -67,15 +67,15 @@
     "zod": "^3.24.0"
   },
   "peerDependencies": {
-    "@ionshift/ion-drive-admin": ">=0.1.0"
+    "@ion-drive/admin": ">=0.1.0"
   },
   "peerDependenciesMeta": {
-    "@ionshift/ion-drive-admin": {
+    "@ion-drive/admin": {
       "optional": true
     }
   },
   "devDependencies": {
-    "@ionshift/ion-drive-admin": "workspace:^",
+    "@ion-drive/admin": "workspace:^",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.0",
     "rimraf": "^6.0.0",

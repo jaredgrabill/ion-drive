@@ -1,4 +1,4 @@
-﻿# Phase 8: Admin Console UX Overhaul
+# Phase 8: Admin Console UX Overhaul
 
 > **Goal:** Transform the functional-but-utilitarian Ion Drive admin console into a premium, production-grade experience worthy of a flagship open source project. Inspired by **Airtable** (data grid & record editing), **Supabase** (table editor, clean dashboard), and **.NET Aspire** (telemetry dashboard, structured logs). Visual language follows the **Radix UI / shadcn** black-and-white aesthetic with strategic space-themed accent pops in strategic places. Re-think the design system from the ground up and ensure that the component and structure of the admin console is solid, maintainable, and scalable and worthy of a production-grade open source project -- this is not just a hobby project.
 
@@ -22,7 +22,7 @@
 
 ## Architectural Conventions
 
-> These conventions extend the project-wide rules in [CLAUDE.md](file:///i:/ionshift/ion-drive/CLAUDE.md) and [CONTRIBUTING.md](file:///i:/ionshift/ion-drive/CONTRIBUTING.md). They apply to all code written in Phase 8.
+> These conventions extend the project-wide rules in [CLAUDE.md](file:///i:/jaredgrabill/ion-drive/CLAUDE.md) and [CONTRIBUTING.md](file:///i:/jaredgrabill/ion-drive/CONTRIBUTING.md). They apply to all code written in Phase 8.
 
 ### Component Anatomy
 
@@ -100,7 +100,7 @@ components/
 
 ### Module Documentation
 
-Every file gets a **top-of-file JSDoc block** (matching [CLAUDE.md](file:///i:/ionshift/ion-drive/CLAUDE.md) conventions):
+Every file gets a **top-of-file JSDoc block** (matching [CLAUDE.md](file:///i:/jaredgrabill/ion-drive/CLAUDE.md) conventions):
 
 ```tsx
 /**
@@ -185,7 +185,7 @@ packages/admin/
 
 ### 0A: Design System Rebuild
 
-#### [MODIFY] [index.css](file:///i:/ionshift/ion-drive/packages/admin/src/index.css)
+#### [MODIFY] [index.css](file:///i:/jaredgrabill/ion-drive/packages/admin/src/index.css)
 
 Expand the token vocabulary from the current minimal shadcn set:
 
@@ -273,7 +273,7 @@ Wire all new tokens into `@theme inline` for Tailwind v4 utility generation.
 
 #### [REFACTOR] Split `ui.tsx` → `components/ui/` directory
 
-The current monolithic [ui.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/components/ui.tsx) (206 lines, 9 components) works for MVP but doesn't scale. Split into:
+The current monolithic [ui.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/components/ui.tsx) (206 lines, 9 components) works for MVP but doesn't scale. Split into:
 
 ```
 components/ui/
@@ -460,7 +460,7 @@ Both are RBAC-guarded under resource `logs` with `read` permission.
 
 ### 1A: App Shell & Navigation Refresh
 
-#### Current State ([AppShell.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/components/AppShell.tsx))
+#### Current State ([AppShell.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/components/AppShell.tsx))
 
 - Sidebar is a flat list, no visual grouping
 - Header is mostly empty (wasted space for breadcrumbs, search, user info)
@@ -536,7 +536,7 @@ Extracts route segments from TanStack Router's `useRouterState`, maps them to di
 
 ### 1B: Data Grid — Airtable-Grade Table Editor
 
-> This is the highest-impact change. The current [DataGrid.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/components/DataGrid.tsx) is a basic `<table>` (298 lines, no inline editing, no sorting, no filtering, no virtualization). Replace it with a real spreadsheet-like editor.
+> This is the highest-impact change. The current [DataGrid.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/components/DataGrid.tsx) is a basic `<table>` (298 lines, no inline editing, no sorting, no filtering, no virtualization). Replace it with a real spreadsheet-like editor.
 
 #### Architecture
 
@@ -658,7 +658,7 @@ components/data/
 
 ### 1D: Dashboard — System Pulse
 
-#### [REWRITE] [Dashboard.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/pages/Dashboard.tsx)
+#### [REWRITE] [Dashboard.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/pages/Dashboard.tsx)
 
 From 4 static stat cards + a list → a live operational overview.
 
@@ -764,7 +764,7 @@ Wires to `GET/POST/DELETE /api/v1/blocks` (Phase 6).
 
 ### 2C: Object Detail Enhancement
 
-#### [MODIFY] [ObjectDetail.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/pages/ObjectDetail.tsx)
+#### [MODIFY] [ObjectDetail.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/pages/ObjectDetail.tsx)
 
 Replace the current 2-tab layout (`data` | `fields`) with 5 tabs using the new `Tabs` component:
 
@@ -858,16 +858,16 @@ For high-stakes operations (delete object, uninstall block with data), add a **t
 
 **Files with `confirm()` calls to replace:**
 
-- [DataGrid.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/components/DataGrid.tsx) (line 90: delete record)
-- [ObjectDetail.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/pages/ObjectDetail.tsx) (line 68: delete object, line 136: remove field)
-- [Roles.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/pages/Roles.tsx) (line 67: delete role)
-- [Secrets.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/pages/Secrets.tsx) (line 72: delete secret)
-- [Settings.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/pages/Settings.tsx) (line 74: revoke API key)
-- [Users.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/pages/Users.tsx) (line 63: remove role from user)
+- [DataGrid.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/components/DataGrid.tsx) (line 90: delete record)
+- [ObjectDetail.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/pages/ObjectDetail.tsx) (line 68: delete object, line 136: remove field)
+- [Roles.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/pages/Roles.tsx) (line 67: delete role)
+- [Secrets.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/pages/Secrets.tsx) (line 72: delete secret)
+- [Settings.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/pages/Settings.tsx) (line 74: revoke API key)
+- [Users.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/pages/Users.tsx) (line 63: remove role from user)
 
 #### Login Page Refresh
 
-#### [MODIFY] [Login.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/pages/Login.tsx)
+#### [MODIFY] [Login.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/pages/Login.tsx)
 
 - **Background:** Full-screen dark with a subtle CSS-only star-field effect (small radial-gradient dots scattered via CSS, no canvas or JS)
 - **Card:** The Ion Drive logo mark (glowing SVG diamond) above the title. Glass-morphism card (`backdrop-blur`, slight transparency)
@@ -879,7 +879,7 @@ For high-stakes operations (delete object, uninstall block with data), add a **t
 
 ## Router Changes
 
-#### [MODIFY] [router.tsx](file:///i:/ionshift/ion-drive/packages/admin/src/router.tsx)
+#### [MODIFY] [router.tsx](file:///i:/jaredgrabill/ion-drive/packages/admin/src/router.tsx)
 
 Add new routes:
 
@@ -895,7 +895,7 @@ route('/metrics', Metrics),
 
 ## API Client Changes
 
-#### [MODIFY] [api.ts](file:///i:/ionshift/ion-drive/packages/admin/src/lib/api.ts)
+#### [MODIFY] [api.ts](file:///i:/jaredgrabill/ion-drive/packages/admin/src/lib/api.ts)
 
 Add methods for new endpoints:
 
@@ -1010,9 +1010,9 @@ Phase 8 can be parallelized across **4 agents** with clear dependency boundaries
 # All packages — typecheck + lint + test
 pnpm typecheck
 pnpm lint:fix
-pnpm --filter @ionshift/ion-drive-admin test           # New component tests
-pnpm --filter @ionshift/ion-drive-core test            # Core tests still pass (66 existing + new stats/logs)
-pnpm --filter @ionshift/ion-drive-admin build          # Production build succeeds
+pnpm --filter @ion-drive/admin test           # New component tests
+pnpm --filter @ion-drive/core test            # Core tests still pass (66 existing + new stats/logs)
+pnpm --filter @ion-drive/admin build          # Production build succeeds
 ```
 
 ### Manual Verification Checklist

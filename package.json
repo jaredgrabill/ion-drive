@@ -14,10 +14,10 @@
     "postgresql",
     "open-source"
   ],
-  "homepage": "https://github.com/ionshift/ion-drive",
+  "homepage": "https://github.com/jaredgrabill/ion-drive",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ionshift/ion-drive.git"
+    "url": "https://github.com/jaredgrabill/ion-drive.git"
   },
   "author": "IonShift Technologies LLC",
   "license": "Apache-2.0",

@@ -10,7 +10,7 @@
 # the pipeline can be rehearsed without releasing anything.
 #
 # Required repo secret: NPM_TOKEN (npm automation token with publish rights
-# to the @ionshift scope). GHCR uses the built-in GITHUB_TOKEN.
+# to the @ion-drive scope). GHCR uses the built-in GITHUB_TOKEN.
 
 name: Release
 
@@ -68,8 +68,8 @@ jobs:
 
       - name: Guard — CLI must not depend on the retired blocks package
         run: |
-          if node -p "require('./packages/cli/package.json').dependencies?.['@ionshift/ion-drive-blocks'] ?? ''" | grep -q .; then
-            echo "::error::@ionshift/ion-drive-cli still has a runtime dependency on @ionshift/ion-drive-blocks (unpublished; retired per ADR-018) — installs would break."
+          if node -p "require('./packages/cli/package.json').dependencies?.['@ion-drive/blocks'] ?? ''" | grep -q .; then
+            echo "::error::@ion-drive/cli still has a runtime dependency on @ion-drive/blocks (unpublished; retired per ADR-018) — installs would break."
             exit 1
           fi
 

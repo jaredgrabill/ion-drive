@@ -6,7 +6,7 @@
  *
  *  - **registry name** — `crm` or `crm@0.2.0`: looked up in the registry
  *    **index**, a flat JSON file mapping names → versions → artifact URLs.
- *    Default index: the `ionshift/block-registry` repo; override with the
+ *    Default index: the `jaredgrabill/block-registry` repo; override with the
  *    `ION_DRIVE_REGISTRY` env var or `registryUrl` in `ion.config.json`.
  *  - **direct URL** — any `http(s)://…/block.json`, so third-party/self-hosted
  *    blocks work without a registry entry.
@@ -59,7 +59,7 @@ interface RegistryIndex {
 export class RegistryError extends Error {}
 
 export const DEFAULT_REGISTRY_URL =
-  'https://raw.githubusercontent.com/ionshift/blocks/main/registry/index.json';
+  'https://raw.githubusercontent.com/jaredgrabill/ion-drive-blocks/main/registry/index.json';
 
 /** Where the index disk cache lives; TTL keeps `add` after `list` instant. */
 const CACHE_DIR = join(homedir(), '.ion-drive');

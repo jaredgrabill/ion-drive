@@ -51,7 +51,7 @@ relational work).
 
 ```ts
 // blocks/invoicing/index.ts — yours to edit
-import { definePlugin } from '@ionshift/ion-drive-core';
+import { definePlugin } from '@ion-drive/core';
 import { z } from 'zod';
 
 export default definePlugin({

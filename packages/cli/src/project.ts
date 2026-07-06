@@ -3,7 +3,7 @@
  *
  * A *scaffolded project* is a user-owned repo created by `ion-drive init`: a
  * `server.ts` composition root, a `/blocks` directory of vendored block code,
- * and `@ionshift/ion-drive-core` in its dependencies. This module holds the
+ * and `@ion-drive/core` in its dependencies. This module holds the
  * pieces `init`/`add`/`remove`/`dev` share:
  *
  *  - project detection (`isProjectDir`) — how `dev` decides between running the
@@ -33,7 +33,7 @@ export const EMPTY_BARREL = `/**
  * plugin so its actions/hooks register before the server starts. The list is
  * deliberately explicit — greppable and agent-legible, no directory scanning.
  */
-import type { IonPlugin } from '@ionshift/ion-drive-core';
+import type { IonPlugin } from '@ion-drive/core';
 ${IMPORTS_MARKER}
 
 export const blocks: IonPlugin[] = [
@@ -53,8 +53,7 @@ export function isProjectDir(dir = process.cwd()): boolean {
       devDependencies?: Record<string, string>;
     };
     return Boolean(
-      pkg.dependencies?.['@ionshift/ion-drive-core'] ??
-        pkg.devDependencies?.['@ionshift/ion-drive-core'],
+      pkg.dependencies?.['@ion-drive/core'] ?? pkg.devDependencies?.['@ion-drive/core'],
     );
   } catch {
     return false;

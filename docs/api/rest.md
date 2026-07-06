@@ -1,4 +1,4 @@
-﻿# REST API Reference
+# REST API Reference
 
 Every non-system data object automatically exposes a full CRUD surface under
 `/api/v1/data/:object`. Objects are resolved per-request from the live schema
@@ -109,7 +109,7 @@ curl -X DELETE http://localhost:3000/api/v1/data/contacts/bulk \
 ## Using the client SDK
 
 ```ts
-import { IonDriveClient } from '@ionshift/ion-drive-client';
+import { IonDriveClient } from '@ion-drive/client';
 const ion = new IonDriveClient({ baseUrl: 'http://localhost:3000', apiKey });
 
 const contacts = ion.from('contacts');

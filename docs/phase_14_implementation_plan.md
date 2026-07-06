@@ -26,7 +26,7 @@ blank repo → ion-drive init → pnpm dev            # backend + admin console 
 Nothing in this phase works until the packages are installable outside the monorepo. (F23)
 
 - **Changesets** (or equivalent): versioning + changelogs; fixed/locked version across all
-  `@ionshift/*` packages per release — simplest to reason about; revisit independent versioning
+  `@ion-drive/*` packages per release — simplest to reason about; revisit independent versioning
   only if it earns its keep.
 - **npm publish workflow** (GitHub Actions, tag-triggered): `core`, `admin` (must ship its built
   `dist/`), `cli`, `client`. **Not `blocks`** — per the ADR-018 amendment, blocks move to their
@@ -55,7 +55,7 @@ project and boot it. This local-registry rig is reused by every later tier's ver
 The single biggest gap between today's code and the vision — admin currently runs only via the
 Vite dev proxy inside the monorepo.
 
-- `@ionshift/ion-drive-admin` publishes its `dist/`; core mounts it at **`/admin`** via
+- `@ion-drive/admin` publishes its `dist/`; core mounts it at **`/admin`** via
   `@fastify/static` (new dep), gated by `ION_ADMIN_ENABLED` (default on). SPA fallback to
   `index.html`; `no-cache` on the HTML, long-lived immutable caching on hashed assets.
 - Admin resolution: optional peer — core looks up the admin package at runtime and logs a clear
@@ -177,7 +177,7 @@ version), per-file diff, `--take <file>` to accept. shadcn semantics: user-drive
 
 ## Tier 4 — Blocks repo, the registry, and invoicing ↔ Stripe ✅ 2026-07-06
 
-> **Executed under the ADR-018 re-amendment (owner decision): one `ionshift/blocks` repo, not
+> **Executed under the ADR-018 re-amendment (owner decision): one `jaredgrabill/ion-drive-blocks` repo, not
 > repo-per-block.** All four blocks (crm, invoicing, communications, audit) extracted to
 > `I:\ion-shift\blocks` (git-initialized; push is owner-run) with the registry index at
 > `registry/index.json` in the same repo; per-directory layout is identical to a third-party
@@ -194,7 +194,7 @@ distribution path a third-party block would.
 ### 4A: Block repos + authoring toolchain (F22 — now required, not ride-along)
 
 - **Repo-per-block:** extract `crm`, `invoicing`, `communications`, `audit` into
-  `ionshift/block-<name>` — each containing the TS manifest source, emitted `block.json`,
+  `jaredgrabill/block-<name>` — each containing the TS manifest source, emitted `block.json`,
   optional `code/`, README, and CI (manifest `validate` + emit drift + install smoke against a
   core container). Block repos depend on the *published* core for manifest types (Tier 0).
 - **`ion-drive block new`** scaffolds that repo shape; **`ion-drive block validate`** runs the
@@ -205,12 +205,12 @@ distribution path a third-party block would.
 ### 4B: Registry
 
 - Minimal **JSON index** (name → versions → artifact URL), hosted statically (small
-  `ionshift/block-registry` repo or a static site). CLI fetches + caches it; `list` reads it.
+  `jaredgrabill/block-registry` repo or a static site). CLI fetches + caches it; `list` reads it.
   No marketplace features — a flat file.
 
 ### 4C: First logic-bearing block: invoicing ↔ Stripe (the proof + launch demo)
 
-- Vendored code (`code/` in `ionshift/block-invoicing`): `stripe.ts` (client built from a
+- Vendored code (`code/` in `jaredgrabill/block-invoicing`): `stripe.ts` (client built from a
   `SecretsManager` key), action `create_payment_link`, hook `stripe` (signature verify → mark
   invoice paid via `DataService`), optionally a subscription handler on `data.invoices.create`.
 - **Thin** (~200 lines target) and heavily commented — LLM legibility is the product; this file

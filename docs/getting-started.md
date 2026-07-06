@@ -14,7 +14,7 @@ directory, with the platform arriving as npm dependencies (see
 ## 1. Scaffold and run
 
 ```bash
-npx @ionshift/ion-drive-cli init my-app
+npx @ion-drive/cli init my-app
 cd my-app
 
 docker compose up -d      # PostgreSQL
@@ -30,7 +30,7 @@ create your account. (`.env` was generated with fresh secrets; production
 hardening knobs are documented in `.env.example`.)
 
 > **Contributor path:** working on Ion Drive itself? Clone
-> `ionshift/ion-drive` and `pnpm dev` — see [CONTRIBUTING](../CONTRIBUTING.md).
+> `jaredgrabill/ion-drive` and `pnpm dev` — see [CONTRIBUTING](../CONTRIBUTING.md).
 
 ## 2. Create a data object
 
@@ -87,11 +87,11 @@ See the [Querying guide](api/querying.md) for the full operator list.
 Install the zero-dependency client SDK and use the fluent query builder:
 
 ```bash
-npm install @ionshift/ion-drive-client
+npm install @ion-drive/client
 ```
 
 ```ts
-import { IonDriveClient } from '@ionshift/ion-drive-client';
+import { IonDriveClient } from '@ion-drive/client';
 
 const ion = new IonDriveClient({ baseUrl: 'http://localhost:3000' });
 

@@ -24,7 +24,7 @@ import {
 } from './span-attributes.js';
 import { trafficStats } from './traffic-stats.js';
 
-const TRACER_NAME = '@ionshift/ion-drive-core';
+const TRACER_NAME = '@ion-drive/core';
 
 /** Per-request telemetry state, kept off the request object via a WeakMap. */
 interface RequestTelemetry {

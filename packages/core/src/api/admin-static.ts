@@ -1,7 +1,7 @@
 /**
  * Admin console static serving (Phase 14, Tier 1A).
  *
- * Serves the built admin SPA (`@ionshift/ion-drive-admin`'s `dist/`) from the
+ * Serves the built admin SPA (`@ion-drive/admin`'s `dist/`) from the
  * core server at `/admin`, so a scaffolded project — or the standalone Docker
  * image — gets the console with zero extra processes. Gated by
  * `ION_ADMIN_ENABLED` (default on) and mounted only when the assets are
@@ -9,7 +9,7 @@
  *
  * Resolution order for the assets directory:
  *   1. `ION_ADMIN_DIST` — an explicit path (monorepo dev: `packages/admin/dist`);
- *   2. the installed `@ionshift/ion-drive-admin` package (optional peer of core).
+ *   2. the installed `@ion-drive/admin` package (optional peer of core).
  *
  * Caching contract: HTML is `no-cache` (deploys take effect immediately);
  * Vite's content-hashed files under `assets/` are immutable for a year.
@@ -40,7 +40,7 @@ export function resolveAdminDist(explicitPath?: string): string | null {
   }
   try {
     const require = createRequire(import.meta.url);
-    const pkgJson = require.resolve('@ionshift/ion-drive-admin/package.json');
+    const pkgJson = require.resolve('@ion-drive/admin/package.json');
     const dist = path.join(path.dirname(pkgJson), 'dist');
     return existsSync(path.join(dist, 'index.html')) ? dist : null;
   } catch {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * @module @ionshift/ion-drive-cli
+ * @module @ion-drive/cli
  *
  * Ion Drive CLI — the command-line tool for managing Ion Drive projects and
  * installing building blocks (shadcn-style distribution). Space-themed output

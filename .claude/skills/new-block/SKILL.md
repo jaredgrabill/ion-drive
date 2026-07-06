@@ -5,7 +5,7 @@ description: Workflow for authoring or modifying an official building block — 
 
 # Authoring an official building block
 
-Official blocks live in the **separate `ionshift/blocks` repo** (locally at
+Official blocks live in the **separate `jaredgrabill/ion-drive-blocks` repo** (locally at
 `I:\ion-shift\blocks`), one directory per block — NOT in this monorepo
 (packages/blocks retired in Phase 14, ADR-018 re-amendment). Read these first:
 
@@ -35,7 +35,7 @@ Official blocks live in the **separate `ionshift/blocks` repo** (locally at
 
 ## Workflow
 
-1. **Scaffold**: `ion-drive block new <name>` (or copy an existing dir in `ionshift/blocks`).
+1. **Scaffold**: `ion-drive block new <name>` (or copy an existing dir in `jaredgrabill/ion-drive-blocks`).
 2. **Author** `block.json` (+ `code/` if logic). Cross-block needs → `dependencies`.
 3. **Validate**: `ion-drive block validate <dir>` (platform Zod schema + code checks).
 4. **Pack**: `ion-drive block pack <dir>` → commit `dist/block.json` (CI drift-guards it).

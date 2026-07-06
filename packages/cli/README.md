@@ -1,4 +1,4 @@
-# @ionshift/ion-drive-cli
+# @ion-drive/cli
 
 The Ion Drive CLI (`ion-drive`) — project scaffolding and building-block
 management for the Ion Drive platform.
@@ -15,4 +15,4 @@ ion-drive schema pull|diff|push|doctor
 Talks to a running Ion Drive server over HTTP (`--server`, default
 `http://localhost:3000`).
 
-Docs & source: https://github.com/ionshift/ion-drive · License: Apache-2.0
+Docs & source: https://github.com/jaredgrabill/ion-drive · License: Apache-2.0

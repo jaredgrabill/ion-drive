@@ -1,7 +1,7 @@
 ---
-'@ionshift/ion-drive-core': minor
-'@ionshift/ion-drive-admin': minor
-'@ionshift/ion-drive-cli': minor
+'@ion-drive/core': minor
+'@ion-drive/admin': minor
+'@ion-drive/cli': minor
 ---
 
 Phase 14 (framework mode) groundwork:

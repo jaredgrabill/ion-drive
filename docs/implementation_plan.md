@@ -1,4 +1,4 @@
-﻿# Ion Drive — Implementation Plan
+# Ion Drive — Implementation Plan
 
 > [!NOTE]
 > Phases 0–10 below are **complete**. Future work (Phases 11+) and the full findings backlog
@@ -41,7 +41,7 @@ Build Ion Drive: an open-source, self-hosted platform for accelerated custom bus
 > **4. Building blocks in MVP?** The building blocks system is a major feature. Should we include it in the initial release, or ship a solid core first and add blocks in a fast follow? I'd recommend shipping the CLI infrastructure in v1 but deferring the marketplace.
 
 > [!IMPORTANT]
-> **5. Organization name:** The workspace is `ionshift/ion-drive`. Is `ion-shift` the org and `ion-drive` the product? Should npm packages be `@ionshift/ion-drive-core`, `@ionshift/ion-drive`, etc.?
+> **5. Organization name:** The workspace is `jaredgrabill/ion-drive`. Is `ion-shift` the org and `ion-drive` the product? Should npm packages be `@ion-drive/core`, `@jaredgrabill/ion-drive`, etc.?
 
 ---
 
@@ -430,7 +430,7 @@ CLI distribution and block runtime.
 > [!NOTE]
 > **Status: Complete (2026-07-05), verified end-to-end.** A building block is a self-contained, Zod-validated **manifest** (`block.json`) the server applies through its own schema/data/task/role APIs — so REST/GraphQL/MCP light up for a block's objects instantly. See [ADR-013](research/architecture-decisions.md).
 > - **Block runtime** (`packages/core/src/blocks/`): `BlockEngine` facade over a manifest parser, a step-wise `BlockInstaller` (objects→relationships→seed→tasks→roles, each idempotent-friendly), and a `_ion_blocks` ledger. REST at **`/api/v1/blocks`** (RBAC resource `blocks`, gated by `ION_BLOCKS_ENABLED`), with `dryRun` preview and server-enforced dependency/data-loss guards. The engine is **content-agnostic** (installs any submitted manifest; bundles no catalog).
-> - **Official catalog** (`packages/blocks` = `@ionshift/ion-drive-blocks`): `crm`, `invoicing` (→crm), `communications`. TypeScript is the source of truth (`satisfies BlockManifestInput`); an `emit` script writes the distributable `block.json`, guarded against drift by a test.
+> - **Official catalog** (`packages/blocks` = `@ion-drive/blocks`): `crm`, `invoicing` (→crm), `communications`. TypeScript is the source of truth (`satisfies BlockManifestInput`); an `emit` script writes the distributable `block.json`, guarded against drift by a test.
 > - **CLI** (`packages/cli`): `init`/`list`/`add`/`remove`/`dev`, with client-side recursive dependency resolution (topological sort, prune already-installed) and **space-themed** output (nebula-gradient banner, cosmic palette, moon-phase orbit spinner, panels/tables). Talks to a running server via `/api/v1/blocks`.
 > - Incidental platform fix: DDL now quotes literal column defaults (`renderDefaultExpression`) so an enum default like `lead` no longer errors as a column reference.
 > - 25 new unit tests (14 core, 7 blocks, 4 cli); full install→dependency-resolution→uninstall lifecycle verified live against Postgres, including the dependent-block and data-loss guardrails.
@@ -475,7 +475,7 @@ CLI distribution and block runtime.
 > [!NOTE]
 > **Status: Complete (2026-07-05), verified end-to-end.** See [ADR-014](research/architecture-decisions.md).
 > - **Query language:** case-insensitive + aliased filter operators (`name[NEQ]=John`, `age[GT]=30`, `ne`/`>`/`contains`/…) and a free-text **`search`/`q`** term (OR `ILIKE` across text-like columns, escaped), applied through one shared `applyConditions` helper so `totalCount`/pagination reflect search too. Wired consistently across REST, GraphQL (`search` arg), MCP (`query_data.search`), and the OpenAPI list params.
-> - **Client SDK** (`packages/client` = `@ionshift/ion-drive-client`): a **zero-dependency** typed `QueryBuilder` (+ standalone `query()`) and `IonDriveClient` fetch wrapper (`from(object)` → CRUD + bound `.query().…​.list()/.first()/.all()`). Browser- and Node-safe. 17 unit tests.
+> - **Client SDK** (`packages/client` = `@ion-drive/client`): a **zero-dependency** typed `QueryBuilder` (+ standalone `query()`) and `IonDriveClient` fetch wrapper (`from(object)` → CRUD + bound `.query().…​.list()/.first()/.all()`). Browser- and Node-safe. 17 unit tests.
 > - **CLI bootstrap:** `ion-drive init` now scaffolds an optional client starter (`ion/client.ts` + paged-search `example.ts`) — the on-ramp from "server up" to "app querying it".
 > - **Docs:** getting-started, concepts (data-objects, building-blocks), API refs (querying, rest, graphql, mcp), deployment/docker, CONTRIBUTING, refreshed README. Dockerfile builder fixed to copy all workspace manifests.
 > - **Client ergonomics (Supabase-inspired):** after researching Supabase (postgrest-js) and Firestore, the SDK was shaped to feel like Supabase — `from().select().eq()…` with a **thenable** builder (`await` the chain; no terminal call), `.order/.match/.is/.not/.single/.maybeSingle` and `.limit/.offset/.range`. To back `.range()` faithfully the **server gained `limit`/`offset` params** (alongside `page`/`pageSize`; offset-based wins), reflected on REST/GraphQL/MCP/OpenAPI. Errors throw a typed `IonDriveError` (kept over Supabase's `{data,error}` for codebase consistency).
@@ -509,12 +509,12 @@ CLI distribution and block runtime.
 
 ```bash
 # Unit tests (each package)
-pnpm --filter @ionshift/ion-drive-core test
-pnpm --filter @ionshift/ion-drive-admin test
-pnpm --filter @ionshift/ion-drive-cli test
+pnpm --filter @ion-drive/core test
+pnpm --filter @ion-drive/admin test
+pnpm --filter @ion-drive/cli test
 
 # Integration tests (requires PostgreSQL)
-pnpm --filter @ionshift/ion-drive-core test:integration
+pnpm --filter @ion-drive/core test:integration
 
 # E2E tests (full stack)
 pnpm test:e2e

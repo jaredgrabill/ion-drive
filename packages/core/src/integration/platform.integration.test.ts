@@ -20,7 +20,7 @@
  * Run with a reachable Postgres 17 (defaults match CI's service container):
  *
  *   ION_DATABASE_URL=postgresql://ion:ion@localhost:5432/ion_drive \
- *     pnpm --filter @ionshift/ion-drive-core test:integration
+ *     pnpm --filter @ion-drive/core test:integration
  *
  * The suite fails fast with a clear message when Postgres is unreachable —
  * it never silently passes.
@@ -352,7 +352,7 @@ describe('platform lifecycle (integration)', () => {
   });
 
   it('installs, guards, and uninstalls a block', async () => {
-    // Inline manifest — core must not depend on @ionshift/ion-drive-blocks
+    // Inline manifest — core must not depend on @ion-drive/blocks
     // (the package graph is deliberately acyclic; see ADR-013).
     const manifest = {
       name: 'it_kit',

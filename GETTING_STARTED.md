@@ -16,7 +16,7 @@ see [docs/getting-started.md](docs/getting-started.md).
 ## 1. Run it
 
 ```bash
-git clone https://github.com/ionshift/ion-drive.git
+git clone https://github.com/jaredgrabill/ion-drive.git
 cd ion-drive
 pnpm install
 docker compose -f docker/docker-compose.yml up -d   # PostgreSQL

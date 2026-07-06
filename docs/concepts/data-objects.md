@@ -1,4 +1,4 @@
-﻿# Data Objects
+# Data Objects
 
 A **data object** is Ion Drive's core primitive: a table you define at runtime,
 plus the metadata that makes it self-describing. Creating one instantly lights
@@ -63,7 +63,7 @@ what free-text [search](../api/querying.md#free-text-search) matches against.
 | Special | `rating`, `color`, `ip_address` |
 
 Get the live list any time via the MCP `list_column_types` tool or the
-`COLUMN_TYPES` export from `@ionshift/ion-drive-core`.
+`COLUMN_TYPES` export from `@ion-drive/core`.
 
 ## Relationships
 

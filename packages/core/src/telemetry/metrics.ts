@@ -14,7 +14,7 @@
 import { type Attributes, type Meter, metrics } from '@opentelemetry/api';
 import { ION_ATTR } from './span-attributes.js';
 
-const METER_NAME = '@ionshift/ion-drive-core';
+const METER_NAME = '@ion-drive/core';
 
 let meter: Meter | undefined;
 

@@ -9,7 +9,7 @@ my-app/
   server.ts          ← your composition root (~20 lines)
   blocks/            ← vendored building blocks — your code
     index.ts         ← the explicit list of loaded blocks (the "barrel")
-  ion/               ← typed client starter (@ionshift/ion-drive-client)
+  ion/               ← typed client starter (@ion-drive/client)
   .env               ← configuration (generated secrets included)
   docker-compose.yml ← local PostgreSQL
   AGENTS.md          ← instructions for AI coding agents
@@ -25,7 +25,7 @@ or anything under `blocks/`.
 `server.ts` is deliberately thin:
 
 ```ts
-import { createServer } from '@ionshift/ion-drive-core';
+import { createServer } from '@ion-drive/core';
 import { blocks } from './blocks/index.js';
 
 const { server, config } = await createServer(undefined, { plugins: blocks });
@@ -71,7 +71,7 @@ platform upgrade.
 `blocks/index.ts` is an explicit, greppable list — no directory scanning:
 
 ```ts
-import type { IonPlugin } from '@ionshift/ion-drive-core';
+import type { IonPlugin } from '@ion-drive/core';
 // ion-drive:imports
 import invoicing from './invoicing/index.js';
 
@@ -90,5 +90,5 @@ fails fast with `Plugin "<name>" failed to load: …` naming the culprit.
 - **Container mode** — the published Docker image runs core + admin with zero
   code; ideal for evaluating or for schema-only workloads. See
   [Deploying with Docker](../deployment/docker.md).
-- **Contributor mode** — clone the `ionshift/ion-drive` monorepo and `pnpm dev`;
+- **Contributor mode** — clone the `jaredgrabill/ion-drive` monorepo and `pnpm dev`;
   for working on the platform itself. See [CONTRIBUTING](../../CONTRIBUTING.md).

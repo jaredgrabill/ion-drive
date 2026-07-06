@@ -2,7 +2,7 @@
  * CLI ↔ server version-skew guard (Phase 14 Tier 0).
  *
  * The CLI's scaffolds and catalog expectations track the platform release
- * train (all `@ionshift/*` packages share one fixed version). When the CLI
+ * train (all `@ion-drive/*` packages share one fixed version). When the CLI
  * talks to a server on a different `major.minor`, behavior may differ in ways
  * the CLI can't detect — so commands **warn** (never fail) before proceeding.
  * The server's version rides along on `GET /health` and `GET /api/v1/version`;
@@ -38,7 +38,7 @@ export function versionSkewMessage(
   const server = majorMinor(serverVersion);
   if (!cli || !server) return null;
   if (cli.major === server.major && cli.minor === server.minor) return null;
-  return `CLI v${cliVersion} ≠ server v${serverVersion} — scaffolds/commands may not match this server. Align them: pnpm add -g @ionshift/ion-drive-cli@<server version> (or upgrade the server).`;
+  return `CLI v${cliVersion} ≠ server v${serverVersion} — scaffolds/commands may not match this server. Align them: pnpm add -g @ion-drive/cli@<server version> (or upgrade the server).`;
 }
 
 /** Prints the skew warning (if any) for a server version. Never throws. */

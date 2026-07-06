@@ -36,13 +36,13 @@ Installing is a **two-part operation** (ADR-018):
    `requires` contract), applies the schema, and records the `_ion_blocks`
    ledger.
 
-The **block runtime** in `@ionshift/ion-drive-core` is *content-agnostic* — it
+The **block runtime** in `@ion-drive/core` is *content-agnostic* — it
 installs any validated manifest it's handed.
 
 ## Official catalog & the registry
 
 Official blocks live in the separate
-[`ionshift/blocks`](https://github.com/ionshift/blocks) repository — one
+[`jaredgrabill/ion-drive-blocks`](https://github.com/jaredgrabill/ion-drive-blocks) repository — one
 directory per block, distributed through the exact same pipeline a third-party
 block uses: a flat **registry index** (`registry/index.json`) maps
 `name → version → artifact URL`.

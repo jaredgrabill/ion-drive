@@ -172,7 +172,7 @@ importers:
         specifier: ^2.4.0
         version: 2.4.2
     devDependencies:
-      '@ionshift/ion-drive-core':
+      '@ion-drive/core':
         specifier: workspace:^
         version: link:../core
       '@types/fs-extra':
@@ -308,7 +308,7 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
-      '@ionshift/ion-drive-admin':
+      '@ion-drive/admin':
         specifier: workspace:^
         version: link:../admin
       '@types/node':

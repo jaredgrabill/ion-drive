@@ -133,7 +133,7 @@ export function Login() {
       </div>
 
       <a
-        href="https://github.com/ionshift/ion-drive"
+        href="https://github.com/jaredgrabill/ion-drive"
         target="_blank"
         rel="noreferrer"
         className="mt-6 flex items-center gap-1.5 text-xs text-white/40 transition-colors hover:text-white/70"

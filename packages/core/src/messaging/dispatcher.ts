@@ -24,7 +24,7 @@ import type { IonEvent, Subscription } from './event-types.js';
 import type { OutboxBus } from './outbox-bus.js';
 import { topicLikePrefix, topicMatches } from './topic-match.js';
 
-const TRACER_NAME = '@ionshift/ion-drive-core';
+const TRACER_NAME = '@ion-drive/core';
 
 export interface EventDispatcherOptions {
   logger: LoggerProvider;

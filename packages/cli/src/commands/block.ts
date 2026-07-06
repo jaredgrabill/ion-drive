@@ -3,7 +3,7 @@
  * (Phase 14 Tier 4, ADR-018 amendment).
  *
  * Blocks live outside the platform monorepo (official ones as directories of
- * the `ionshift/blocks` repo; third-party ones anywhere), each authored in the
+ * the `jaredgrabill/ion-drive-blocks` repo; third-party ones anywhere), each authored in the
  * same simple layout:
  *
  *   block.json   — the manifest (source of truth; no embedded code)
@@ -30,7 +30,7 @@ import { c, log, sym } from '../ui.js';
 function manifestSkeleton(name: string): string {
   return `${JSON.stringify(
     {
-      $schema: 'https://ionshift.dev/schemas/block-manifest.json',
+      $schema: 'https://ion-drive.dev/schemas/block-manifest.json',
       name,
       version: '0.1.0',
       title: titleCase(name),
@@ -62,7 +62,7 @@ function codeIndexSkeleton(name: string): string {
  * declares (actions/hooks) in \`setup\`; install fails with a clear error if a
  * declared handler is missing.
  */
-import { definePlugin } from '@ionshift/ion-drive-core';
+import { definePlugin } from '@ion-drive/core';
 
 export default definePlugin({
   name: '${name}',
@@ -82,7 +82,7 @@ export default definePlugin({
 function blockReadme(name: string): string {
   return `# block-${name}
 
-An [Ion Drive](https://github.com/ionshift/ion-drive) building block.
+An [Ion Drive](https://github.com/jaredgrabill/ion-drive) building block.
 
 - \`block.json\` — the manifest (objects, actions, hooks, requirements)
 - \`code/\` — vendored TypeScript copied into consuming projects at \`blocks/${name}/\`
@@ -112,7 +112,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: npm install -g @ionshift/ion-drive-cli @ionshift/ion-drive-core
+      - run: npm install -g @ion-drive/cli @ion-drive/core
       - run: ion-drive block validate
       - run: ion-drive block pack
       # The committed artifact must match the sources (emit drift guard).
@@ -172,13 +172,13 @@ async function loadCoreValidator(): Promise<CoreValidator | null> {
   const { pathToFileURL } = await import('node:url');
   try {
     const projectRequire = createRequire(join(process.cwd(), 'package.json'));
-    const resolved = projectRequire.resolve('@ionshift/ion-drive-core');
+    const resolved = projectRequire.resolve('@ion-drive/core');
     return (await import(pathToFileURL(resolved).href)) as unknown as CoreValidator;
   } catch {
     /* fall through to the CLI's own tree */
   }
   try {
-    return (await import('@ionshift/ion-drive-core')) as unknown as CoreValidator;
+    return (await import('@ion-drive/core')) as unknown as CoreValidator;
   } catch {
     return null;
   }
@@ -215,7 +215,7 @@ export async function blockValidateCommand(dir = '.'): Promise<void> {
     }
   } else {
     log.warn(
-      'Could not load @ionshift/ion-drive-core for authoritative validation — install it (or run inside an Ion Drive project). Structural checks only.',
+      'Could not load @ion-drive/core for authoritative validation — install it (or run inside an Ion Drive project). Structural checks only.',
     );
   }
 

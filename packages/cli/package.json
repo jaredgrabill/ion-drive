@@ -1,13 +1,13 @@
 {
-  "name": "@ionshift/ion-drive-cli",
+  "name": "@ion-drive/cli",
   "version": "0.1.0",
   "description": "Ion Drive CLI — project initialization, building block management, and development tools",
   "license": "Apache-2.0",
   "author": "IonShift Technologies LLC",
-  "homepage": "https://github.com/ionshift/ion-drive",
+  "homepage": "https://github.com/jaredgrabill/ion-drive",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ionshift/ion-drive.git",
+    "url": "https://github.com/jaredgrabill/ion-drive.git",
     "directory": "packages/cli"
   },
   "type": "module",
@@ -35,7 +35,7 @@
     "fs-extra": "^11.2.0"
   },
   "devDependencies": {
-    "@ionshift/ion-drive-core": "workspace:^",
+    "@ion-drive/core": "workspace:^",
     "@types/node": "^22.10.0",
     "@types/prompts": "^2.4.0",
     "@types/fs-extra": "^11.0.0",

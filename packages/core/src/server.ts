@@ -136,7 +136,7 @@ async function mountAdminConsole(server: FastifyInstance, config: IonDriveConfig
     server.log.info('Admin console mounted at /admin');
   } else {
     server.log.info(
-      'Admin console not installed — add @ionshift/ion-drive-admin (or set ION_ADMIN_DIST) to serve it at /admin',
+      'Admin console not installed — add @ion-drive/admin (or set ION_ADMIN_DIST) to serve it at /admin',
     );
   }
 }

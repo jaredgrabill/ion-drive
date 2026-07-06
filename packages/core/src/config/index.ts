@@ -146,13 +146,13 @@ const configSchema = z.object({
 
   /**
    * Serve the built admin console SPA at `/admin` when the
-   * `@ionshift/ion-drive-admin` package (or `ION_ADMIN_DIST`) is present.
+   * `@ion-drive/admin` package (or `ION_ADMIN_DIST`) is present.
    */
   adminEnabled: envBoolean(true),
 
   /**
    * Explicit path to a built admin `dist/` directory. Overrides the default
-   * lookup of the installed `@ionshift/ion-drive-admin` package — useful in
+   * lookup of the installed `@ion-drive/admin` package — useful in
    * the monorepo (point at `packages/admin/dist`) or for custom builds.
    */
   adminDistPath: z.string().optional(),

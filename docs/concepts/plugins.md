@@ -1,4 +1,4 @@
-﻿# Plugins
+# Plugins
 
 Plugins extend Ion Drive **without forking core**. A plugin is a small npm
 package that, at boot, can **replace** an infrastructure service (cache, email,
@@ -37,7 +37,7 @@ A plugin is an object with a `name` and a `setup` hook (plus optional `onReady`
 / `onShutdown`). Use `definePlugin` for authoring-time type-checking:
 
 ```ts
-import { definePlugin, CACHE_SERVICE } from '@ionshift/ion-drive-core';
+import { definePlugin, CACHE_SERVICE } from '@ion-drive/core';
 import { RedisCache } from './redis-cache.js';
 
 export default definePlugin({

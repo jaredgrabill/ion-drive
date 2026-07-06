@@ -101,7 +101,7 @@ describe('isProjectDir', () => {
     expect(isProjectDir(dir)).toBe(false);
     writeFileSync(
       join(dir, 'package.json'),
-      JSON.stringify({ dependencies: { '@ionshift/ion-drive-core': '^0.1.0' } }),
+      JSON.stringify({ dependencies: { '@ion-drive/core': '^0.1.0' } }),
       'utf8',
     );
     expect(isProjectDir(dir)).toBe(true);

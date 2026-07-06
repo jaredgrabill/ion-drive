@@ -56,7 +56,7 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 | F16 | **No file/blob storage** | "Self-hosted Firebase" implies a storage story. Nothing exists — needs a `StorageProvider` port (Phase 9 pattern), a local-disk default, an S3-compatible plugin, and a `file` field type. |
 | F17 | **`removeRelationship` missing** | `SchemaManager` cannot delete relationships; snapshot push warns/skips relationship removals; the admin has no delete-relationship action. |
 | F18 | **Delivery DLQ has no surface** | Failed event deliveries (`maxAttempts` exhausted) sit in `_ion_event_deliveries` with no admin view, no retry button, no alerting. |
-| F19 | **External plugin packages don't exist yet** | The ports (cache/email/bus) are proven with in-core defaults; `@ionshift/plugin-redis`, `plugin-sendgrid`/SMTP, `plugin-rabbitmq` are still to be built as separate repos/packages. |
+| F19 | **External plugin packages don't exist yet** | The ports (cache/email/bus) are proven with in-core defaults; `@ion-drive/plugin-redis`, `plugin-sendgrid`/SMTP, `plugin-rabbitmq` are still to be built as separate repos/packages. |
 
 ### 1.4 CLI & end-user developer experience ✅ (Phase 14, 2026-07-06)
 
@@ -64,8 +64,8 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 |:--|:--|:--|
 | F20 | ~~**`ion-drive dev` is monorepo-only**~~ | ✅ 2026-07-06 — `dev` detects a scaffolded project (`server.ts` + core dep), brings up the compose Postgres best-effort, and runs `tsx watch server.ts` (hot-reload of `server.ts` + `/blocks`); the monorepo contributor path remains the fallback. |
 | F21 | ~~**`init` doesn't scaffold infrastructure**~~ | ✅ 2026-07-06 — `init [dir]` scaffolds the full framework project: composition root, blocks barrel, `.env` (generated secrets) + `.env.example` (hardening knobs), `docker-compose.yml`, tsconfig, README, client starter. |
-| F22 | ~~**No block-authoring support**~~ | ✅ 2026-07-06 — `ion-drive block new/validate/pack` (scaffold, platform-Zod validation via project-first core import, artifact packing with `code/` embedded). Official blocks live in the separate `ionshift/blocks` repo (ADR-018 re-amendment: single repo, registry index in-repo). |
-| F23 | 🟡 **Nothing is published** | Pipeline built 2026-07-06 (Phase 14 Tier 0); packages verified installable via tarballs (the whole Phase 14 live loop ran a scaffolded project on them). Remaining: the **first real publish** (owner-run — needs `NPM_TOKEN` secret + `v0.x` tag), Docker image not yet pushed, and the `ionshift/blocks` repo needs pushing to GitHub (the CLI's default registry URL points at it). |
+| F22 | ~~**No block-authoring support**~~ | ✅ 2026-07-06 — `ion-drive block new/validate/pack` (scaffold, platform-Zod validation via project-first core import, artifact packing with `code/` embedded). Official blocks live in the separate `jaredgrabill/ion-drive-blocks` repo (ADR-018 re-amendment: single repo, registry index in-repo). |
+| F23 | 🟡 **Nothing is published** | Pipeline built 2026-07-06 (Phase 14 Tier 0); packages verified installable via tarballs (the whole Phase 14 live loop ran a scaffolded project on them). Remaining: the **first real publish** (owner-run — needs `NPM_TOKEN` secret + `v0.x` tag), Docker image not yet pushed, and the `jaredgrabill/ion-drive-blocks` repo needs pushing to GitHub (the CLI's default registry URL points at it). |
 | F24 | ~~**No agent-facing project instructions**~~ | ✅ 2026-07-06 — `init` ships `AGENTS.md` (MCP endpoint, query language, preview-first schema contract, SDK idioms, block rules) plus `.claude/skills/{ion-schema-change,ion-add-block}`. |
 
 ### 1.5 Deferred polish backlog ⚪
@@ -109,8 +109,8 @@ All tiers complete and verified end-to-end (a scaffolded project on tarball inst
 whole loop: init → dev → registry add → local-path add with vendored Stripe code → action via
 REST + MCP → signed/replay-protected webhook → hot-reload edit → guarded remove → RBAC).
 Absorbed **F20, F21, F22, F24**; F23 remains 🟡 pending the owner-run first publish + pushing
-`ionshift/blocks`. Executed under the ADR-018 **re-amendment**: official blocks live in one
-`ionshift/blocks` repo (registry index in-repo) instead of repo-per-block. Follow-ups:
+`jaredgrabill/ion-drive-blocks`. Executed under the ADR-018 **re-amendment**: official blocks live in one
+`jaredgrabill/ion-drive-blocks` repo (registry index in-repo) instead of repo-per-block. Follow-ups:
 - **`ion-drive diff <block>`** (Tier 3D stretch — slipped as planned; the ledger's manifest
   snapshot is the base-version anchor).
 - **CI-automated scaffold boot**: the framework path is unit/integration-covered, but a CI job
@@ -143,7 +143,7 @@ Claude Code loads on demand; repo-level `CLAUDE.md` is always-on context.)
 |:--|:--|
 | **`surface-parity`** | The #1 recurring convention. Checklist for adding any data-layer capability: query-parser → DataService → REST → GraphQL → MCP → OpenAPI → client SDK → docs → tests. Phase 10's `expand` shipping REST-only (F6) is exactly the miss this prevents. |
 | **`live-smoke`** | Every phase ended with an N-check live smoke, re-invented each time. Codify: boot against dev Postgres (`docker/docker-compose.yml`, port overridable via env), sign up first admin, mint API key, run checks, tear down. Becomes the seed for integration tests (Phase 11). |
-| **`new-block`** | Authoring a catalog block: TS manifest with `satisfies BlockManifestInput` → `pnpm --filter @ionshift/ion-drive-blocks emit` → drift test → registry entry → getting-started catalog line (prevents F4-style drift). |
+| **`new-block`** | Authoring a catalog block: TS manifest with `satisfies BlockManifestInput` → `pnpm --filter @ion-drive/blocks emit` → drift test → registry entry → getting-started catalog line (prevents F4-style drift). |
 | **`finish-phase`** | The close-out ritual: ADR → `implementation_plan.md` status note → `CLAUDE.md` status section → roadmap pruning → memory follow-ups. Consistently done so far but only by convention. |
 
 > ✅ All four skills were created 2026-07-06 under `.claude/skills/`.

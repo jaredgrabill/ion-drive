@@ -1,13 +1,13 @@
 {
-  "name": "@ionshift/ion-drive-admin",
+  "name": "@ion-drive/admin",
   "version": "0.1.0",
   "description": "Ion Drive admin console — configuration, monitoring, and data management UI",
   "license": "Apache-2.0",
   "author": "IonShift Technologies LLC",
-  "homepage": "https://github.com/ionshift/ion-drive",
+  "homepage": "https://github.com/jaredgrabill/ion-drive",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ionshift/ion-drive.git",
+    "url": "https://github.com/jaredgrabill/ion-drive.git",
     "directory": "packages/admin"
   },
   "type": "module",

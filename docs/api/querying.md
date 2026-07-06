@@ -1,8 +1,8 @@
-﻿# Querying: search, filters, sorting, pagination
+# Querying: search, filters, sorting, pagination
 
 Every list endpoint in Ion Drive speaks the same query language. It is designed
 to be **readable in a URL**, **easy to build by hand**, and **consistent across
-REST, GraphQL, and MCP**. The `@ionshift/ion-drive-client` SDK builds these queries for
+REST, GraphQL, and MCP**. The `@ion-drive/client` SDK builds these queries for
 you in a type-safe way.
 
 - [Free-text search](#free-text-search)
@@ -154,14 +154,14 @@ GET /api/v1/data/contacts?expand=company
 
 ## The client query builder
 
-`@ionshift/ion-drive-client` ships a fluent, **awaitable** builder inspired by Supabase's
+`@ion-drive/client` ships a fluent, **awaitable** builder inspired by Supabase's
 postgrest-js — you never assemble these strings by hand. It normalises operator
 aliases, encodes values (dates become ISO strings), and joins list values for
 you. Start from `.from(object).select(...)`, chain filters/modifiers, and
 `await` the chain — no terminal call needed.
 
 ```ts
-import { IonDriveClient } from '@ionshift/ion-drive-client';
+import { IonDriveClient } from '@ion-drive/client';
 
 const ion = new IonDriveClient({
   baseUrl: 'http://localhost:3000',
@@ -190,7 +190,7 @@ Prefer to build only the string (for a `fetch` you already own)? Use the
 standalone `query()` factory:
 
 ```ts
-import { query } from '@ionshift/ion-drive-client';
+import { query } from '@ion-drive/client';
 
 const qs = query()
   .neq('name', 'John')

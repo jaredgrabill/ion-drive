@@ -1,4 +1,4 @@
-﻿# Phase 9 — Extensibility Core: Plugin Architecture, Message Bus & Auditing
+# Phase 9 — Extensibility Core: Plugin Architecture, Message Bus & Auditing
 
 > **Status:** ✅ Done — 2026-07-05. Verified: all-package typecheck clean; 115 core + 9 blocks unit tests pass; 9/9 live audit smoke checks pass on Postgres; Biome clean (only pre-existing complexity warnings).
 >
@@ -26,7 +26,7 @@ See **[ADR-015](research/architecture-decisions.md)** for the decision record an
 | **Bus durability** | Postgres **transactional outbox** (`_ion_events`) written in the same transaction as the CRUD write. In-process dispatcher relays to subscribers; Redis adapter can relay from the same outbox later. |
 | **Delivery model** | **Named consumer groups**, at-most-once *per group*, via `SELECT … FOR UPDATE SKIP LOCKED` on `_ion_event_deliveries`. `perInstance` flag toggles cluster-once (default) vs once-per-instance. No broker required. |
 | **Audit identity** | **Deferred.** Only `created_at`/`updated_at`; event payload is `{ object, id, op, before, after, diff }` with no `actorId`. `created_by`/`updated_by` + actor threading are a later pass (`changed_by` column stubbed for forward-compat). |
-| **Audit POC** | An **`audit` building block** in `@ionshift/ion-drive-blocks`: declares an `audit_log` object + a `data.*.{created,updated,deleted}` subscription handled by a generic built-in `persist_event` handler. |
+| **Audit POC** | An **`audit` building block** in `@ion-drive/blocks`: declares an `audit_log` object + a `data.*.{created,updated,deleted}` subscription handled by a generic built-in `persist_event` handler. |
 
 ---
 
@@ -143,7 +143,7 @@ Export `ServiceRegistry`, `definePlugin`, `IonPlugin`, `PluginContext`, `Message
 
 ## Verification Plan
 
-### Automated tests (`pnpm --filter @ionshift/ion-drive-core test`)
+### Automated tests (`pnpm --filter @ion-drive/core test`)
 - **Registry:** default resolves; later `set` (plugin override) wins; `require` throws on missing token.
 - **Plugin host:** `loadPlugins` runs `setup` in order; an override registered in `setup` is what dependents resolve.
 - **`computeDiff`:** changed/added/removed fields captured; `created_at`/`updated_at`/`*_by` **never** appear.

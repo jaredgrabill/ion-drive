@@ -87,7 +87,7 @@ function runMonorepoDev(env: NodeJS.ProcessEnv): void {
   log.step(`Igniting the core engine ${sym.rocket}`);
   log.raw();
 
-  const child = spawn('pnpm', ['--filter', '@ionshift/ion-drive-core', 'dev'], {
+  const child = spawn('pnpm', ['--filter', '@ion-drive/core', 'dev'], {
     stdio: 'inherit',
     shell: true,
     env,

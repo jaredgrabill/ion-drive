@@ -36,7 +36,7 @@ import type {
 } from './action-registry.js';
 import type { BlockManifest, InstalledBlock } from './block-types.js';
 
-const TRACER_NAME = '@ionshift/ion-drive-core';
+const TRACER_NAME = '@ion-drive/core';
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Error codes map to HTTP statuses in the routes (see api/block-routes.ts). */

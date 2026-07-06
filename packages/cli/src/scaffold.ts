@@ -4,7 +4,7 @@
  * The ultimate point of the CLI is to bootstrap a new project fast: install
  * building blocks on the server, then talk to them from application code. This
  * writes a tiny, ready-to-run TypeScript starter that wires up the
- * `@ionshift/ion-drive-client` SDK and demonstrates the paged-search query DSL (text
+ * `@ion-drive/client` SDK and demonstrates the paged-search query DSL (text
  * search + property operators). Files are only written when missing — the
  * scaffold never clobbers a consumer's code.
  */
@@ -22,7 +22,7 @@ const CLIENT_TS = `/**
  * Configure it with environment variables so the same code runs in dev and
  * production without edits.
  */
-import { IonDriveClient } from '@ionshift/ion-drive-client';
+import { IonDriveClient } from '@ion-drive/client';
 
 export const ion = new IonDriveClient({
   baseUrl: process.env.ION_DRIVE_URL ?? 'http://localhost:3000',
@@ -64,12 +64,12 @@ main().catch((err) => {
 const README_MD = `# Ion Drive starter
 
 This folder was scaffolded by \`ion-drive init\`. It wires up the
-[\`@ionshift/ion-drive-client\`](https://github.com/ionshift/ion-drive) SDK.
+[\`@ion-drive/client\`](https://github.com/jaredgrabill/ion-drive) SDK.
 
 ## Setup
 
 \`\`\`bash
-npm install @ionshift/ion-drive-client
+npm install @ion-drive/client
 export ION_DRIVE_URL=http://localhost:3000
 export ION_DRIVE_API_KEY=iond_...   # optional, if auth is enabled
 \`\`\`
@@ -104,7 +104,7 @@ await ion.from('contacts').update(id, { status: 'archived' });
 await ion.from('contacts').delete(id);
 
 // Or build a raw query string for an existing fetch:
-import { query } from '@ionshift/ion-drive-client';
+import { query } from '@ion-drive/client';
 const qs = query().neq('name', 'John').gt('age', 21).toQueryString();
 // => "name[neq]=John&age[gt]=21"
 fetch(\`\${baseUrl}/api/v1/data/contacts?\${qs}\`);
@@ -149,5 +149,5 @@ export function reportStarter(created: string[]): void {
   for (const path of created) {
     log.raw(`  ${sym.check} ${c.cyan(path)}`);
   }
-  log.raw(`  ${c.meteor('Install the SDK:')} ${c.star('npm install @ionshift/ion-drive-client')}`);
+  log.raw(`  ${c.meteor('Install the SDK:')} ${c.star('npm install @ion-drive/client')}`);
 }

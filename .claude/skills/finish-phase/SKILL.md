@@ -20,8 +20,8 @@ pnpm build
 
 Plus a **live smoke** against real Postgres — see the `live-smoke` skill. If the admin was
 touched, check the initial bundle stays under the ~200KB gz budget (build output of
-`pnpm --filter @ionshift/ion-drive-admin build`). Codify durable smoke checks as
-`*.integration.test.ts` (run via `pnpm --filter @ionshift/ion-drive-core test:integration`).
+`pnpm --filter @ion-drive/admin build`). Codify durable smoke checks as
+`*.integration.test.ts` (run via `pnpm --filter @ion-drive/core test:integration`).
 
 ## 2. New ADR
 

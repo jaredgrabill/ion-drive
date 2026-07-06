@@ -1,5 +1,5 @@
 /**
- * @module @ionshift/ion-drive-core
+ * @module @ion-drive/core
  *
  * Ion Drive Core — The runtime engine for dynamic data objects,
  * automatic API generation, and LLM-native platform operations.

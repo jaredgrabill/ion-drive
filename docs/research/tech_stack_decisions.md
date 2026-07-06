@@ -307,7 +307,7 @@ ion-drive/
 # Minimum viable deployment
 services:
   ion-drive:
-    image: ionshift/ion-drive:latest
+    image: jaredgrabill/ion-drive:latest
     ports:
       - "3000:3000"
     environment:

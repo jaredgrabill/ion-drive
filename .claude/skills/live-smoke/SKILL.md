@@ -22,8 +22,8 @@ but the port may be remapped locally (this dev machine runs it on **5433**). **H
 ## 2. Build and start the server
 
 ```bash
-pnpm --filter @ionshift/ion-drive-core build
-node packages/core/dist/server.js     # or: pnpm --filter @ionshift/ion-drive-core dev
+pnpm --filter @ion-drive/core build
+node packages/core/dist/server.js     # or: pnpm --filter @ion-drive/core dev
 ```
 
 Run it in the background, capture its log to the scratch dir, and poll `GET /health` until
@@ -78,7 +78,7 @@ keeping rather than starting from scratch; it is picked up by
 `vitest.integration.config.ts` (excluded from the unit run) and executed with:
 
 ```bash
-pnpm --filter @ionshift/ion-drive-core test:integration
+pnpm --filter @ion-drive/core test:integration
 ```
 
 Two footguns the seed suite already solves — copy its patterns: `createServer()` returns

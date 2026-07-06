@@ -26,7 +26,7 @@ export interface InitOptions {
   serverUrl?: string;
   apiKey?: string;
   yes?: boolean;
-  /** Scaffold a TypeScript starter using @ionshift/ion-drive-client (default: yes). */
+  /** Scaffold a TypeScript starter using @ion-drive/client (default: yes). */
   starter?: boolean;
   /** Only write ion.config.json (pre-Phase-14 behavior). */
   configOnly?: boolean;

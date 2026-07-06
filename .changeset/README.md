@@ -1,10 +1,10 @@
 # Changesets
 
-Release management for the `@ionshift/*` packages ([changesets docs](https://github.com/changesets/changesets)).
+Release management for the `@ion-drive/*` packages ([changesets docs](https://github.com/changesets/changesets)).
 
 The publishable packages — `core`, `admin`, `cli`, `client` — are a **fixed
 group**: every release bumps all four to the same version (ADR-018 / Phase 14
-Tier 0). `@ionshift/ion-drive-blocks` is ignored — blocks move to their own
+Tier 0). `@ion-drive/blocks` is ignored — blocks move to their own
 repos and version independently (ADR-018 amendment).
 
 Workflow:

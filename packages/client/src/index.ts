@@ -1,11 +1,11 @@
 /**
- * @module @ionshift/ion-drive-client
+ * @module @ion-drive/client
  *
  * Ion Drive client SDK — a zero-dependency, typed query builder and fetch
  * client for the Ion Drive REST API. Import it into any project (Node or
  * browser) that talks to an Ion Drive server:
  *
- *   import { IonDriveClient, query } from '@ionshift/ion-drive-client';
+ *   import { IonDriveClient, query } from '@ion-drive/client';
  *
  *   const ion = new IonDriveClient({ baseUrl, apiKey });
  *   const { data } = await ion.from('contacts').select().search('acme').page(1);

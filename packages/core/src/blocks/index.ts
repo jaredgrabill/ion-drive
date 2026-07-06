@@ -9,7 +9,7 @@
  *
  * Distribution note: the engine is **content-agnostic**. It installs whatever
  * validated manifest it is handed — a registry artifact resolved by the CLI
- * (the official catalog lives in the separate `ionshift/blocks` repo, ADR-018),
+ * (the official catalog lives in the separate `jaredgrabill/ion-drive-blocks` repo, ADR-018),
  * a local `block.json`, or a POSTed body. Keeping the catalog out of the engine
  * avoids coupling the runtime to any example content. See ADR-013/ADR-018.
  */

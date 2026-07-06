@@ -71,7 +71,7 @@ Because nothing ever forces a merge between "framework upgrade" and "my business
 ### Scaffold your backend
 
 ```bash
-npx @ionshift/ion-drive-cli init my-app
+npx @ion-drive/cli init my-app
 cd my-app
 
 docker compose up -d    # PostgreSQL
@@ -103,11 +103,11 @@ as an MCP tool.
 ### Query it from code
 
 ```bash
-npm install @ionshift/ion-drive-client
+npm install @ion-drive/client
 ```
 
 ```ts
-import { IonDriveClient } from '@ionshift/ion-drive-client';
+import { IonDriveClient } from '@ion-drive/client';
 
 const ion = new IonDriveClient({ baseUrl: 'http://localhost:3000' });
 

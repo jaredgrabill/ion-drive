@@ -6,7 +6,7 @@ conventions we follow, and how to propose changes.
 ## Getting set up
 
 ```bash
-git clone https://github.com/ionshift/ion-drive.git
+git clone https://github.com/jaredgrabill/ion-drive.git
 cd ion-drive
 pnpm install
 docker compose -f docker/docker-compose.yml up -d   # Postgres for dev
@@ -21,13 +21,13 @@ pnpm dev
 
 | Package | What it is |
 |:---|:---|
-| `packages/core` (`@ionshift/ion-drive-core`) | Fastify backend: schema engine, dynamic REST/GraphQL/MCP APIs, auth/RBAC, secrets, telemetry, tasks, blocks, and the extensibility core (service registry + plugin host, message bus, provider ports). |
-| `packages/admin` (`@ionshift/ion-drive-admin`) | React 19 + Vite admin console. Pure API consumer. |
-| `packages/cli` (`@ionshift/ion-drive-cli`) | Space-themed CLI for project init and building blocks. |
-| `packages/client` (`@ionshift/ion-drive-client`) | Zero-dependency typed query builder + REST client SDK. |
+| `packages/core` (`@ion-drive/core`) | Fastify backend: schema engine, dynamic REST/GraphQL/MCP APIs, auth/RBAC, secrets, telemetry, tasks, blocks, and the extensibility core (service registry + plugin host, message bus, provider ports). |
+| `packages/admin` (`@ion-drive/admin`) | React 19 + Vite admin console. Pure API consumer. |
+| `packages/cli` (`@ion-drive/cli`) | Space-themed CLI for project init and building blocks. |
+| `packages/client` (`@ion-drive/client`) | Zero-dependency typed query builder + REST client SDK. |
 
 The official building-block catalog lives in the separate
-[`ionshift/blocks`](https://github.com/ionshift/blocks) repository (MIT licensed),
+[`jaredgrabill/ion-drive-blocks`](https://github.com/jaredgrabill/ion-drive-blocks) repository (MIT licensed),
 distributed through the block registry — see
 [Building Blocks](docs/concepts/building-blocks.md).
 
@@ -38,7 +38,7 @@ for a deeper map and current status.
 
 ```bash
 pnpm test                              # unit tests (all packages)
-pnpm --filter @ionshift/ion-drive-core test     # one package
+pnpm --filter @ion-drive/core test     # one package
 pnpm test:integration                  # requires Postgres
 pnpm typecheck                         # tsc --noEmit everywhere
 pnpm lint:fix                          # Biome check + autofix
@@ -63,7 +63,7 @@ pnpm build                             # tsc per package
   (`registerXxxRoutes(...)`). Prefer custom typed errors over bare throws.
 - **Keep the API surfaces in lockstep.** A capability added to REST should be
   reflected in GraphQL, MCP, and the OpenAPI spec — and, where relevant, the
-  `@ionshift/ion-drive-client` SDK.
+  `@ion-drive/client` SDK.
 - **Swap infrastructure via ports, not edits.** Cache, email, logging, and the
   message-bus transport are pluggable services resolved from a registry token; a
   plugin overrides them without touching core (see
@@ -113,5 +113,5 @@ public issue.
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-project's [Apache 2.0](LICENSE) license (blocks in the separate `ionshift/blocks`
+project's [Apache 2.0](LICENSE) license (blocks in the separate `jaredgrabill/ion-drive-blocks`
 repository are MIT). See [NOTICE](NOTICE) for trademark terms that apply to all packages.
