@@ -373,7 +373,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
 
   server.tool(
     'query_data',
-    'Query records from a data object with optional filtering, free-text search, sorting, and pagination.',
+    'Query records from a data object with optional filtering, free-text search, sorting, pagination, and relationship expansion.',
     {
       object_name: z.string().describe('Name of the data object to query'),
       search: z
@@ -416,14 +416,21 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       page_size: z.number().optional().describe('Page size (default: 25, max: 100)'),
       limit: z.number().optional().describe('Offset-based: max rows to return (max: 100)'),
       offset: z.number().optional().describe('Offset-based: rows to skip'),
+      expand: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Relationship names to expand — each related record (or list) is attached under the relationship name. Valid values are the relationship names on the object (see get_object).',
+        ),
     },
-    async ({ object_name, search, filters, sort, page, page_size, limit, offset }) => {
+    async ({ object_name, search, filters, sort, page, page_size, limit, offset, expand }) => {
       try {
         const result = await dataService.list(object_name, {
           filters: filters as NonNullable<Parameters<typeof dataService.list>[1]>['filters'],
           search,
           sort,
           pagination: { page: page ?? 1, pageSize: page_size ?? 25, limit, offset },
+          expand,
         });
 
         return {
@@ -440,14 +447,20 @@ export function createMcpServer(options: McpServerOptions): McpServer {
 
   server.tool(
     'get_record',
-    'Get a single record by its ID.',
+    'Get a single record by its ID, optionally expanding related records.',
     {
       object_name: z.string().describe('Name of the data object'),
       id: z.string().describe('Record UUID'),
+      expand: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Relationship names to expand — each related record (or list) is attached under the relationship name. Valid values are the relationship names on the object (see get_object).',
+        ),
     },
-    async ({ object_name, id }) => {
+    async ({ object_name, id, expand }) => {
       try {
-        const result = await dataService.getById(object_name, id);
+        const result = await dataService.getById(object_name, id, { expand });
         if (!result) {
           return {
             content: [

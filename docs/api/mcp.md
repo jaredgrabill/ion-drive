@@ -29,8 +29,8 @@ Point an MCP client at `http://localhost:3000/api/v1/mcp`. In a client config
 
 | Tool | Description |
 |:---|:---|
-| `query_data` | List records with `search`, `filters`, `sort`, and pagination. |
-| `get_record` | Fetch a single record by id. |
+| `query_data` | List records with `search`, `filters`, `sort`, pagination, and `expand`. |
+| `get_record` | Fetch a single record by id, optionally with `expand`. |
 | `create_record` | Create a record. |
 | `update_record` | Update a record by id. |
 | `delete_record` | Delete a record by id. |
@@ -46,9 +46,14 @@ Point an MCP client at `http://localhost:3000/api/v1/mcp`. In a client config
   ],
   "sort": [ { "field": "created_at", "direction": "desc" } ],
   "page": 1,
-  "page_size": 25
+  "page_size": 25,
+  "expand": ["company"]                // relationship names to expand (see get_object)
 }
 ```
+
+`expand` (also on `get_record`) attaches related records under each
+relationship name, exactly like REST's `?expand=` parameter. Valid values are
+the relationship names defined on the object — `get_object` lists them.
 
 ## Resources
 
