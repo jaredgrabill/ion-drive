@@ -17,7 +17,12 @@ Runtime-dynamic data objects · Automatic REST/GraphQL/MCP APIs · Built for LLM
 
 ## What is Ion Drive?
 
+> **Supabase's instant APIs. Payload's code-first ownership. shadcn's take-the-code distribution.**
+> Self-hosted, in your repo, one command.
+
 Ion Drive is a **self-hosted, open-source platform** that lets you define custom data objects, relationships, and business logic at runtime — then automatically generates REST, GraphQL, and MCP APIs for them. Think **self-hosted Firebase meets infinitely configurable ERP**, built from the ground up for AI-driven development.
+
+Build business software at super speed — without reinventing the wheel, and without giving up the ability to customize and override *anything*.
 
 ### Key Features
 
@@ -41,6 +46,18 @@ Ion Drive is a **self-hosted, open-source platform** that lets you define custom
 | Self-hosted = second-class citizen | Self-hosted is the primary target |
 | Observability is always "add Datadog yourself" | OpenTelemetry + Grafana stack included |
 | Multi-tenancy is always an afterthought | Database-per-tenant by design |
+
+### The Ownership Model
+
+The core idea is a clean split between **what you upgrade** and **what you own**:
+
+- **The engine is a dependency.** Core, admin console, and infrastructure plugins (Redis, email, telemetry) are npm packages — `pnpm up` gets you fixes and features without ever touching your code.
+- **Blocks are yours.** Pulling in a building block applies its schema *and* drops its business logic into `/blocks/<name>` in **your repo** — like `shadcn/ui`, but for backend features. Tweak the Stripe integration, rewrite an endpoint, or leave it stock. Future CLI updates arrive as diffs you review, never overwrites.
+- **Everything is batteries-included.** One `pnpm dev` in your project boots the whole backend and admin console, with every API live and ready for whatever frontend you're building.
+
+Because nothing ever forces a merge between "framework upgrade" and "my business logic," you get the speed of a platform with the ownership of hand-written code.
+
+> **Status:** the runtime, APIs, admin console, and manifest-based blocks are live today (see [Quick Start](#quick-start)). The vendored-logic block model and standalone project scaffolding are the active direction — track progress in the [roadmap](docs/roadmap.md).
 
 ---
 
