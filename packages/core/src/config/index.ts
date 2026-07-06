@@ -41,6 +41,26 @@ const configSchema = z.object({
   /** CORS allowed origins */
   corsOrigins: z.union([z.string(), z.array(z.string()), z.boolean()]).default(true),
 
+  /**
+   * Fastify `trustProxy` setting — controls whether `X-Forwarded-*` headers
+   * are honoured for `request.ip` (which the rate limiter keys on) and
+   * protocol/host derivation. Accepts `true`/`false`, a hop count (`1`), or
+   * a comma-separated list of trusted proxy addresses/CIDRs. Keep it `false`
+   * unless the server actually sits behind a proxy you control — trusting
+   * forwarded headers from arbitrary clients lets them spoof their IP.
+   */
+  trustProxy: z
+    .union([z.boolean(), z.number(), z.string()])
+    .default(false)
+    .transform((v): boolean | number | string => {
+      if (typeof v !== 'string') return v;
+      const s = v.trim();
+      if (['true', 'yes', 'on'].includes(s.toLowerCase())) return true;
+      if (['false', 'no', 'off', ''].includes(s.toLowerCase())) return false;
+      if (/^\d+$/.test(s)) return Number(s);
+      return s; // address / CIDR list, passed to Fastify verbatim
+    }),
+
   /** Encryption key for secrets management (32-byte hex string) */
   encryptionKey: z.string().min(64).optional(),
 
@@ -49,6 +69,13 @@ const configSchema = z.object({
 
   /** When true, RBAC is enforced on data/schema/admin endpoints. */
   requireAuth: z.coerce.boolean().default(false),
+
+  /**
+   * When true, public signup closes once the first admin exists: the very
+   * first user can still sign up (and becomes admin), after which
+   * `/api/auth/sign-up/*` returns 403. Admins create further users directly.
+   */
+  disableSignup: envBoolean(false),
 
   // --- Rate limiting ---
 
@@ -96,6 +123,14 @@ const configSchema = z.object({
    */
   metricsEnabled: envBoolean(true),
 
+  /**
+   * Optional bearer token protecting `GET /metrics`. When set, scrapes must
+   * send `Authorization: Bearer <token>` (Prometheus: `authorization` in the
+   * scrape config). Unset (the default) leaves the endpoint open — keep it
+   * network-internal in that case (see the security checklist).
+   */
+  metricsToken: z.string().min(1).optional(),
+
   /** Also push metrics over OTLP/HTTP (in addition to the Prometheus endpoint). Requires otelEnabled. */
   otelMetricsEnabled: z.coerce.boolean().default(false),
 
@@ -106,6 +141,21 @@ const configSchema = z.object({
 
   /** Enable the background task scheduler (cron-driven task execution). */
   tasksEnabled: envBoolean(true),
+
+  // --- Phase 14: Admin console static serving ---
+
+  /**
+   * Serve the built admin console SPA at `/admin` when the
+   * `@ionshift/ion-drive-admin` package (or `ION_ADMIN_DIST`) is present.
+   */
+  adminEnabled: envBoolean(true),
+
+  /**
+   * Explicit path to a built admin `dist/` directory. Overrides the default
+   * lookup of the installed `@ionshift/ion-drive-admin` package — useful in
+   * the monorepo (point at `packages/admin/dist`) or for custom builds.
+   */
+  adminDistPath: z.string().optional(),
 
   // --- Phase 6: Building blocks ---
 
@@ -158,9 +208,11 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     logLevel: process.env.ION_LOG_LEVEL ?? process.env.LOG_LEVEL,
     databaseUrl: process.env.ION_DATABASE_URL ?? process.env.DATABASE_URL,
     corsOrigins: process.env.ION_CORS_ORIGINS,
+    trustProxy: process.env.ION_TRUST_PROXY,
     encryptionKey: process.env.ION_ENCRYPTION_KEY,
     authSecret: process.env.ION_AUTH_SECRET,
     requireAuth: process.env.ION_REQUIRE_AUTH,
+    disableSignup: process.env.ION_DISABLE_SIGNUP,
     rateLimitEnabled: process.env.ION_RATE_LIMIT_ENABLED,
     rateLimitMax: process.env.ION_RATE_LIMIT_MAX,
     rateLimitWindowMs: process.env.ION_RATE_LIMIT_WINDOW_MS,
@@ -174,9 +226,12 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     otelTracesEnabled: process.env.ION_OTEL_TRACES_ENABLED,
     otelLogsEnabled: process.env.ION_OTEL_LOGS_ENABLED,
     metricsEnabled: process.env.ION_METRICS_ENABLED,
+    metricsToken: process.env.ION_METRICS_TOKEN,
     otelMetricsEnabled: process.env.ION_OTEL_METRICS_ENABLED,
     logBufferSize: process.env.ION_LOG_BUFFER_SIZE,
     tasksEnabled: process.env.ION_TASKS_ENABLED,
+    adminEnabled: process.env.ION_ADMIN_ENABLED,
+    adminDistPath: process.env.ION_ADMIN_DIST,
     blocksEnabled: process.env.ION_BLOCKS_ENABLED,
     plugins: process.env.ION_PLUGINS,
     eventsEnabled: process.env.ION_EVENTS_ENABLED,

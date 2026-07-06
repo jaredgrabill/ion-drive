@@ -8,6 +8,9 @@ import { defineConfig } from 'vite';
 const apiTarget = process.env.ION_API_URL ?? 'http://localhost:3000';
 
 export default defineConfig({
+  // The console is served by core at /admin (Phase 14 framework mode); the
+  // Vite dev server mirrors that path so dev and production share one base.
+  base: '/admin/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

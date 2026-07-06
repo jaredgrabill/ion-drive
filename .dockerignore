@@ -1,0 +1,22 @@
+# Keep host artifacts out of the image build context — `COPY . .` must never
+# clobber the container's own install/build outputs (node_modules symlinks,
+# platform binaries) with the host's.
+node_modules
+**/node_modules
+dist
+**/dist
+**/*.tsbuildinfo
+.turbo
+**/.turbo
+.git
+.github
+.claude
+.changeset
+coverage
+**/coverage
+docker/volumes
+*.log
+.env
+.env.*
+tmp
+temp

@@ -32,6 +32,12 @@ export interface BetterAuthProviderOptions {
   basePath?: string;
   /** Called after a new user is created — used to auto-grant the first admin. */
   onUserCreated?: (userId: string) => Promise<void>;
+  /**
+   * When provided and it returns true, sign-up requests are rejected with 403
+   * before reaching Better Auth. Evaluated per request so the caller can gate
+   * on live state (e.g. "an admin already exists").
+   */
+  isSignupBlocked?: () => boolean | Promise<boolean>;
 }
 
 /**
@@ -84,11 +90,13 @@ export class BetterAuthProvider implements AuthProvider {
   readonly auth: BetterAuthInstance;
   private readonly nodeHandler: (req: unknown, res: unknown) => void;
   private readonly basePath: string;
+  private readonly isSignupBlocked?: () => boolean | Promise<boolean>;
 
   constructor(options: BetterAuthProviderOptions) {
     this.basePath = options.basePath ?? '/api/auth';
     this.auth = createAuthInstance(options, this.basePath);
     this.nodeHandler = toNodeHandler(this.auth) as (req: unknown, res: unknown) => void;
+    this.isSignupBlocked = options.isSignupBlocked;
   }
 
   async initialize(): Promise<void> {
@@ -100,10 +108,20 @@ export class BetterAuthProvider implements AuthProvider {
   async registerRoutes(fastify: FastifyInstance): Promise<void> {
     const basePath = this.basePath;
     const nodeHandler = this.nodeHandler;
+    const isSignupBlocked = this.isSignupBlocked;
     await fastify.register(async (scope) => {
       // Better Auth reads the raw request body, so stop Fastify from consuming it.
       scope.addContentTypeParser('application/json', {}, (_req, _payload, done) => done(null));
       scope.all(`${basePath}/*`, async (request, reply) => {
+        // Signup lockout (ION_DISABLE_SIGNUP): reject before handing the
+        // request to Better Auth so no account is ever created.
+        if (isSignupBlocked && request.url.startsWith(`${basePath}/sign-up`)) {
+          if (await isSignupBlocked()) {
+            return reply
+              .code(403)
+              .send({ error: 'Forbidden', message: 'Signup is disabled on this server' });
+          }
+        }
         reply.hijack();
         nodeHandler(request.raw, reply.raw);
       });

@@ -35,8 +35,9 @@ docker run -d --name ion-drive \
   ion-drive/core:latest
 ```
 
-The image serves the API on port 3000 and the built admin console from
-`packages/admin/dist`.
+The image serves the API on port 3000 and the built admin console at
+**`/admin`** (the root `/` redirects there). Open `http://localhost:3000` and
+sign up — the first user becomes admin.
 
 ## Configuration
 
@@ -50,14 +51,18 @@ important ones:
 | `ION_ENCRYPTION_KEY` | *(dev key)* | 32-byte hex; **set this in production** (encrypts secrets). |
 | `ION_AUTH_SECRET` | falls back to encryption key | Signs auth sessions/tokens. |
 | `ION_REQUIRE_AUTH` | `false` | Enforce RBAC on data/schema/admin endpoints. |
+| `ION_DISABLE_SIGNUP` | `false` | Close public signup once the first admin exists. |
 | `ION_PUBLIC_URL` | — | Public base URL (used as the auth base URL). |
 | `ION_CORS_ORIGINS` | `true` | Allowed CORS origins. |
+| `ION_TRUST_PROXY` | `false` | Honor `X-Forwarded-*` behind a reverse proxy (`true`, hop count, or CIDR list). |
+| `ION_ADMIN_ENABLED` | `true` | Serve the admin console at `/admin`. |
 | `ION_RATE_LIMIT_ENABLED` | `true` | Per-IP HTTP rate limiting (429 beyond the limits below). |
 | `ION_RATE_LIMIT_MAX` | `300` | Max requests per IP per window (global bucket). |
 | `ION_RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds. |
 | `ION_RATE_LIMIT_AUTH_MAX` | `20` | Stricter per-IP limit for `/api/auth/*` in the same window. |
 | `ION_LOG_LEVEL` | `info` | `fatal`…`trace`. |
 | `ION_METRICS_ENABLED` | `true` | Prometheus endpoint at `/metrics`. |
+| `ION_METRICS_TOKEN` | — | When set, `/metrics` requires this bearer token. |
 | `ION_OTEL_ENABLED` | `false` | Export traces/logs (+ optionally metrics) over OTLP/HTTP. |
 | `ION_OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP/HTTP collector. |
 | `ION_TASKS_ENABLED` | `true` | Scheduled task engine. |

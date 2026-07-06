@@ -82,18 +82,42 @@ ION_RATE_LIMIT_WINDOW_MS=60000
 ```
 
 Two caveats: `/health` and `/metrics` are exempt (probes and scrapers), and
-the limiter keys on `request.ip`. Fastify's `trustProxy` is **not** enabled,
-so behind a reverse proxy every client shares the proxy's IP — and therefore
-one bucket. Until a `trustProxy` config knob exists, do the rate limiting at
-the proxy itself in proxied deployments.
+the limiter keys on `request.ip`. Behind a reverse proxy, set
+`ION_TRUST_PROXY` so `request.ip` reflects the real client instead of the
+proxy (otherwise every client shares one bucket):
 
-## 7. Firewall `/metrics`
+```bash
+ION_TRUST_PROXY=true          # trust X-Forwarded-For from any upstream
+ION_TRUST_PROXY=1             # or: trust exactly one proxy hop
+ION_TRUST_PROXY=10.0.0.0/8    # or: trust only these proxy addresses/CIDRs
+```
+
+Only enable it when a proxy you control is the sole way to reach the server —
+trusting forwarded headers from arbitrary clients lets them spoof their IP
+and rotate rate-limit buckets.
+
+## 7. Protect `/metrics`
 
 When `ION_METRICS_ENABLED=true` (the default), `GET /metrics` serves
-Prometheus text with **no authentication** and no rate limiting. It leaks
-operational detail (routes, error rates, task names). Keep it network-internal
-— cluster-only, a firewall rule, or a proxy block — or disable it with
-`ION_METRICS_ENABLED=false` if you don't scrape it.
+Prometheus text with no rate limiting and — by default — no authentication.
+It leaks operational detail (routes, error rates, task names). Either keep it
+network-internal (cluster-only, a firewall rule, or a proxy block), require a
+bearer token, or disable it with `ION_METRICS_ENABLED=false` if you don't
+scrape it:
+
+```bash
+ION_METRICS_TOKEN=$(openssl rand -hex 32)
+```
+
+With the token set, scrapes must send `Authorization: Bearer <token>` —
+in Prometheus, via the scrape config's `authorization` block:
+
+```yaml
+scrape_configs:
+  - job_name: ion-drive
+    authorization:
+      credentials: <token>
+```
 
 ## 8. Practice API-key hygiene
 
@@ -115,11 +139,16 @@ Two things to internalize:
 
 - **The first user to sign up becomes admin.** Sign up yourself immediately
   after first boot, before the server is reachable by anyone else.
-- **Signup stays open** after that. Later signups receive no roles — with
-  `ION_REQUIRE_AUTH=true` they can authenticate but do nothing — but they can
-  still create accounts. The stricter auth rate-limit bucket blunts abuse;
-  if open registration is unacceptable for your deployment, keep `/api/auth/*`
-  behind your network perimeter.
+- **Signup stays open by default** after that. Later signups receive no roles
+  — with `ION_REQUIRE_AUTH=true` they can authenticate but do nothing — but
+  they can still create accounts. Set `ION_DISABLE_SIGNUP=true` to close
+  public registration once the first admin exists (`/api/auth/sign-up/*`
+  then returns 403; the first-boot signup still works, so it is safe to set
+  from day one):
+
+  ```bash
+  ION_DISABLE_SIGNUP=true
+  ```
 
 Audit role permissions (`/api/v1/roles` or the admin console) after installing
 building blocks — blocks may seed roles of their own.

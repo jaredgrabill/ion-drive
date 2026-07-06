@@ -1,12 +1,14 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
-import Fastify from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 import pg from 'pg';
 import pino from 'pino';
 import pretty from 'pino-pretty';
 import { registerAdminRoutes } from './api/admin-routes.js';
+import { installAdminStatic } from './api/admin-static.js';
 import { registerBlockRoutes } from './api/block-routes.js';
 import { registerDataRoutes } from './api/data-routes.js';
 import { registerGraphQLRoutes } from './api/graphql/plugin.js';
@@ -88,6 +90,72 @@ function resolveMasterSecret(config: IonDriveConfig, log: { warn: (msg: string) 
 }
 
 /**
+ * Constant-time check of a `Authorization: Bearer <token>` header against the
+ * configured metrics token (hashes both sides so lengths never leak).
+ */
+function bearerTokenMatches(header: string | undefined, expected: string): boolean {
+  if (!header?.startsWith('Bearer ')) return false;
+  const presented = createHash('sha256').update(header.slice('Bearer '.length)).digest();
+  return timingSafeEqual(presented, createHash('sha256').update(expected).digest());
+}
+
+/**
+ * Registers `GET /metrics` (Prometheus text). When `ION_METRICS_TOKEN` is set,
+ * scrapes must present it as a bearer token (Prometheus: the scrape config's
+ * `authorization` block); otherwise the endpoint is open — see the security
+ * checklist for keeping it network-internal in that case.
+ */
+function installMetricsEndpoint(
+  server: FastifyInstance,
+  telemetry: { renderPrometheus: () => Promise<string> },
+  metricsToken: string | undefined,
+): void {
+  server.get('/metrics', async (request, reply) => {
+    if (metricsToken && !bearerTokenMatches(request.headers.authorization, metricsToken)) {
+      reply.code(401).header('www-authenticate', 'Bearer');
+      return { error: 'Unauthorized', message: 'A valid metrics bearer token is required' };
+    }
+    reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8');
+    return telemetry.renderPrometheus();
+  });
+}
+
+/**
+ * Mounts the built admin console SPA at `/admin` when enabled and installed
+ * (Phase 14: framework mode). Logs the outcome either way; a missing admin
+ * package is informational, not an error — core is fully usable headless.
+ */
+async function mountAdminConsole(server: FastifyInstance, config: IonDriveConfig): Promise<void> {
+  if (!config.adminEnabled) {
+    server.log.warn('Admin console serving disabled (ION_ADMIN_ENABLED=false)');
+    return;
+  }
+  const mounted = await installAdminStatic(server, { distPath: config.adminDistPath });
+  if (mounted) {
+    server.log.info('Admin console mounted at /admin');
+  } else {
+    server.log.info(
+      'Admin console not installed — add @ionshift/ion-drive-admin (or set ION_ADMIN_DIST) to serve it at /admin',
+    );
+  }
+}
+
+/**
+ * Builds the signup-lockout predicate for `ION_DISABLE_SIGNUP` (undefined when
+ * the flag is off): signups are rejected once any role assignment exists —
+ * i.e. once the first admin was created. Checked live per signup attempt so
+ * removing every role assignment re-opens the bootstrap path rather than
+ * locking the server permanently.
+ */
+function buildSignupGuard(
+  config: IonDriveConfig,
+  roleManager: RoleManager,
+): (() => Promise<boolean>) | undefined {
+  if (!config.disableSignup) return undefined;
+  return async () => (await roleManager.assignmentCount()) > 0;
+}
+
+/**
  * Builds the Fastify logger options. Logs always fan out via a pino
  * multistream to (a) the console (pretty in development, raw JSON otherwise)
  * and (b) the in-memory {@link LogBuffer} that backs the admin console's
@@ -125,16 +193,19 @@ export async function createServer(
   // before Fastify so the logger can fan out into it from the first line.
   const logBuffer = new LogBuffer(config.logBufferSize);
 
-  const server = Fastify({ logger: buildLoggerOptions(config, logBuffer) });
+  const server = Fastify({
+    logger: buildLoggerOptions(config, logBuffer),
+    // Honour X-Forwarded-* only when explicitly configured (ION_TRUST_PROXY):
+    // request.ip feeds the rate limiter, so trusting arbitrary clients' headers
+    // would let them rotate buckets at will.
+    trustProxy: config.trustProxy,
+  });
 
   // --- Observability (Phase 5): start the OTel SDK and per-request tracing ---
   const telemetry = startTelemetry(config, server.log);
   installRequestTracing(server);
   if (telemetry.metricsEndpointEnabled) {
-    server.get('/metrics', async (_request, reply) => {
-      reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8');
-      return telemetry.renderPrometheus();
-    });
+    installMetricsEndpoint(server, telemetry, config.metricsToken);
   }
 
   // --- Security ---
@@ -251,6 +322,9 @@ export async function createServer(
     secret: config.authSecret ?? masterSecret,
     baseURL,
     trustedOrigins,
+    // Hardening (ION_DISABLE_SIGNUP): close public signup once the first
+    // admin exists.
+    isSignupBlocked: buildSignupGuard(config, roleManager),
     // First-run bootstrap: the very first user to sign up becomes an admin,
     // so there is always a way in without a pre-seeded account.
     onUserCreated: async (userId) => {
@@ -407,6 +481,9 @@ export async function createServer(
   } else {
     server.log.warn('Building-blocks surface disabled (ION_BLOCKS_ENABLED=false)');
   }
+
+  // --- Admin console SPA at /admin (Phase 14: framework mode) ---
+  await mountAdminConsole(server, config);
 
   // --- Start the task scheduler once all routes are wired ---
   if (config.tasksEnabled) {

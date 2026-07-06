@@ -77,7 +77,10 @@ const routeTree = rootRoute.addChildren([
   route('/settings', SettingsPage),
 ]);
 
-export const router = createRouter({ routeTree, defaultPreload: 'intent' });
+// The SPA is served under /admin (Vite `base`); in vitest BASE_URL is '/'.
+const basepath = import.meta.env.BASE_URL.replace(/\/$/, '') || '/';
+
+export const router = createRouter({ routeTree, defaultPreload: 'intent', basepath });
 
 declare module '@tanstack/react-router' {
   interface Register {
