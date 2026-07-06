@@ -35,6 +35,7 @@ import { Expand, Inbox } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDebounce } from '../../hooks';
 import { ApiError, api } from '../../lib/api';
+import { consumeGridSearchPrefill } from '../../lib/grid-prefill';
 import type { DataObjectDefinition, FieldDefinition } from '../../lib/types';
 import { cn } from '../../lib/utils';
 import {
@@ -98,7 +99,8 @@ export function DataGrid({ object }: DataGridProps) {
   // --- Query state ---
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(25);
-  const [searchInput, setSearchInput] = useState('');
+  // A one-shot prefill (command palette record search) seeds the search box.
+  const [searchInput, setSearchInput] = useState(() => consumeGridSearchPrefill(object.name) ?? '');
   const search = useDebounce(searchInput, 300);
   const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [sorts, setSorts] = useState<SortRule[]>([]);

@@ -16,46 +16,12 @@ import { useNavigate } from '@tanstack/react-router';
 import { ExternalLink, Link2 } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../../lib/api';
-import type { DataObjectDefinition } from '../../lib/types';
+import { displayFieldOf, recordLabelOf } from '../../lib/record-label';
 import { Badge, Button, Sheet, Skeleton } from '../ui';
 import { editValueOf } from './grid-cell-editor';
 
-// --- Display-value resolution --------------------------------------------
-
-/** The field whose value labels a record of this object. */
-export function displayFieldOf(
-  target: DataObjectDefinition | undefined,
-  override?: string,
-): string {
-  if (override) return override;
-  const firstText = target?.fields.find(
-    (f) => !f.isSystem && !f.isPrimary && ['text', 'enum'].includes(categoryOf(f.columnType)),
-  );
-  return firstText?.columnName ?? 'id';
-}
-
-function categoryOf(columnType: string): string {
-  if (
-    ['text', 'short_text', 'long_text', 'rich_text', 'email', 'url', 'phone', 'slug'].includes(
-      columnType,
-    )
-  ) {
-    return 'text';
-  }
-  if (columnType === 'enum') return 'enum';
-  return columnType;
-}
-
-/** Human label for a linked record row (falls back to a truncated id). */
-export function recordLabelOf(
-  record: Record<string, unknown> | undefined,
-  displayField: string,
-): string {
-  const value = record?.[displayField];
-  if (value !== null && value !== undefined && value !== '') return String(value);
-  const id = record?.id;
-  return id ? `${String(id).slice(0, 8)}…` : '—';
-}
+// Display-value resolution lives in lib/record-label (shared with the
+// command palette's global record search).
 
 // --- Components ----------------------------------------------------------
 

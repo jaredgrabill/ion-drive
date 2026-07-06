@@ -12,9 +12,9 @@ import { Check, ChevronsUpDown, Link2, X } from 'lucide-react';
 import { useState } from 'react';
 import { useDebounce } from '../../hooks';
 import { api } from '../../lib/api';
+import { displayFieldOf, recordLabelOf } from '../../lib/record-label';
 import { cn } from '../../lib/utils';
 import { Input, Popover, PopoverContent, PopoverTrigger, Skeleton } from '../ui';
-import { displayFieldOf, recordLabelOf } from './record-chip';
 
 export interface RecordPickerProps {
   /** Target object name the FK points at. */
