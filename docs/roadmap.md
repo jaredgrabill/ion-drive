@@ -76,8 +76,8 @@ Carried from Phases 8–10 (see memory/ADR notes), still valid:
 
 - **Admin:** m2m link editing (chip lists + junction rows); ~~command-palette record search (global `q=`)~~ (✅ 2026-07-06 — debounced `q=` fan-out across the first 8 non-system objects; selecting a result opens the object grid with the search prefilled); ~~logs export button~~ (✅ 2026-07-06 — JSON/CSV export of the filtered view); column pinning; "delete → Undo" toast; popover calendar date picker; stat-card trend deltas (needs persisted stats history); ~~`vitest-axe` assertions (dep installed, unused)~~ (✅ 2026-07-06 — matcher wired in vitest.setup.ts; `src/a11y.test.tsx` runs axe over Button/form fields/Checkbox+Switch/EmptyState/Tabs/Dialog/Login, zero violations found).
 - **Schema engine:** ~~doctor's `AUTH_TABLES` allowlist is hardcoded (ask the `AuthProvider` for its tables)~~ (✅ 2026-07-06 — `AuthProvider.getManagedTables?()` feeds the doctor's `systemTables` option; list lives in the Better Auth adapter); `renderDefaultExpression` treats any value ending in `)` as a SQL expression (needs an `isLiteral` escape hatch); no admin UI for snapshots (CLI-first by design — revisit).
-- **Code health:** ~27 Biome cognitive-complexity warnings (schema engine, data-service, designer components, dashboard). A helper-extraction pass would clear most. Paper-cut found while seeding the integration suite (2026-07-06): the yoga logging adapter in `api/graphql/plugin.ts` (`(...args) => fastify.log.error(args)`) serializes `Error` objects to `{}`, making masked GraphQL errors invisible in logs — map args to pino's `{ err }` convention instead.
-- **Docs:** `docs/deployment/kubernetes.md` (planned, never written); backup/restore guide; security hardening checklist; performance benchmarks (both promised under Phase 7 "Polish").
+- **Code health:** ~~27 Biome cognitive-complexity warnings~~ (✅ 2026-07-06 — cleared to zero via behavior-preserving helper extraction across 19 files, no suppressions). ~~Yoga logging adapter serialized `Error`s to `{}`~~ (✅ 2026-07-06 — `api/graphql/plugin.ts` now maps a leading Error to pino's `err` key).
+- **Docs:** ~~`docs/deployment/kubernetes.md`; backup/restore guide; security hardening checklist~~ (✅ 2026-07-06); performance benchmarks (promised under Phase 7 "Polish") still outstanding. Writing the security checklist surfaced hardening gaps worth code-level fixes someday: no `trustProxy` option (behind a proxy all clients share one rate-limit bucket), `/metrics` is unauthenticated (firewall it), signup stays open after first-admin bootstrap (no disable flag).
 
 ---
 
@@ -92,7 +92,7 @@ Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 4. ~~Rate limiting~~ ✅ 2026-07-06. (F13)
 5. ~~Repo hygiene~~ ✅ 2026-07-06 (`CODE_OF_CONDUCT.md` still optional). (F4, F5)
 6. Release pipeline: changesets (or similar), npm publish workflow for `core`/`cli`/`client`/`blocks`, Docker image publish. (F23)
-7. Docs: `deployment/kubernetes.md`, backup/restore, security checklist. (⚪)
+7. ~~Docs: `deployment/kubernetes.md`, backup/restore, security checklist~~ ✅ 2026-07-06 (cross-linked from README/getting-started/docker.md; manifests are reference-grade, not cluster-certified). (⚪)
 
 ### Phase 12 — Events to the edge (realtime, webhooks, identity)
 1. Actor identity: `created_by`/`updated_by` system fields, actor threaded from `request.auth` through `DataService` on all surfaces, `actorId` in event payloads, `audit_log.changed_by` populated, `applied_by` on migrations. (F11)

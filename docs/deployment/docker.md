@@ -119,8 +119,9 @@ See [ADR-012](../research/architecture-decisions.md) for the telemetry design.
 
 ## Notes
 
-- **Database-per-tenant** is the default multi-tenancy model; provision a
-  database per tenant and connect with the appropriate `ION_DATABASE_URL`.
+- Each server instance serves **one database** (`ION_DATABASE_URL`). For tenant
+  isolation today, run one instance per tenant with its own database; built-in
+  tenant provisioning/routing is on the [roadmap](../roadmap.md) (Phase 16).
 - Run database backups against Postgres as usual — all state (schema metadata,
   data, secrets, tasks, blocks ledger) lives there. Recipes and the
   restore procedure are in [Backup & Restore](backup-restore.md).
