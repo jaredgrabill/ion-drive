@@ -9,8 +9,13 @@
 # performs a full DRY RUN (publish --dry-run, image built but not pushed) so
 # the pipeline can be rehearsed without releasing anything.
 #
-# Required repo secret: NPM_TOKEN (npm automation token with publish rights
-# to the @ion-drive scope). GHCR uses the built-in GITHUB_TOKEN.
+# Auth: npm **Trusted Publishing** (OIDC) — no NPM_TOKEN secret. Each package
+# must have this repo + workflow configured as a trusted publisher on
+# npmjs.com (package → Settings → Trusted Publisher → GitHub Actions:
+# owner `jaredgrabill`, repo `ion-drive`, workflow `release.yml`). Provenance
+# is attached automatically. Versions already on the registry are skipped, so
+# re-pushing a tag (or tagging after a manual local publish) stays green.
+# GHCR uses the built-in GITHUB_TOKEN.
 
 name: Release
 
@@ -37,12 +42,13 @@ jobs:
         with:
           version: 9.15.0
 
+      # No registry-url: setup-node would write an .npmrc referencing
+      # NODE_AUTH_TOKEN, which breaks tokenless OIDC publishing.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -85,11 +91,25 @@ jobs:
             cp LICENSE NOTICE "packages/$pkg/"
           done
 
-      - name: Publish to npm
-        run: pnpm publish -r --access public --no-git-checks ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: 'true'
+      # Trusted publishing needs npm >= 11.5.1 (node 22 bundles npm 10).
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@^11.5.1 && npm --version
+
+      # No workspace: protocols exist in published dependency fields, so
+      # plain `npm publish` per package is safe (no pnpm rewriting needed).
+      - name: Publish to npm (OIDC${{ github.event_name == 'workflow_dispatch' && ', dry run' || '' }})
+        run: |
+          DRY_RUN="${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}"
+          for pkg in client admin core cli; do
+            NAME="$(node -p "require('./packages/$pkg/package.json').name")"
+            VERSION="$(node -p "require('./packages/$pkg/package.json').version")"
+            if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+              echo "::notice::$NAME@$VERSION is already on the registry — skipping"
+              continue
+            fi
+            echo "Publishing $NAME@$VERSION $DRY_RUN"
+            (cd "packages/$pkg" && npm publish --access public $DRY_RUN)
+          done
 
   docker:
     name: Publish Docker image${{ github.event_name == 'workflow_dispatch' && ' (build only)' || '' }}
