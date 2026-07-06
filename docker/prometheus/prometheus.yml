@@ -1,0 +1,32 @@
+# Prometheus configuration for the Ion Drive observability overlay.
+#
+# Ion Drive serves its metrics in-process at `GET /metrics` (Prometheus text
+# exposition, on by default via ION_METRICS_ENABLED) — there is no push
+# gateway or sidecar; Prometheus simply scrapes the server.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus scraping itself (server health, TSDB stats).
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # The Ion Drive server.
+  #
+  # In development the server usually runs on the HOST (`pnpm dev`), not in
+  # Compose, so the target is `host.docker.internal` (mapped to the host
+  # gateway via `extra_hosts` in docker-compose.observability.yml — required
+  # on Linux, automatic on Docker Desktop). Port 3000 is the ION_PORT default.
+  #
+  # If you instead run Ion Drive inside Compose (the commented-out `ion-drive`
+  # service in docker-compose.yml), change the target to the service name:
+  #   - targets: ['ion-drive:3000']
+  - job_name: ion-drive
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:3000']
+        labels:
+          service: ion-drive

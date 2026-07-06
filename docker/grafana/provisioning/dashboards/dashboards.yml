@@ -1,0 +1,15 @@
+# Grafana dashboard provisioning for the Ion Drive observability overlay.
+# Loads every dashboard JSON in this directory (ion-drive-overview.json).
+
+apiVersion: 1
+
+providers:
+  - name: ion-drive
+    folder: Ion Drive
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

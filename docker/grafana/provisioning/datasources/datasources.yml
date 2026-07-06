@@ -1,0 +1,37 @@
+# Grafana datasource provisioning for the Ion Drive observability overlay.
+#
+# URLs use the Compose service names and each service's INTERNAL port (the
+# container-to-container network), not the host-mapped ports.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: ion-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      # Matches the scrape_interval in prometheus/prometheus.yml so
+      # $__rate_interval resolves sensibly.
+      timeInterval: 15s
+
+  - name: Loki
+    uid: ion-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: true
+
+  - name: Tempo
+    uid: ion-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: true
+    jsonData:
+      # "Logs for this span" jumps to Loki scoped to the span's time range.
+      tracesToLogsV2:
+        datasourceUid: ion-loki

@@ -65,7 +65,9 @@ important ones:
 
 ## Observability stack
 
-An optional overlay brings up Grafana, Loki, Prometheus, and Tempo:
+An optional overlay brings up Grafana, Loki, Prometheus, and Tempo,
+pre-configured for Ion Drive (datasources, a Prometheus scrape job, and a
+starter dashboard are provisioned from `docker/{grafana,prometheus,loki,tempo}/`):
 
 ```bash
 docker compose \
@@ -73,10 +75,36 @@ docker compose \
   -f docker/docker-compose.observability.yml up -d
 ```
 
-Then set `ION_OTEL_ENABLED=true` (and point `ION_OTEL_EXPORTER_OTLP_ENDPOINT` at
-the collector/Tempo) to ship traces and logs. Metrics are scraped from the
-in-process `/metrics` endpoint by Prometheus. See
-[ADR-012](../research/architecture-decisions.md) for the telemetry design.
+What you get:
+
+| Service | URL (host) | Notes |
+|:---|:---|:---|
+| Grafana | http://localhost:3100 | Login `admin`/`admin`. The **Ion Drive Overview** dashboard (request rate/latency/errors, schema changes, tasks, events) is in the *Ion Drive* folder. |
+| Prometheus | http://localhost:9090 | Scrapes the server's `/metrics` every 15s. |
+| Tempo | http://localhost:3200 (API), :4317/:4318 (OTLP) | Trace storage; query it through Grafana. |
+| Loki | http://localhost:3101 | Log storage; query it through Grafana. |
+
+**Metrics** need no server config — `/metrics` is on by default
+(`ION_METRICS_ENABLED=true`) and Prometheus scrapes it at
+`host.docker.internal:3000`, i.e. it assumes the server runs on the **host**
+(`pnpm dev`). If you run Ion Drive inside Compose instead, change the target in
+`docker/prometheus/prometheus.yml` to `ion-drive:3000`.
+
+**Traces** need the server to export OTLP to Tempo:
+
+```bash
+ION_OTEL_ENABLED=true
+ION_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+**Logs:** the server can export logs over OTLP (`ION_OTEL_LOGS_ENABLED=true`,
+default off), but it uses a *single* OTLP endpoint for traces and logs — and
+Tempo only accepts traces. To land logs in Loki, put an OTel Collector between
+the server and the backends to fan the signals out (Loki's native OTLP ingest
+is at `http://localhost:3101/otlp`). The Loki datasource is provisioned and
+ready for that setup.
+
+See [ADR-012](../research/architecture-decisions.md) for the telemetry design.
 
 ## Health & readiness
 

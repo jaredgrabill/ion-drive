@@ -1,0 +1,33 @@
+# Tempo single-binary configuration for the Ion Drive observability overlay.
+# Minimal filesystem-backed setup for grafana/tempo 2.6.x.
+#
+# Receives OTLP traces on gRPC :4317 and HTTP :4318 (both host-mapped 1:1 by
+# docker-compose.observability.yml). Ion Drive exports spans over OTLP/HTTP,
+# so point ION_OTEL_EXPORTER_OTLP_ENDPOINT at http://localhost:4318.
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          # Explicit 0.0.0.0 binds: newer vendored OTel receivers default to
+          # localhost, which would be unreachable from outside the container.
+          endpoint: '0.0.0.0:4317'
+        http:
+          endpoint: '0.0.0.0:4318'
+
+compactor:
+  compaction:
+    # Keep two days of traces — plenty for a local dev stack.
+    block_retention: 48h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
