@@ -157,7 +157,7 @@ pnpm build
 - [Getting Started](docs/getting-started.md)
 - Concepts: [Data Objects](docs/concepts/data-objects.md) · [Building Blocks](docs/concepts/building-blocks.md)
 - API: [Querying](docs/api/querying.md) · [REST](docs/api/rest.md) · [GraphQL](docs/api/graphql.md) · [MCP](docs/api/mcp.md)
-- Deployment: [Docker](docs/deployment/docker.md)
+- Deployment: [Docker](docs/deployment/docker.md) · [Kubernetes](docs/deployment/kubernetes.md) · [Backup & Restore](docs/deployment/backup-restore.md) · [Security Checklist](docs/deployment/security-checklist.md)
 - [Architecture Decisions](docs/research/architecture-decisions.md)
 - [Research Findings](docs/research/research-findings.md)
 

@@ -66,6 +66,7 @@ important ones:
 > **Production checklist:** always set `ION_ENCRYPTION_KEY` and `ION_AUTH_SECRET`
 > to strong random values, enable `ION_REQUIRE_AUTH`, and put the server behind
 > TLS. The default dev encryption key is insecure by design and logs a warning.
+> The full hardening pass is in the [Security Checklist](security-checklist.md).
 
 ## Observability stack
 
@@ -121,4 +122,7 @@ See [ADR-012](../research/architecture-decisions.md) for the telemetry design.
 - **Database-per-tenant** is the default multi-tenancy model; provision a
   database per tenant and connect with the appropriate `ION_DATABASE_URL`.
 - Run database backups against Postgres as usual — all state (schema metadata,
-  data, secrets, tasks, blocks ledger) lives there.
+  data, secrets, tasks, blocks ledger) lives there. Recipes and the
+  restore procedure are in [Backup & Restore](backup-restore.md).
+- Running the image on Kubernetes (probes, replica caveats, metrics scraping)
+  is covered in [Deploying on Kubernetes](kubernetes.md).

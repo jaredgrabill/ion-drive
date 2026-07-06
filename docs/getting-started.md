@@ -126,3 +126,6 @@ See [Building Blocks](concepts/building-blocks.md).
 - [GraphQL API reference](api/graphql.md)
 - [MCP server](api/mcp.md)
 - [Deploying with Docker](deployment/docker.md)
+- [Deploying on Kubernetes](deployment/kubernetes.md)
+- [Backup & Restore](deployment/backup-restore.md)
+- [Security Checklist](deployment/security-checklist.md)
