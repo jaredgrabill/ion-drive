@@ -91,7 +91,7 @@ Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 3. ~~Observability overlay provisioning~~ ✅ 2026-07-06 — remaining: live-test the stack once against real traffic and iterate the dashboard. (F3)
 4. ~~Rate limiting~~ ✅ 2026-07-06. (F13)
 5. ~~Repo hygiene~~ ✅ 2026-07-06 (`CODE_OF_CONDUCT.md` still optional). (F4, F5)
-6. Release pipeline: changesets (or similar), npm publish workflow for `core`/`cli`/`client`/`blocks`, Docker image publish. (F23)
+6. Release pipeline: changesets (or similar), npm publish workflow for `core`/`cli`/`client`/`blocks`, Docker image publish. (F23) → **moved to Phase 14 Tier 0** — publishing is a hard prerequisite for framework mode (ADR-018).
 7. ~~Docs: `deployment/kubernetes.md`, backup/restore, security checklist~~ ✅ 2026-07-06 (cross-linked from README/getting-started/docker.md; manifests are reference-grade, not cluster-certified). (⚪)
 
 ### Phase 12 — Events to the edge (realtime, webhooks, identity)
@@ -106,11 +106,19 @@ Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 3. Admin m2m link editing (chip list cell, junction editing in RecordSheet). (⚪)
 4. ~~Decide + document PUT~~ (✅ PATCH-only, documented); migration rollback build-or-drop decision. (F8, F9)
 
-### Phase 14 — Standalone developer experience (CLI grows up)
-1. `ion-drive init` scaffolds a runnable project: `docker-compose.yml` (server + Postgres), `.env`, client starter, **and an agent-instructions file** (see Part 3). (F21, F24)
-2. `ion-drive dev` runs that compose stack (or a published dist) instead of the monorepo filter. (F20)
-3. Block authoring: `ion-drive block new/validate` against the exported Zod schema. (F22)
-4. `ion-drive schema` UX polish informed by real use (e.g. `--prune` parity, snapshot in admin if demanded).
+### Phase 14 — Framework mode & vendored-logic blocks (**NEXT UP** — ADR-018, [plan](phase_14_implementation_plan.md))
+Expanded far beyond the original "CLI grows up" scope by ADR-018 (2026-07-06), and **jumps the
+queue ahead of Phases 12–13** (repo precedent: phases execute out of numeric order; the number is
+kept so F-references stay valid). Framework-first distribution: `ion-drive init` scaffolds a
+user-owned project (`server.ts` composition root + `/blocks/*` barrel), core serves the built
+admin SPA, block manifests gain `actions`/`requires` with action/webhook catch-all routes
+reflected into OpenAPI/MCP, `add` vendors block logic into `/blocks/<name>` (shadcn-style, never
+overwritten), `dev` runs the user's entry under tsx watch, and the release pipeline (old Phase 11
+item 6) is Tier 0. First logic-bearing block: invoicing ↔ Stripe. Absorbs **F20, F21, F22, F23,
+F24**. Per the ADR-018 amendment, blocks also move to **their own repos** (`ionshift/block-<name>`)
+resolved via a minimal registry index (+ direct URLs and local paths for block dev); `packages/blocks`
+retires, and F22's block-authoring toolchain (`block new/validate`) is promoted to a **required**
+deliverable. `ion-drive schema` UX polish rides along; `ion-drive diff` is the stretch item.
 
 ### Phase 15 — File storage
 `StorageProvider` port + local-disk default + S3 plugin; `file`/`image` field type storing object keys; upload/download REST endpoints + signed URLs; admin grid file cells. (F16)
