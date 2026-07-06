@@ -21,7 +21,7 @@ blank repo → ion-drive init → pnpm dev            # backend + admin console 
 
 ---
 
-## Tier 0 — Release pipeline (prerequisite)
+## Tier 0 — Release pipeline (prerequisite) ✅ 2026-07-06 (first real publish pending — owner-run)
 
 Nothing in this phase works until the packages are installable outside the monorepo. (F23)
 
@@ -39,9 +39,18 @@ Nothing in this phase works until the packages are installable outside the monor
 **Verify:** `verdaccio` (or `npm pack` + `file:` installs) — install every package into a scratch
 project and boot it. This local-registry rig is reused by every later tier's verification.
 
+> **Shipped 2026-07-06** (with the security-checklist hardening warm-up: `ION_TRUST_PROXY`,
+> `ION_METRICS_TOKEN`, `ION_DISABLE_SIGNUP`): changesets fixed group (blocks excluded,
+> `private:true`), `release.yml` (guards + npm provenance + GHCR amd64/arm64; dispatch = dry run),
+> packages publishable, CLI catalog optional + version-skew warning, root `.dockerignore` +
+> Dockerfile prod-stage fixes. Verified via `pnpm pack` → scratch install (boots, `/admin` serves
+> from the installed admin package) and a local image build/run. Remaining: owner sets `NPM_TOKEN`
+> and pushes the first `v0.x` tag; bare-name block installs outside the monorepo stay unavailable
+> until Tier 4's registry (by design — the interim fallback message points at URLs).
+
 ## Tier 1 — Core as an installable framework
 
-### 1A: Serve the built admin SPA from core
+### 1A: Serve the built admin SPA from core ✅ 2026-07-06
 
 The single biggest gap between today's code and the vision — admin currently runs only via the
 Vite dev proxy inside the monorepo.
@@ -54,6 +63,11 @@ Vite dev proxy inside the monorepo.
 - Audit `packages/admin/src/lib/api.ts` + router base path for same-origin serving under
   `/admin` (cookie auth should Just Work; the Vite proxy path stays for monorepo admin dev).
 - Root `/` redirects to `/admin` when enabled.
+
+> **Shipped 2026-07-06:** `core/src/api/admin-static.ts` (+11 unit tests), `ION_ADMIN_ENABLED`/
+> `ION_ADMIN_DIST`, optional peer + workspace devDep resolution, vite `base:'/admin/'` + router
+> `basepath` (dev server moves to `/admin/` too — one mental model), 12-check live smoke and an
+> in-container check both green.
 
 ### 1B: Composition root + project-code loading
 
