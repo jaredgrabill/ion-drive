@@ -1,5 +1,9 @@
 ﻿# Ion Drive — Implementation Plan
 
+> [!NOTE]
+> Phases 0–10 below are **complete**. Future work (Phases 11+) and the full findings backlog
+> from the 2026-07-06 post-Phase-10 review live in [roadmap.md](roadmap.md).
+
 ## Goal
 
 Build Ion Drive: an open-source, self-hosted platform for accelerated custom business software development. The platform provides runtime-dynamic data objects backed by PostgreSQL, automatic REST/GraphQL/MCP API surface, an admin console, pluggable auth, built-in observability, and a shadcn-style building blocks system.
