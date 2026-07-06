@@ -69,7 +69,7 @@ Vite dev proxy inside the monorepo.
 > `basepath` (dev server moves to `/admin/` too — one mental model), 12-check live smoke and an
 > in-container check both green.
 
-### 1B: Composition root + project-code loading
+### 1B: Composition root + project-code loading ✅ 2026-07-06
 
 - Promote `createServer(config, { plugins })` from "exists" to **documented public API**: export
   the option types, document lifecycle (`runReady`/`runShutdown`), and state the semver promise.
@@ -82,7 +82,12 @@ Vite dev proxy inside the monorepo.
 - **Error isolation:** a throwing block plugin fails boot with "block `<name>` failed to load:
   …" naming the file — never a bare stack.
 
-## Tier 2 — The logic seam: actions, hooks, `requires`
+> **Shipped 2026-07-06:** `createServer` documented as the public API (`CreateServerOptions`,
+> `IonDriveServer`, lifecycle + semver promise); plugin host wraps setup failures with the
+> plugin's name; `PluginContext.actions` added; the scaffolded barrel uses
+> `// ion-drive:imports` / `// ion-drive:blocks` markers maintained by the CLI.
+
+## Tier 2 — The logic seam: actions, hooks, `requires` ✅ 2026-07-06
 
 ### 2A: Action + hook registries and catch-all routes
 
@@ -114,7 +119,16 @@ Vite dev proxy inside the monorepo.
 - Ledger (`_ion_blocks`) records the catalog version whose code was vendored at `add` time —
   the anchor for the future `diff`.
 
-## Tier 3 — CLI grows up
+> **Shipped 2026-07-06:** `blocks/action-registry.ts` + `blocks/action-executor.ts` (shared
+> resolve→validate→execute path: spans, `ion.action.*`/`ion.hook.*` metrics, abort/timeout);
+> `POST /api/v1/blocks/:block/actions/:action` (per-action RBAC, default `update` on `blocks`);
+> `GET /api/v1/blocks/actions`; `ALL /api/v1/hooks/:block/:hook` (session-exempt, scoped
+> raw-body parser); OpenAPI operations + MCP `<block>_<action>` tools reflected per request.
+> Manifest gains `actions`/`hooks`/`requires`/`code`; installer validates requirements first
+> (hard error "did you vendor its code? (expected in /blocks/<name>)"; warnings in preview).
+> GraphQL mutations deferred as planned.
+
+## Tier 3 — CLI grows up ✅ 2026-07-06
 
 ### 3A: `init` scaffolds a real project (F21, F24)
 
@@ -152,7 +166,27 @@ else lives in the npm deps.
 Compare `/blocks/<name>` against the current catalog code (using the ledger-recorded base
 version), per-file diff, `--take <file>` to accept. shadcn semantics: user-driven, never auto.
 
-## Tier 4 — Per-block repos, the registry, and invoicing ↔ Stripe
+> **Shipped 2026-07-06:** `init [dir]` scaffolds the full project (composition root, marked
+> barrel, generated secrets in `.env`, hardening knobs documented in `.env.example`, compose
+> Postgres, AGENTS.md + `ion-schema-change`/`ion-add-block` starter skills, `ion/` client
+> starter; `--config-only` keeps the old flow); `add` vendors `code/` → wires barrel → polls
+> `GET /api/v1/blocks/actions` for the tsx reload → installs (re-add never overwrites);
+> `remove` unwires the barrel + prints the your-code-now note; `dev` detects a project
+> (`server.ts` + core dep) and runs compose-Postgres + `tsx watch server.ts`. 3D (`diff`)
+> slipped to a follow-up as planned (ledger snapshots anchor it).
+
+## Tier 4 — Blocks repo, the registry, and invoicing ↔ Stripe ✅ 2026-07-06
+
+> **Executed under the ADR-018 re-amendment (owner decision): one `ionshift/blocks` repo, not
+> repo-per-block.** All four blocks (crm, invoicing, communications, audit) extracted to
+> `I:\ion-shift\blocks` (git-initialized; push is owner-run) with the registry index at
+> `registry/index.json` in the same repo; per-directory layout is identical to a third-party
+> block repo. `ion-drive block new/validate/pack` toolchain shipped; CI = validate + pack +
+> artifact drift guard. `packages/blocks` retired. The invoicing block vendors `code/stripe.ts`
+> (zero-dep fetch client + HMAC signature verify w/ replay protection) + `code/index.ts`
+> (action `create_payment_link` → Checkout session, stores link/session id, marks `sent`;
+> hook `stripe` → verifies signature over raw bytes, marks `paid` on
+> `checkout.session.completed`); `STRIPE_API_BASE` env override enables mock-based testing.
 
 Per the ADR-018 amendment, blocks leave the monorepo. Official blocks use the exact same
 distribution path a third-party block would.
@@ -184,7 +218,7 @@ distribution path a third-party block would.
 - Exercises end-to-end: registry + local-path resolution, `requires` validation, action surface
   parity (OpenAPI + MCP), secrets flow, session-exempt hook path, hot-reload editing.
 
-## Tier 5 — Docs & monorepo DX
+## Tier 5 — Docs & monorepo DX ✅ 2026-07-06
 
 - `docs/getting-started.md` rewritten **init-first**; README Quick Start gains the framework
   path as primary (contributor/monorepo path moves below it). "The Ownership Model" status
@@ -194,6 +228,16 @@ distribution path a third-party block would.
 - **Monorepo test rig:** an integration test (or `examples/` project) that runs the real `init`
   scaffold against workspace packages (pnpm overrides / verdaccio) so the framework path is
   CI-covered, not just hand-smoked. Admin development stays friendly: Vite proxy path unchanged.
+
+> **Shipped 2026-07-06:** `getting-started.md` rewritten init-first (contributor path
+> demoted to a callout); README Quick Start = scaffold → add blocks (ownership-model status
+> updated to "implemented"); new `docs/concepts/framework-mode.md` + `docs/api/actions.md`;
+> `building-blocks.md` rewritten for the two-part install/registry/authoring toolchain;
+> CONTRIBUTING + the `new-block` skill updated for the blocks-repo workflow. Test rig:
+> integration suite grew a Phase 14 test (requires validation incl. preview parity, action
+> RBAC 401→200, declaration-gated 404, session-exempt raw-body hook, OpenAPI parity) and the
+> CLI a scaffold-shape suite; CI-automating a full scaffold `npm install` boot stays a
+> roadmap follow-up (the live loop covered it by hand).
 
 ## Out of scope (explicitly)
 

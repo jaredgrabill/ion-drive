@@ -58,17 +58,15 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 | F18 | **Delivery DLQ has no surface** | Failed event deliveries (`maxAttempts` exhausted) sit in `_ion_event_deliveries` with no admin view, no retry button, no alerting. |
 | F19 | **External plugin packages don't exist yet** | The ports (cache/email/bus) are proven with in-core defaults; `@ionshift/plugin-redis`, `plugin-sendgrid`/SMTP, `plugin-rabbitmq` are still to be built as separate repos/packages. |
 
-### 1.4 CLI & end-user developer experience 🟡
-
-The end-user story ("init a project, pull blocks, manage schema") has gaps once you leave the monorepo:
+### 1.4 CLI & end-user developer experience ✅ (Phase 14, 2026-07-06)
 
 | # | Finding | Detail |
 |:--|:--|:--|
-| F20 | **`ion-drive dev` is monorepo-only** | It spawns `pnpm --filter @ionshift/ion-drive-core dev` — meaningless for a user who installed the CLI globally next to their own app. It should run the server via Docker (compose scaffold) or a published server binary/dist. |
-| F21 | **`init` doesn't scaffold infrastructure** | A standalone user gets `ion/client.ts` + example, but no `docker-compose.yml`, no `.env`, no way to actually stand the server up from their project directory. |
-| F22 | **No block-authoring support** | Third parties can serve manifests by URL, but there's no `ion-drive block new` (scaffold a manifest), `block validate` (run the Zod parser locally), or `block emit`. Block authoring currently requires cloning this monorepo. |
-| F23 | 🟡 **Nothing is published** | Pipeline built 2026-07-06 (Phase 14 Tier 0): changesets (fixed version group core/admin/cli/client; blocks excluded per ADR-018 amendment), tag-triggered `release.yml` (npm publish w/ provenance + version/changeset/blocks-dep guards; GHCR image, amd64+arm64; `workflow_dispatch` = full dry-run), packages publishable (`files`, `publishConfig`, per-package READMEs), CLI's bundled catalog now optional (graceful fallback). Verified: `pnpm pack` → scratch-project install boots core **and serves `/admin` from the installed admin package**. Remaining: the **first real publish** (owner-run — needs `NPM_TOKEN` secret + `v0.x` tag), Docker image not yet pushed anywhere. |
-| F24 | **No agent-facing project instructions** | For a platform *built for agentic development*, `init` ships no `AGENTS.md`/`CLAUDE.md` template telling the user's coding agent how to talk to their Ion Drive backend (MCP endpoint, query language, schema-change workflow, SDK idioms). See Part 3. |
+| F20 | ~~**`ion-drive dev` is monorepo-only**~~ | ✅ 2026-07-06 — `dev` detects a scaffolded project (`server.ts` + core dep), brings up the compose Postgres best-effort, and runs `tsx watch server.ts` (hot-reload of `server.ts` + `/blocks`); the monorepo contributor path remains the fallback. |
+| F21 | ~~**`init` doesn't scaffold infrastructure**~~ | ✅ 2026-07-06 — `init [dir]` scaffolds the full framework project: composition root, blocks barrel, `.env` (generated secrets) + `.env.example` (hardening knobs), `docker-compose.yml`, tsconfig, README, client starter. |
+| F22 | ~~**No block-authoring support**~~ | ✅ 2026-07-06 — `ion-drive block new/validate/pack` (scaffold, platform-Zod validation via project-first core import, artifact packing with `code/` embedded). Official blocks live in the separate `ionshift/blocks` repo (ADR-018 re-amendment: single repo, registry index in-repo). |
+| F23 | 🟡 **Nothing is published** | Pipeline built 2026-07-06 (Phase 14 Tier 0); packages verified installable via tarballs (the whole Phase 14 live loop ran a scaffolded project on them). Remaining: the **first real publish** (owner-run — needs `NPM_TOKEN` secret + `v0.x` tag), Docker image not yet pushed, and the `ionshift/blocks` repo needs pushing to GitHub (the CLI's default registry URL points at it). |
+| F24 | ~~**No agent-facing project instructions**~~ | ✅ 2026-07-06 — `init` ships `AGENTS.md` (MCP endpoint, query language, preview-first schema contract, SDK idioms, block rules) plus `.claude/skills/{ion-schema-change,ion-add-block}`. |
 
 ### 1.5 Deferred polish backlog ⚪
 
@@ -106,19 +104,19 @@ Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 3. Admin m2m link editing (chip list cell, junction editing in RecordSheet). (⚪)
 4. ~~Decide + document PUT~~ (✅ PATCH-only, documented); migration rollback build-or-drop decision. (F8, F9)
 
-### Phase 14 — Framework mode & vendored-logic blocks (**NEXT UP** — ADR-018, [plan](phase_14_implementation_plan.md))
-Expanded far beyond the original "CLI grows up" scope by ADR-018 (2026-07-06), and **jumps the
-queue ahead of Phases 12–13** (repo precedent: phases execute out of numeric order; the number is
-kept so F-references stay valid). Framework-first distribution: `ion-drive init` scaffolds a
-user-owned project (`server.ts` composition root + `/blocks/*` barrel), core serves the built
-admin SPA, block manifests gain `actions`/`requires` with action/webhook catch-all routes
-reflected into OpenAPI/MCP, `add` vendors block logic into `/blocks/<name>` (shadcn-style, never
-overwritten), `dev` runs the user's entry under tsx watch, and the release pipeline (old Phase 11
-item 6) is Tier 0. First logic-bearing block: invoicing ↔ Stripe. Absorbs **F20, F21, F22, F23,
-F24**. Per the ADR-018 amendment, blocks also move to **their own repos** (`ionshift/block-<name>`)
-resolved via a minimal registry index (+ direct URLs and local paths for block dev); `packages/blocks`
-retires, and F22's block-authoring toolchain (`block new/validate`) is promoted to a **required**
-deliverable. `ion-drive schema` UX polish rides along; `ion-drive diff` is the stretch item.
+### Phase 14 — Framework mode & vendored-logic blocks ✅ SHIPPED 2026-07-06 (ADR-018, [plan](phase_14_implementation_plan.md))
+All tiers complete and verified end-to-end (a scaffolded project on tarball installs ran the
+whole loop: init → dev → registry add → local-path add with vendored Stripe code → action via
+REST + MCP → signed/replay-protected webhook → hot-reload edit → guarded remove → RBAC).
+Absorbed **F20, F21, F22, F24**; F23 remains 🟡 pending the owner-run first publish + pushing
+`ionshift/blocks`. Executed under the ADR-018 **re-amendment**: official blocks live in one
+`ionshift/blocks` repo (registry index in-repo) instead of repo-per-block. Follow-ups:
+- **`ion-drive diff <block>`** (Tier 3D stretch — slipped as planned; the ledger's manifest
+  snapshot is the base-version anchor).
+- **CI-automated scaffold boot**: the framework path is unit/integration-covered, but a CI job
+  that `npm install`s the real scaffold against packed workspace tarballs is still manual.
+- `add` cosmetic: a local-path target is labeled "(dependency)" in the plan preview.
+- Force-reinstall re-runs `seed` (documented "re-apply" semantics — revisit if it bites).
 
 ### Phase 15 — File storage
 `StorageProvider` port + local-disk default + S3 plugin; `file`/`image` field type storing object keys; upload/download REST endpoints + signed URLs; admin grid file cells. (F16)

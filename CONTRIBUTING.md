@@ -24,8 +24,12 @@ pnpm dev
 | `packages/core` (`@ionshift/ion-drive-core`) | Fastify backend: schema engine, dynamic REST/GraphQL/MCP APIs, auth/RBAC, secrets, telemetry, tasks, blocks, and the extensibility core (service registry + plugin host, message bus, provider ports). |
 | `packages/admin` (`@ionshift/ion-drive-admin`) | React 19 + Vite admin console. Pure API consumer. |
 | `packages/cli` (`@ionshift/ion-drive-cli`) | Space-themed CLI for project init and building blocks. |
-| `packages/blocks` (`@ionshift/ion-drive-blocks`) | Official building-block catalog. MIT licensed. |
 | `packages/client` (`@ionshift/ion-drive-client`) | Zero-dependency typed query builder + REST client SDK. |
+
+The official building-block catalog lives in the separate
+[`ionshift/blocks`](https://github.com/ionshift/blocks) repository (MIT licensed),
+distributed through the block registry — see
+[Building Blocks](docs/concepts/building-blocks.md).
 
 See [CLAUDE.md](CLAUDE.md) and [docs/implementation_plan.md](docs/implementation_plan.md)
 for a deeper map and current status.
@@ -109,5 +113,5 @@ public issue.
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-project's [Apache 2.0](LICENSE) license (core packages) or [MIT](packages/blocks/LICENSE)
-license (blocks). See [NOTICE](NOTICE) for trademark terms that apply to all packages.
+project's [Apache 2.0](LICENSE) license (blocks in the separate `ionshift/blocks`
+repository are MIT). See [NOTICE](NOTICE) for trademark terms that apply to all packages.

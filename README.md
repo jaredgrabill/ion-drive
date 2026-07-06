@@ -57,7 +57,7 @@ The core idea is a clean split between **what you upgrade** and **what you own**
 
 Because nothing ever forces a merge between "framework upgrade" and "my business logic," you get the speed of a platform with the ownership of hand-written code.
 
-> **Status:** the runtime, APIs, admin console, and manifest-based blocks are live today (see [Quick Start](#quick-start)). The vendored-logic block model and standalone project scaffolding are the active direction — track progress in the [roadmap](docs/roadmap.md).
+> **Status:** the full ownership model is implemented — project scaffolding, vendored-logic blocks (actions + webhooks), and the block registry all work end-to-end (see [Quick Start](#quick-start)). First npm publish is imminent; track the remainder in the [roadmap](docs/roadmap.md).
 
 ---
 
@@ -66,35 +66,39 @@ Because nothing ever forces a merge between "framework upgrade" and "my business
 ### Prerequisites
 
 - [Node.js 22+](https://nodejs.org)
-- [pnpm 9+](https://pnpm.io)
 - [Docker](https://docker.com) (for PostgreSQL)
 
-### Setup
+### Scaffold your backend
 
 ```bash
-# Clone the repo
-git clone https://github.com/ionshift/ion-drive.git
-cd ion-drive
+npx @ionshift/ion-drive-cli init my-app
+cd my-app
 
-# Install dependencies
-pnpm install
-
-# Start PostgreSQL
-docker compose -f docker/docker-compose.yml up -d
-
-# Start the development server
-pnpm dev
+docker compose up -d    # PostgreSQL
+npm install
+npm run dev             # the whole backend + admin console, one command
 ```
 
-The Ion Drive API will be running at `http://localhost:3000` and the admin console at `http://localhost:3001`. The first user to sign up becomes the admin.
+The API runs at `http://localhost:3000` with the admin console at
+`http://localhost:3000/admin`. The first user to sign up becomes the admin.
+What you own is deliberately small — a `server.ts` composition root and a
+`/blocks` directory; the platform arrives as npm dependencies
+([framework mode](docs/concepts/framework-mode.md)).
 
-### Bootstrap a project with the CLI
+### Add building blocks
 
 ```bash
-npx ion-drive init      # scaffold config + an optional @ionshift/ion-drive-client starter
-npx ion-drive list      # browse the block catalog
-npx ion-drive add crm   # install CRM (objects, seed data, tasks) — APIs light up instantly
+npx ion-drive list             # browse the registry catalog
+npx ion-drive add crm          # schema-only: objects + APIs light up instantly
+npx ion-drive add invoicing    # vendored logic: Stripe integration lands in blocks/invoicing/
 ```
+
+Edit `blocks/invoicing/stripe.ts` — it's your code, and the dev server
+hot-reloads. Its action is live at
+`POST /api/v1/blocks/invoicing/actions/create_payment_link`, in OpenAPI, and
+as an MCP tool.
+
+> **Contributing to Ion Drive itself?** Clone this repo and `pnpm dev` — see [Development](#development).
 
 ### Query it from code
 

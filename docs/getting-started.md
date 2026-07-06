@@ -1,33 +1,36 @@
 # Getting Started
 
-This guide takes you from an empty machine to a running Ion Drive server with a
-custom data object, live APIs, and a typed client — in about five minutes.
+This guide takes you from an empty machine to a running Ion Drive backend with
+a custom data object, live APIs, and a typed client — in about five minutes.
+You'll own the project it creates: a thin `server.ts` plus a `/blocks`
+directory, with the platform arriving as npm dependencies (see
+[Framework mode](concepts/framework-mode.md)).
 
 ## Prerequisites
 
 - [Node.js 22+](https://nodejs.org)
-- [pnpm 9+](https://pnpm.io)
 - [Docker](https://docker.com) (for PostgreSQL)
 
-## 1. Install and run
+## 1. Scaffold and run
 
 ```bash
-git clone https://github.com/ionshift/ion-drive.git
-cd ion-drive
-pnpm install
+npx @ionshift/ion-drive-cli init my-app
+cd my-app
 
-# Start PostgreSQL
-docker compose -f docker/docker-compose.yml up -d
-
-# Start the dev server (core API + admin console)
-pnpm dev
+docker compose up -d      # PostgreSQL
+npm install
+npm run dev               # tsx watch server.ts
 ```
 
 - API: `http://localhost:3000`
-- Admin console: `http://localhost:3001`
+- Admin console: `http://localhost:3000/admin`
 
 The **first user to sign up becomes the admin**. Open the admin console and
-create your account.
+create your account. (`.env` was generated with fresh secrets; production
+hardening knobs are documented in `.env.example`.)
+
+> **Contributor path:** working on Ion Drive itself? Clone
+> `ionshift/ion-drive` and `pnpm dev` — see [CONTRIBUTING](../CONTRIBUTING.md).
 
 ## 2. Create a data object
 
@@ -107,19 +110,24 @@ console.log(data, pagination.totalCount);
 ## 6. Bootstrap with building blocks
 
 Instead of defining every object by hand, install a ready-made **building
-block** — a bundle of objects, relationships, seed data, tasks, and roles — with
-the CLI:
+block** — a bundle of objects, relationships, seed data, tasks, roles, and
+(optionally) vendored logic:
 
 ```bash
-npx ion-drive init        # scaffold ion.config.json + an optional client starter
-npx ion-drive list        # see the catalog (crm, invoicing, communications, audit)
-npx ion-drive add crm     # install CRM (and resolve its dependencies)
+npx ion-drive list             # the registry catalog (crm, invoicing, …)
+npx ion-drive add crm          # schema-only: objects + APIs light up immediately
+npx ion-drive add invoicing    # vendored logic: its code lands in blocks/invoicing/
 ```
 
-See [Building Blocks](concepts/building-blocks.md).
+Blocks with logic are **your code** — edit `blocks/invoicing/stripe.ts` and the
+dev server hot-reloads. Their actions are live at
+`POST /api/v1/blocks/invoicing/actions/create_payment_link`, in the OpenAPI
+spec, and as MCP tools. See [Building Blocks](concepts/building-blocks.md) and
+[Actions & hooks](api/actions.md).
 
 ## Next steps
 
+- [Framework mode: the ownership model](concepts/framework-mode.md)
 - [Core concepts: Data Objects](concepts/data-objects.md)
 - [Querying: search, operators, pagination](api/querying.md)
 - [REST API reference](api/rest.md)
