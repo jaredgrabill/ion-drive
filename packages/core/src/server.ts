@@ -328,6 +328,9 @@ export async function createServer(
     tenantDb,
     registry: schemaManager.registry,
     configStore,
+    // The auth provider's own tables (users, sessions, …) live in the tenant
+    // database but are not Ion objects — don't report them as unmanaged drift.
+    systemTables: authProvider.getManagedTables?.() ?? [],
   });
   await server.register(registerSchemaRoutes(schemaManager, { doctor: schemaDoctor }), {
     prefix: '/api/v1/schema',

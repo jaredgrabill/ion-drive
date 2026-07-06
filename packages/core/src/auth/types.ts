@@ -62,4 +62,12 @@ export interface AuthProvider {
 
   /** Resolves the current session from request headers, or `null`. */
   getSession(headers: IncomingHttpHeaders): Promise<ProviderSession | null>;
+
+  /**
+   * Names of database tables this provider owns (users, sessions, tokens, …).
+   * The schema drift doctor treats these as system-owned so they are not
+   * reported as unmanaged drift. Optional — a provider that stores nothing in
+   * the tenant database (e.g. a fully external IdP) can omit it.
+   */
+  getManagedTables?(): string[];
 }

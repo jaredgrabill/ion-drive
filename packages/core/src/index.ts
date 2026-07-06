@@ -54,6 +54,7 @@ export { registerMcpRoutes } from './mcp/plugin.js';
 
 // Auth, RBAC, and API keys
 export {
+  BETTER_AUTH_TABLES,
   BetterAuthProvider,
   ApiKeyManager,
   RoleManager,

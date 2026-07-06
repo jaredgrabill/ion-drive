@@ -61,6 +61,24 @@ function createAuthInstance(options: BetterAuthProviderOptions, basePath: string
 
 type BetterAuthInstance = ReturnType<typeof createAuthInstance>;
 
+/**
+ * Tables Better Auth creates and manages in the tenant database (core tables
+ * plus those of the common plugins). Reported via `getManagedTables()` so the
+ * schema drift doctor treats them as system-owned rather than unmanaged drift.
+ */
+export const BETTER_AUTH_TABLES = [
+  'user',
+  'session',
+  'account',
+  'verification',
+  'jwks',
+  'passkey',
+  'two_factor',
+  'organization',
+  'member',
+  'invitation',
+] as const;
+
 export class BetterAuthProvider implements AuthProvider {
   readonly name = 'better-auth';
   readonly auth: BetterAuthInstance;
@@ -90,6 +108,11 @@ export class BetterAuthProvider implements AuthProvider {
         nodeHandler(request.raw, reply.raw);
       });
     });
+  }
+
+  /** Tables Better Auth owns — the drift doctor treats these as system-owned. */
+  getManagedTables(): string[] {
+    return [...BETTER_AUTH_TABLES];
   }
 
   async getSession(headers: IncomingHttpHeaders): Promise<ProviderSession | null> {

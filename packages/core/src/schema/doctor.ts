@@ -56,20 +56,6 @@ export interface DoctorReport {
   checkedAt: string;
 }
 
-/** Better Auth's tables live in the same database but are not Ion objects. */
-const AUTH_TABLES = new Set([
-  'user',
-  'session',
-  'account',
-  'verification',
-  'jwks',
-  'passkey',
-  'two_factor',
-  'organization',
-  'member',
-  'invitation',
-]);
-
 interface CatalogColumn {
   table_name: string;
   column_name: string;
@@ -83,10 +69,21 @@ export interface SchemaDoctorOptions {
   tenantDb: Kysely<TenantDatabase>;
   registry: SchemaRegistry;
   configStore?: ConfigStore;
+  /**
+   * Tables owned by platform infrastructure (e.g. the auth provider's user /
+   * session tables — see `AuthProvider.getManagedTables()`). They live in the
+   * same database but are not Ion objects, so the doctor skips them instead of
+   * reporting them as unmanaged drift. `_ion_*` tables are always skipped.
+   */
+  systemTables?: string[];
 }
 
 export class SchemaDoctor {
-  constructor(private readonly options: SchemaDoctorOptions) {}
+  private readonly systemTables: Set<string>;
+
+  constructor(private readonly options: SchemaDoctorOptions) {
+    this.systemTables = new Set(options.systemTables ?? []);
+  }
 
   /** Runs the full diagnosis. */
   async diagnose(): Promise<DoctorReport> {
@@ -112,7 +109,7 @@ export class SchemaDoctor {
     }
 
     for (const [tableName, columns] of tables) {
-      if (tableName.startsWith('_ion_') || AUTH_TABLES.has(tableName)) continue;
+      if (tableName.startsWith('_ion_') || this.systemTables.has(tableName)) continue;
       if (junctionTables.has(tableName)) continue;
 
       const obj = managedTables.get(tableName);

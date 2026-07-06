@@ -9,7 +9,7 @@ export type {
   AuthSessionInfo,
   ProviderSession,
 } from './types.js';
-export { BetterAuthProvider } from './better-auth-adapter.js';
+export { BETTER_AUTH_TABLES, BetterAuthProvider } from './better-auth-adapter.js';
 export type { BetterAuthProviderOptions } from './better-auth-adapter.js';
 export { installSessionMiddleware } from './session-middleware.js';
 export type { SessionMiddlewareOptions } from './session-middleware.js';
