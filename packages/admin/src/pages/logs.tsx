@@ -3,7 +3,8 @@
  *
  * Consumes `GET /api/v1/logs` (filtered query) and `GET /api/v1/logs/stream`
  * (Server-Sent Events). Toolbar: level dropdown, source dropdown (from
- * `/logs/sources`), debounced full-text search, and a Live toggle. In live
+ * `/logs/sources`), debounced full-text search, a Live toggle, and an Export
+ * menu (JSON/CSV of the currently-displayed entries). In live
  * mode new entries stream in at the top with a slide-up animation; level
  * colors appear as a subtle left border (error red / warn amber / info blue /
  * debug gray) *plus* the level badge, so color is never the only signal.
@@ -13,11 +14,24 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Copy, Pause, Play } from 'lucide-react';
+import { Copy, Download, Pause, Play } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Badge, Button, EmptyState, Input, Select, Skeleton, toast } from '../components/ui';
+import {
+  Badge,
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  EmptyState,
+  Input,
+  Select,
+  Skeleton,
+  toast,
+} from '../components/ui';
 import { useDebounce } from '../hooks';
 import { api } from '../lib/api';
+import { downloadText, logExportFilename, logsToCsv, logsToJson } from '../lib/log-export';
 import type { LogEntry, LogLevel } from '../lib/types';
 import { cn } from '../lib/utils';
 
@@ -107,6 +121,13 @@ export function Logs() {
   const seen = new Set(baseEntries.map((e) => e.id));
   const entries = [...liveEntries.filter((e) => !seen.has(e.id)), ...baseEntries];
 
+  const exportLogs = (fmt: 'json' | 'csv') => {
+    const content = fmt === 'json' ? logsToJson(entries) : logsToCsv(entries);
+    const mimeType = fmt === 'json' ? 'application/json' : 'text/csv';
+    downloadText(content, logExportFilename(fmt), mimeType);
+    toast.success(`Exported ${entries.length} log entries`);
+  };
+
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-4">
@@ -164,6 +185,18 @@ export function Logs() {
           {live ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           {live ? 'Pause' : 'Live'}
         </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="gap-1.5" disabled={entries.length === 0}>
+              <Download className="h-3.5 w-3.5" />
+              Export
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => exportLogs('json')}>Export as JSON</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => exportLogs('csv')}>Export as CSV</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Log table */}
