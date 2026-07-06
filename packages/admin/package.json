@@ -1,6 +1,6 @@
 {
   "name": "@ion-drive/admin",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "Ion Drive admin console — configuration, monitoring, and data management UI",
   "license": "Apache-2.0",
   "author": "IonShift Technologies LLC",

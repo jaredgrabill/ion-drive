@@ -1,6 +1,6 @@
 {
   "name": "@ion-drive/cli",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "Ion Drive CLI — project initialization, building block management, and development tools",
   "license": "Apache-2.0",
   "author": "IonShift Technologies LLC",

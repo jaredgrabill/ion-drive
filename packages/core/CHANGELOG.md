@@ -1,6 +1,6 @@
 # @ion-drive/core
 
-## 1.0.0
+## 0.2.0
 
 ### Minor Changes
 
@@ -18,4 +18,4 @@
 ### Patch Changes
 
 - Updated dependencies [69f7537]
-  - @ion-drive/admin@1.0.0
+  - @ion-drive/admin@0.2.0
