@@ -17,6 +17,7 @@ import {
 } from '../config.js';
 import { reportStarter, writeStarter } from '../scaffold.js';
 import { banner, box, c, log, sym } from '../ui.js';
+import { warnOnVersionSkew } from '../version-check.js';
 
 export interface InitOptions {
   serverUrl?: string;
@@ -80,6 +81,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     log.success(
       `Connected to Ion Drive ${c.cyan(`v${health.version}`)} ${c.meteor(`(${health.objectCount} objects)`)}`,
     );
+    warnOnVersionSkew(health.version);
   } catch {
     log.warn(
       `Could not reach ${config.serverUrl} yet — saved anyway. Start it with "ion-drive dev".`,

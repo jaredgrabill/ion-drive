@@ -15,6 +15,7 @@ import { readConfig, recordInstalled, writeConfig } from '../config.js';
 import { type Manifest, RegistryError } from '../registry/registry-client.js';
 import { ResolveError, resolvePlan } from '../registry/resolver.js';
 import { box, c, gradient, log, orbitSpinner, sym } from '../ui.js';
+import { warnOnVersionSkew } from '../version-check.js';
 
 export interface AddOptions {
   yes?: boolean;
@@ -52,7 +53,8 @@ async function resolveTarget(
   target: string,
 ): Promise<Awaited<ReturnType<typeof resolvePlan>> | null> {
   try {
-    await client.health();
+    const health = await client.health();
+    warnOnVersionSkew(health.version);
     const installedNames = new Set(
       (await client.listInstalled()).filter((b) => b.status === 'installed').map((b) => b.name),
     );

@@ -2,6 +2,10 @@
 node_modules/
 .pnpm-store/
 
+# Release pipeline copies these from the repo root into each publish package
+packages/*/LICENSE
+packages/*/NOTICE
+
 # Build outputs
 dist/
 *.tsbuildinfo

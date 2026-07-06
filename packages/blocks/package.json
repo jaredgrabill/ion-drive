@@ -1,7 +1,8 @@
 {
   "name": "@ionshift/ion-drive-blocks",
   "version": "0.1.0",
-  "description": "Ion Drive official building blocks — ready-made business domains (CRM, invoicing, communications) distributed shadcn-style.",
+  "private": true,
+  "description": "Ion Drive official building blocks — ready-made business domains (CRM, invoicing, communications) distributed shadcn-style. Not published: blocks move to their own repos (ADR-018 amendment); this package retires in Phase 14 Tier 4.",
   "license": "MIT",
   "author": "IonShift Technologies LLC",
   "homepage": "https://github.com/ionshift/ion-drive",

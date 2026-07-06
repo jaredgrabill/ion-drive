@@ -25,6 +25,7 @@ import {
 } from '../api-client.js';
 import { readConfig } from '../config.js';
 import { c, log, orbitSpinner, sym } from '../ui.js';
+import { warnOnVersionSkew } from '../version-check.js';
 
 export const SNAPSHOT_PATH = join('ion', 'schema.json');
 
@@ -35,7 +36,8 @@ function client(): IonApiClient {
 
 async function checkHealth(api: IonApiClient): Promise<boolean> {
   try {
-    await api.health();
+    const health = await api.health();
+    warnOnVersionSkew(health.version);
     return true;
   } catch (err) {
     log.error((err as Error).message);

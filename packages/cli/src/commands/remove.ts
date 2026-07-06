@@ -11,6 +11,7 @@ import prompts from 'prompts';
 import { ApiError, IonApiClient } from '../api-client.js';
 import { readConfig, recordRemoved, writeConfig } from '../config.js';
 import { c, log, orbitSpinner, sym } from '../ui.js';
+import { warnOnVersionSkew } from '../version-check.js';
 
 export interface RemoveOptions {
   yes?: boolean;
@@ -22,7 +23,8 @@ export async function removeCommand(name: string, options: RemoveOptions): Promi
   const client = new IonApiClient(config.serverUrl, config.apiKey);
 
   try {
-    await client.health();
+    const health = await client.health();
+    warnOnVersionSkew(health.version);
   } catch (err) {
     log.error((err as Error).message);
     process.exitCode = 1;

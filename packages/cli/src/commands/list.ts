@@ -13,7 +13,12 @@ import { c, log, sym, table } from '../ui.js';
 
 export async function listCommand(): Promise<void> {
   const config = readConfig();
-  const available = listAvailable();
+  const available = await listAvailable();
+  if (available.length === 0) {
+    log.warn('The bundled block catalog is not installed — blocks can still be added by URL.');
+    log.dim(`  Install with  ${c.star('ion-drive add <https://…/block.json>')}`);
+    return;
+  }
 
   // Best-effort: find out which blocks are already installed.
   let installed = new Set<string>();
