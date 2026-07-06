@@ -292,13 +292,19 @@ function fieldToJsonSchema(field: FieldDefinition): Record<string, unknown> {
   const typeInfo = COLUMN_TYPES[field.columnType as ColumnTypeName];
   if (!typeInfo) return { type: 'string' };
 
+  const schema = baseTypeSchema(field, typeInfo.category);
+  applyConstraintKeywords(schema, field, typeInfo.category);
+  return schema;
+}
+
+/** Maps a field's type category to its base JSON Schema (`type`/`format`/`items`/`enum`). */
+function baseTypeSchema(field: FieldDefinition, category: string): Record<string, unknown> {
   const schema: Record<string, unknown> = {};
 
-  switch (typeInfo.category) {
+  switch (category) {
     case 'text':
       schema.type = 'string';
-      if (field.columnType === 'email') schema.format = 'email';
-      if (field.columnType === 'url') schema.format = 'uri';
+      applyTextFormat(schema, field);
       break;
     case 'number':
       schema.type =
@@ -316,30 +322,55 @@ function fieldToJsonSchema(field: FieldDefinition): Record<string, unknown> {
       schema.format = 'uuid';
       break;
     case 'structured':
-      if (field.columnType === 'json') {
-        schema.type = 'object';
-      } else {
-        schema.type = 'array';
-        schema.items = { type: field.columnType === 'array_integer' ? 'integer' : 'string' };
-      }
+      applyStructuredType(schema, field);
       break;
     case 'enum':
       schema.type = field.columnType === 'multi_enum' ? 'array' : 'string';
-      if (field.constraints?.enumValues) {
-        if (field.columnType === 'multi_enum') {
-          schema.items = { type: 'string', enum: field.constraints.enumValues };
-        } else {
-          schema.enum = field.constraints.enumValues;
-        }
-      }
+      applyEnumValues(schema, field);
       break;
     default:
       schema.type = 'string';
   }
 
-  // Constraint keywords mirror the generated CHECK constraints (Phase 10):
-  // numbers bound the value, text-like types bound the character length.
-  const isNumeric = typeInfo.category === 'number' || field.columnType === 'rating';
+  return schema;
+}
+
+/** Adds the `format` keyword for text types that have one (email, url). */
+function applyTextFormat(schema: Record<string, unknown>, field: FieldDefinition): void {
+  if (field.columnType === 'email') schema.format = 'email';
+  if (field.columnType === 'url') schema.format = 'uri';
+}
+
+/** Sets the schema for structured types: `object` for json, typed `array` otherwise. */
+function applyStructuredType(schema: Record<string, unknown>, field: FieldDefinition): void {
+  if (field.columnType === 'json') {
+    schema.type = 'object';
+  } else {
+    schema.type = 'array';
+    schema.items = { type: field.columnType === 'array_integer' ? 'integer' : 'string' };
+  }
+}
+
+/** Adds the enum membership (`enum` / array `items.enum`) from the field's constraints. */
+function applyEnumValues(schema: Record<string, unknown>, field: FieldDefinition): void {
+  if (!field.constraints?.enumValues) return;
+  if (field.columnType === 'multi_enum') {
+    schema.items = { type: 'string', enum: field.constraints.enumValues };
+  } else {
+    schema.enum = field.constraints.enumValues;
+  }
+}
+
+/**
+ * Adds constraint keywords mirroring the generated CHECK constraints (Phase
+ * 10): numbers bound the value, text-like types bound the character length.
+ */
+function applyConstraintKeywords(
+  schema: Record<string, unknown>,
+  field: FieldDefinition,
+  category: string,
+): void {
+  const isNumeric = category === 'number' || field.columnType === 'rating';
   if (field.constraints?.min !== undefined) {
     schema[isNumeric ? 'minimum' : 'minLength'] = field.constraints.min;
   }
@@ -348,8 +379,6 @@ function fieldToJsonSchema(field: FieldDefinition): Record<string, unknown> {
   }
   if (field.constraints?.pattern) schema.pattern = field.constraints.pattern;
   if (field.description) schema.description = field.description;
-
-  return schema;
 }
 
 function generateListParameters(obj: DataObjectDefinition): Record<string, unknown>[] {

@@ -80,6 +80,161 @@ interface EnumChoice {
 
 const CHOICE_COLORS = ['#5b8def', '#8b5cf6', '#22d3ee', '#34d399', '#fbbf24', '#fb7185'];
 
+/** Initial form values for add mode ('' defaults) or edit mode (the field's). */
+function initialFieldForm(field: FieldDefinition | null) {
+  return {
+    /** Saved identifier/type (null in add mode) — drives the change warnings. */
+    originalName: field?.name ?? null,
+    originalType: field?.columnType ?? null,
+    name: field?.name ?? '',
+    displayName: field?.displayName ?? '',
+    description: field?.description ?? '',
+    columnType: field?.columnType ?? 'text',
+    defaultValue: field?.defaultValue ?? '',
+    isRequired: field?.isRequired ?? false,
+    isUnique: field?.isUnique ?? false,
+    isIndexed: field?.isIndexed ?? false,
+    min: field?.constraints?.min?.toString() ?? '',
+    max: field?.constraints?.max?.toString() ?? '',
+    pattern: field?.constraints?.pattern ?? '',
+    message: field?.constraints?.message ?? '',
+  };
+}
+
+/** Assembles the FieldConstraints object from the raw form inputs (undefined when empty). */
+function buildFieldConstraints(inputs: {
+  min: string;
+  max: string;
+  pattern: string;
+  message: string;
+  isEnum: boolean;
+  choices: EnumChoice[];
+}): FieldConstraints | undefined {
+  const c: FieldConstraints = {};
+  if (inputs.min !== '' && Number.isFinite(Number(inputs.min))) c.min = Number(inputs.min);
+  if (inputs.max !== '' && Number.isFinite(Number(inputs.max))) c.max = Number(inputs.max);
+  if (inputs.pattern.trim()) c.pattern = inputs.pattern.trim();
+  if (inputs.message.trim()) c.message = inputs.message.trim();
+  if (inputs.isEnum) {
+    const values = inputs.choices.map((ch) => ch.value.trim()).filter(Boolean);
+    if (values.length > 0) c.enumValues = values;
+  }
+  return Object.keys(c).length > 0 ? c : undefined;
+}
+
+/** The current form values, snapshotted for diffing against the original field. */
+interface FieldFormSnapshot {
+  name: string;
+  displayName: string;
+  description: string;
+  columnType: string;
+  isRequired: boolean;
+  isUnique: boolean;
+  isIndexed: boolean;
+  defaultValue: string;
+  constraints: FieldConstraints | undefined;
+  uiOptions: Record<string, unknown> | undefined;
+  backfillValue: string;
+}
+
+/** Structural-equality check for JSON bags (null ≡ undefined ≡ absent). */
+function jsonChanged(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) !== JSON.stringify(b ?? null);
+}
+
+/** Name/display-name/description entries of the modification diff. */
+function identityUpdates(field: FieldDefinition, v: FieldFormSnapshot): FieldModification {
+  const u: FieldModification = {};
+  if (v.name !== field.name) u.name = v.name;
+  if (v.displayName !== field.displayName) u.displayName = v.displayName;
+  if ((v.description || null) !== (field.description ?? null)) {
+    u.description = v.description || null;
+  }
+  return u;
+}
+
+/** Type/flag/default entries of the modification diff. */
+function structuralUpdates(field: FieldDefinition, v: FieldFormSnapshot): FieldModification {
+  const u: FieldModification = {};
+  if (v.columnType !== field.columnType) u.columnType = v.columnType;
+  if (v.isRequired !== (field.isRequired ?? false)) u.isRequired = v.isRequired;
+  if (v.isUnique !== (field.isUnique ?? false)) u.isUnique = v.isUnique;
+  if (v.isIndexed !== (field.isIndexed ?? false)) u.isIndexed = v.isIndexed;
+  if ((v.defaultValue || null) !== (field.defaultValue ?? null)) {
+    u.defaultValue = v.defaultValue || null;
+  }
+  return u;
+}
+
+/** Constraint/uiOptions/backfill entries of the modification diff. */
+function metadataUpdates(field: FieldDefinition, v: FieldFormSnapshot): FieldModification {
+  const u: FieldModification = {};
+  if (jsonChanged(v.constraints, field.constraints)) u.constraints = v.constraints ?? null;
+  if (jsonChanged(v.uiOptions, field.uiOptions)) u.uiOptions = v.uiOptions ?? null;
+  if (v.backfillValue) u.backfillValue = v.backfillValue;
+  return u;
+}
+
+/** Computes the FieldModification that turns the original field into the form values. */
+function computeFieldUpdates(field: FieldDefinition, v: FieldFormSnapshot): FieldModification {
+  return {
+    ...identityUpdates(field, v),
+    ...structuralUpdates(field, v),
+    ...metadataUpdates(field, v),
+  };
+}
+
+/** Label for the footer's primary button across the add/preview/apply states. */
+function primaryButtonLabel(
+  busy: boolean,
+  isEdit: boolean,
+  isLink: boolean,
+  previewValid: boolean,
+): string {
+  if (busy) return 'Working…';
+  if (!isEdit) return isLink ? 'Create link' : 'Add field';
+  return previewValid ? 'Apply changes' : 'Review changes';
+}
+
+/** Flags derived from the dry-run preview's error codes. */
+function previewErrorFlags(preview: ChangePreview | null): {
+  needsBackfill: boolean;
+  blockedByBlock: boolean;
+} {
+  return {
+    needsBackfill: preview?.errors.some((e) => e.code === 'REQUIRES_BACKFILL') ?? false,
+    blockedByBlock: preview?.errors.some((e) => e.code === 'BLOCK_MANAGED_FIELD') ?? false,
+  };
+}
+
+/** Whether the form is submittable: edit needs changes; add needs a name (+ link target). */
+function canSubmitField(
+  isEdit: boolean,
+  hasChanges: boolean,
+  name: string,
+  isLink: boolean,
+  linkTarget: string,
+): boolean {
+  if (isEdit) return hasChanges;
+  return name.trim().length > 0 && (!isLink || linkTarget.length > 0);
+}
+
+/** Synthetic field definition driving the type-aware default-value editor. */
+function makeDefaultEditorField(
+  isLink: boolean,
+  columnType: string,
+  isEnum: boolean,
+  constraints: FieldConstraints | undefined,
+): FieldDefinition {
+  return {
+    name: 'default_value',
+    displayName: 'Default value',
+    columnName: 'default_value',
+    columnType: isLink ? 'uuid' : columnType,
+    constraints: isEnum && constraints?.enumValues ? { enumValues: constraints.enumValues } : null,
+  };
+}
+
 // --- Component --------------------------------------------------------
 
 export interface FieldEditorSheetProps {
@@ -100,21 +255,22 @@ export function FieldEditorSheet({
 }: FieldEditorSheetProps) {
   const isEdit = field !== null;
   const blockOwner = blockOwnerOf(field);
+  const initial = initialFieldForm(field);
 
   // --- Form state ---
-  const [name, setName] = useState(field?.name ?? '');
-  const [displayName, setDisplayName] = useState(field?.displayName ?? '');
+  const [name, setName] = useState(initial.name);
+  const [displayName, setDisplayName] = useState(initial.displayName);
   const [displayNameTouched, setDisplayNameTouched] = useState(isEdit);
-  const [description, setDescription] = useState(field?.description ?? '');
-  const [columnType, setColumnType] = useState(field?.columnType ?? 'text');
-  const [defaultValue, setDefaultValue] = useState(field?.defaultValue ?? '');
-  const [isRequired, setIsRequired] = useState(field?.isRequired ?? false);
-  const [isUnique, setIsUnique] = useState(field?.isUnique ?? false);
-  const [isIndexed, setIsIndexed] = useState(field?.isIndexed ?? false);
-  const [min, setMin] = useState(field?.constraints?.min?.toString() ?? '');
-  const [max, setMax] = useState(field?.constraints?.max?.toString() ?? '');
-  const [pattern, setPattern] = useState(field?.constraints?.pattern ?? '');
-  const [message, setMessage] = useState(field?.constraints?.message ?? '');
+  const [description, setDescription] = useState(initial.description);
+  const [columnType, setColumnType] = useState(initial.columnType);
+  const [defaultValue, setDefaultValue] = useState(initial.defaultValue);
+  const [isRequired, setIsRequired] = useState(initial.isRequired);
+  const [isUnique, setIsUnique] = useState(initial.isUnique);
+  const [isIndexed, setIsIndexed] = useState(initial.isIndexed);
+  const [min, setMin] = useState(initial.min);
+  const [max, setMax] = useState(initial.max);
+  const [pattern, setPattern] = useState(initial.pattern);
+  const [message, setMessage] = useState(initial.message);
   const [choices, setChoices] = useState<EnumChoice[]>(() => {
     const colors = (field?.uiOptions?.choiceColors ?? {}) as Record<string, string>;
     return (field?.constraints?.enumValues ?? []).map((value, i) => ({
@@ -141,20 +297,14 @@ export function FieldEditorSheet({
   const textLike = TEXT_LIKE.has(columnType);
   const isEnum = ENUM_TYPES.has(columnType);
   const structuralLocked = blockOwner !== null && !force;
+  // Identifier/type inputs are additionally never editable while block-locked.
+  const structuralDisabled = isEdit && structuralLocked;
 
   // --- Assemble the constraint object from the inputs ---
-  const constraints = useMemo((): FieldConstraints | undefined => {
-    const c: FieldConstraints = {};
-    if (min !== '' && Number.isFinite(Number(min))) c.min = Number(min);
-    if (max !== '' && Number.isFinite(Number(max))) c.max = Number(max);
-    if (pattern.trim()) c.pattern = pattern.trim();
-    if (message.trim()) c.message = message.trim();
-    if (isEnum) {
-      const values = choices.map((ch) => ch.value.trim()).filter(Boolean);
-      if (values.length > 0) c.enumValues = values;
-    }
-    return Object.keys(c).length > 0 ? c : undefined;
-  }, [min, max, pattern, message, isEnum, choices]);
+  const constraints = useMemo(
+    () => buildFieldConstraints({ min, max, pattern, message, isEnum, choices }),
+    [min, max, pattern, message, isEnum, choices],
+  );
 
   const uiOptions = useMemo((): Record<string, unknown> | undefined => {
     if (!isEnum) return field?.uiOptions ?? undefined;
@@ -167,27 +317,19 @@ export function FieldEditorSheet({
   // --- Compute the modification diff (edit mode) ---
   const updates = useMemo((): FieldModification => {
     if (!field) return {};
-    const u: FieldModification = {};
-    if (name !== field.name) u.name = name;
-    if (displayName !== field.displayName) u.displayName = displayName;
-    if ((description || null) !== (field.description ?? null)) {
-      u.description = description || null;
-    }
-    if (columnType !== field.columnType) u.columnType = columnType;
-    if (isRequired !== (field.isRequired ?? false)) u.isRequired = isRequired;
-    if (isUnique !== (field.isUnique ?? false)) u.isUnique = isUnique;
-    if (isIndexed !== (field.isIndexed ?? false)) u.isIndexed = isIndexed;
-    if ((defaultValue || null) !== (field.defaultValue ?? null)) {
-      u.defaultValue = defaultValue || null;
-    }
-    if (JSON.stringify(constraints ?? null) !== JSON.stringify(field.constraints ?? null)) {
-      u.constraints = constraints ?? null;
-    }
-    if (JSON.stringify(uiOptions ?? null) !== JSON.stringify(field.uiOptions ?? null)) {
-      u.uiOptions = uiOptions ?? null;
-    }
-    if (backfillValue) u.backfillValue = backfillValue;
-    return u;
+    return computeFieldUpdates(field, {
+      name,
+      displayName,
+      description,
+      columnType,
+      isRequired,
+      isUnique,
+      isIndexed,
+      defaultValue,
+      constraints,
+      uiOptions,
+      backfillValue,
+    });
   }, [
     field,
     name,
@@ -256,12 +398,8 @@ export function FieldEditorSheet({
   });
 
   const busy = runPreview.isPending || applyEdit.isPending || addField.isPending;
-  const canSubmit = isEdit
-    ? hasChanges
-    : name.trim().length > 0 && (!isLink || linkTarget.length > 0);
-
-  const needsBackfill = preview?.errors.some((e) => e.code === 'REQUIRES_BACKFILL') ?? false;
-  const blockedByBlock = preview?.errors.some((e) => e.code === 'BLOCK_MANAGED_FIELD') ?? false;
+  const canSubmit = canSubmitField(isEdit, hasChanges, name, isLink, linkTarget);
+  const { needsBackfill, blockedByBlock } = previewErrorFlags(preview);
 
   const onPrimary = () => {
     if (!isEdit) {
@@ -278,104 +416,49 @@ export function FieldEditorSheet({
   // Editing anything invalidates a previously computed preview.
   const invalidatePreview = () => setPreview(null);
 
-  const defaultEditorField: FieldDefinition = {
-    name: 'default_value',
-    displayName: 'Default value',
-    columnName: 'default_value',
-    columnType: isLink ? 'uuid' : columnType,
-    constraints: isEnum && constraints?.enumValues ? { enumValues: constraints.enumValues } : null,
-  };
+  const defaultEditorField = makeDefaultEditorField(isLink, columnType, isEnum, constraints);
 
   return (
     <Sheet
       open
       onClose={onClose}
       title={isEdit ? `Edit field — ${field.displayName}` : 'Add field'}
-      description={
-        blockOwner ? (
-          <span className="inline-flex items-center gap-1.5">
-            <ShieldAlert className="h-3.5 w-3.5 text-ion-amber" aria-hidden />
-            Managed by the <Badge variant="secondary">{blockOwner}</Badge> block — structural
-            changes are protected.
-          </span>
-        ) : (
-          `on ${object.displayName}`
-        )
-      }
+      description={<SheetDescription blockOwner={blockOwner} objectName={object.displayName} />}
       className="max-w-[560px]"
       footer={
-        <>
-          {isEdit && blockOwner && (
-            // biome-ignore lint/a11y/noLabelWithoutControl: wraps a Radix Switch (renders a button role=switch)
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Switch
-                checked={force}
-                onCheckedChange={(v) => {
-                  setForce(v === true);
-                  invalidatePreview();
-                }}
-                aria-label="Override block protection"
-              />
-              Override protection
-            </label>
-          )}
-          <div className="ml-auto flex gap-2">
-            <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={onPrimary} disabled={!canSubmit || busy}>
-              {busy
-                ? 'Working…'
-                : !isEdit
-                  ? isLink
-                    ? 'Create link'
-                    : 'Add field'
-                  : preview?.isValid
-                    ? 'Apply changes'
-                    : 'Review changes'}
-            </Button>
-          </div>
-        </>
+        <EditorFooter
+          showForce={isEdit && blockOwner !== null}
+          force={force}
+          onForceChange={(v) => {
+            setForce(v);
+            invalidatePreview();
+          }}
+          canSubmit={canSubmit}
+          busy={busy}
+          label={primaryButtonLabel(busy, isEdit, isLink, preview?.isValid ?? false)}
+          onCancel={onClose}
+          onPrimary={onPrimary}
+        />
       }
     >
       <div className="flex flex-col gap-4">
         {/* Identifier + display name (decoupled) */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="fe-name">Identifier</Label>
-            <Input
-              id="fe-name"
-              value={name}
-              disabled={isEdit && structuralLocked}
-              onChange={(e) => {
-                const next = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-                setName(next);
-                if (!displayNameTouched) setDisplayName(titleCaseOf(next));
-                invalidatePreview();
-              }}
-              placeholder="due_date"
-              className="font-mono"
-            />
-            {isEdit && field && name !== field.name && (
-              <p className="text-xs text-ion-amber">
-                Renaming changes the API name — existing queries using “{field.name}” will break.
-              </p>
-            )}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="fe-display">Display name</Label>
-            <Input
-              id="fe-display"
-              value={displayName}
-              onChange={(e) => {
-                setDisplayName(e.target.value);
-                setDisplayNameTouched(true);
-                invalidatePreview();
-              }}
-              placeholder="Due Date"
-            />
-          </div>
-        </div>
+        <IdentifierInputs
+          name={name}
+          displayName={displayName}
+          originalName={initial.originalName}
+          disabled={structuralDisabled}
+          onNameChange={(next) => {
+            setName(next);
+            if (!displayNameTouched) setDisplayName(titleCaseOf(next));
+            invalidatePreview();
+          }}
+          onDisplayNameChange={(next) => {
+            setDisplayName(next);
+            setDisplayNameTouched(true);
+            invalidatePreview();
+          }}
+        />
 
         {/* Description */}
         <div className="flex flex-col gap-1.5">
@@ -393,61 +476,28 @@ export function FieldEditorSheet({
         </div>
 
         {/* Type */}
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="fe-type">Type</Label>
-          <FieldTypePicker
-            id="fe-type"
-            columnTypes={columnTypes}
-            value={columnType}
-            includeLink={!isEdit}
-            disabled={isEdit && structuralLocked}
-            onChange={(next) => {
-              setColumnType(next);
-              invalidatePreview();
-            }}
-          />
-          {isEdit && field && columnType !== field.columnType && (
-            <p className="text-xs text-ion-amber">
-              Type changes are validated against existing data before applying.
-            </p>
-          )}
-        </div>
+        <TypeSection
+          columnTypes={columnTypes}
+          columnType={columnType}
+          originalType={initial.originalType}
+          includeLink={!isEdit}
+          disabled={structuralDisabled}
+          onChange={(next) => {
+            setColumnType(next);
+            invalidatePreview();
+          }}
+        />
 
         {/* Link-to-record configuration (Tier 3A) */}
         {isLink && (
-          <div className="flex flex-col gap-3 rounded-md border border-ion-purple/30 bg-ion-purple/5 p-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="fe-link-target">Target object</Label>
-              <Select
-                id="fe-link-target"
-                value={linkTarget}
-                onChange={(e) => setLinkTarget(e.target.value)}
-              >
-                <option value="">Choose…</option>
-                {(objects.data ?? [])
-                  .filter((o) => !o.isSystem && o.name !== object.name)
-                  .map((o) => (
-                    <option key={o.name} value={o.name}>
-                      {o.displayName}
-                    </option>
-                  ))}
-              </Select>
-            </div>
-            {/* biome-ignore lint/a11y/noLabelWithoutControl: wraps a Radix Switch (renders a button role=switch) */}
-            <label className="flex items-center gap-2 text-sm">
-              <Switch
-                checked={linkMultiple}
-                onCheckedChange={(v) => setLinkMultiple(v === true)}
-                aria-label="Allow linking multiple records"
-              />
-              Allow linking to multiple records
-            </label>
-            <p className="text-xs text-muted-foreground">
-              {linkMultiple
-                ? 'Creates a many-to-many relationship via a junction table.'
-                : `Creates a "${name || 'link'}_id" foreign-key column plus a many-to-one relationship.`}
-            </p>
-          </div>
+          <LinkConfigPanel
+            targets={(objects.data ?? []).filter((o) => !o.isSystem && o.name !== object.name)}
+            fieldName={name}
+            linkTarget={linkTarget}
+            onTargetChange={setLinkTarget}
+            linkMultiple={linkMultiple}
+            onMultipleChange={setLinkMultiple}
+          />
         )}
 
         {/* Default value (not for links) */}
@@ -456,7 +506,7 @@ export function FieldEditorSheet({
             <Label>Default value</Label>
             <GridCellEditor
               field={defaultEditorField}
-              value={defaultValue ?? ''}
+              value={defaultValue}
               onChange={(v) => {
                 setDefaultValue(v);
                 invalidatePreview();
@@ -473,7 +523,7 @@ export function FieldEditorSheet({
         {isEnum && (
           <EnumChoicesEditor
             choices={choices}
-            defaultValue={defaultValue ?? ''}
+            defaultValue={defaultValue}
             disabled={structuralLocked}
             onDefaultChange={(v) => {
               setDefaultValue(v);
@@ -488,68 +538,31 @@ export function FieldEditorSheet({
 
         {/* Constraints (bounds + pattern) */}
         {!isLink && (numeric || textLike) && !isEnum && (
-          <div className="flex flex-col gap-3 rounded-md border border-border p-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.05em] text-muted-foreground">
-              Validation — enforced as CHECK constraints in Postgres
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="fe-min">{numeric ? 'Minimum value' : 'Minimum length'}</Label>
-                <Input
-                  id="fe-min"
-                  type="number"
-                  value={min}
-                  disabled={structuralLocked}
-                  onChange={(e) => {
-                    setMin(e.target.value);
-                    invalidatePreview();
-                  }}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="fe-max">{numeric ? 'Maximum value' : 'Maximum length'}</Label>
-                <Input
-                  id="fe-max"
-                  type="number"
-                  value={max}
-                  disabled={structuralLocked}
-                  onChange={(e) => {
-                    setMax(e.target.value);
-                    invalidatePreview();
-                  }}
-                />
-              </div>
-            </div>
-            {textLike && (
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="fe-pattern">Pattern (POSIX regex)</Label>
-                <Input
-                  id="fe-pattern"
-                  value={pattern}
-                  disabled={structuralLocked}
-                  onChange={(e) => {
-                    setPattern(e.target.value);
-                    invalidatePreview();
-                  }}
-                  placeholder="^[A-Z]{2}-\d+$"
-                  className="font-mono"
-                />
-              </div>
-            )}
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="fe-message">Custom validation message</Label>
-              <Input
-                id="fe-message"
-                value={message}
-                disabled={structuralLocked}
-                onChange={(e) => {
-                  setMessage(e.target.value);
-                  invalidatePreview();
-                }}
-                placeholder="Must look like AB-123"
-              />
-            </div>
-          </div>
+          <ValidationPanel
+            numeric={numeric}
+            textLike={textLike}
+            disabled={structuralLocked}
+            min={min}
+            max={max}
+            pattern={pattern}
+            message={message}
+            onMinChange={(v) => {
+              setMin(v);
+              invalidatePreview();
+            }}
+            onMaxChange={(v) => {
+              setMax(v);
+              invalidatePreview();
+            }}
+            onPatternChange={(v) => {
+              setPattern(v);
+              invalidatePreview();
+            }}
+            onMessageChange={(v) => {
+              setMessage(v);
+              invalidatePreview();
+            }}
+          />
         )}
 
         {/* Flags */}
@@ -615,6 +628,291 @@ export function FieldEditorSheet({
 FieldEditorSheet.displayName = 'FieldEditorSheet';
 
 // --- Subcomponents ------------------------------------------------------
+
+/** Identifier + display-name inputs, with the rename API-surface warning. */
+function IdentifierInputs({
+  name,
+  displayName,
+  originalName,
+  disabled,
+  onNameChange,
+  onDisplayNameChange,
+}: {
+  name: string;
+  displayName: string;
+  /** The field's saved identifier in edit mode (null in add mode). */
+  originalName: string | null;
+  disabled: boolean;
+  onNameChange: (name: string) => void;
+  onDisplayNameChange: (displayName: string) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="fe-name">Identifier</Label>
+        <Input
+          id="fe-name"
+          value={name}
+          disabled={disabled}
+          onChange={(e) => onNameChange(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
+          placeholder="due_date"
+          className="font-mono"
+        />
+        {originalName !== null && name !== originalName && (
+          <p className="text-xs text-ion-amber">
+            Renaming changes the API name — existing queries using “{originalName}” will break.
+          </p>
+        )}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="fe-display">Display name</Label>
+        <Input
+          id="fe-display"
+          value={displayName}
+          onChange={(e) => onDisplayNameChange(e.target.value)}
+          placeholder="Due Date"
+        />
+      </div>
+    </div>
+  );
+}
+IdentifierInputs.displayName = 'IdentifierInputs';
+
+/** Type picker with the type-change validation notice in edit mode. */
+function TypeSection({
+  columnTypes,
+  columnType,
+  originalType,
+  includeLink,
+  disabled,
+  onChange,
+}: {
+  columnTypes: ColumnType[];
+  columnType: string;
+  /** The field's saved type in edit mode (null in add mode). */
+  originalType: string | null;
+  includeLink: boolean;
+  disabled: boolean;
+  onChange: (columnType: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor="fe-type">Type</Label>
+      <FieldTypePicker
+        id="fe-type"
+        columnTypes={columnTypes}
+        value={columnType}
+        includeLink={includeLink}
+        disabled={disabled}
+        onChange={onChange}
+      />
+      {originalType !== null && columnType !== originalType && (
+        <p className="text-xs text-ion-amber">
+          Type changes are validated against existing data before applying.
+        </p>
+      )}
+    </div>
+  );
+}
+TypeSection.displayName = 'TypeSection';
+
+/** Sheet subtitle: block-protection notice for block-managed fields. */
+function SheetDescription({
+  blockOwner,
+  objectName,
+}: {
+  blockOwner: string | null;
+  objectName: string;
+}) {
+  if (!blockOwner) return <>{`on ${objectName}`}</>;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <ShieldAlert className="h-3.5 w-3.5 text-ion-amber" aria-hidden />
+      Managed by the <Badge variant="secondary">{blockOwner}</Badge> block — structural changes are
+      protected.
+    </span>
+  );
+}
+SheetDescription.displayName = 'SheetDescription';
+
+/** Footer: optional override-protection switch + Cancel / primary action. */
+function EditorFooter({
+  showForce,
+  force,
+  onForceChange,
+  canSubmit,
+  busy,
+  label,
+  onCancel,
+  onPrimary,
+}: {
+  showForce: boolean;
+  force: boolean;
+  onForceChange: (force: boolean) => void;
+  canSubmit: boolean;
+  busy: boolean;
+  label: string;
+  onCancel: () => void;
+  onPrimary: () => void;
+}) {
+  return (
+    <>
+      {showForce && (
+        // biome-ignore lint/a11y/noLabelWithoutControl: wraps a Radix Switch (renders a button role=switch)
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Switch
+            checked={force}
+            onCheckedChange={(v) => onForceChange(v === true)}
+            aria-label="Override block protection"
+          />
+          Override protection
+        </label>
+      )}
+      <div className="ml-auto flex gap-2">
+        <Button variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button onClick={onPrimary} disabled={!canSubmit || busy}>
+          {label}
+        </Button>
+      </div>
+    </>
+  );
+}
+EditorFooter.displayName = 'EditorFooter';
+
+/** Link-to-record configuration (Tier 3A): target object + single/multiple. */
+function LinkConfigPanel({
+  targets,
+  fieldName,
+  linkTarget,
+  onTargetChange,
+  linkMultiple,
+  onMultipleChange,
+}: {
+  targets: { name: string; displayName: string }[];
+  fieldName: string;
+  linkTarget: string;
+  onTargetChange: (target: string) => void;
+  linkMultiple: boolean;
+  onMultipleChange: (multiple: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-ion-purple/30 bg-ion-purple/5 p-3">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="fe-link-target">Target object</Label>
+        <Select
+          id="fe-link-target"
+          value={linkTarget}
+          onChange={(e) => onTargetChange(e.target.value)}
+        >
+          <option value="">Choose…</option>
+          {targets.map((o) => (
+            <option key={o.name} value={o.name}>
+              {o.displayName}
+            </option>
+          ))}
+        </Select>
+      </div>
+      {/* biome-ignore lint/a11y/noLabelWithoutControl: wraps a Radix Switch (renders a button role=switch) */}
+      <label className="flex items-center gap-2 text-sm">
+        <Switch
+          checked={linkMultiple}
+          onCheckedChange={(v) => onMultipleChange(v === true)}
+          aria-label="Allow linking multiple records"
+        />
+        Allow linking to multiple records
+      </label>
+      <p className="text-xs text-muted-foreground">
+        {linkMultiple
+          ? 'Creates a many-to-many relationship via a junction table.'
+          : `Creates a "${fieldName || 'link'}_id" foreign-key column plus a many-to-one relationship.`}
+      </p>
+    </div>
+  );
+}
+LinkConfigPanel.displayName = 'LinkConfigPanel';
+
+/** Bounds/pattern/message inputs — enforced as CHECK constraints in Postgres. */
+function ValidationPanel({
+  numeric,
+  textLike,
+  disabled,
+  min,
+  max,
+  pattern,
+  message,
+  onMinChange,
+  onMaxChange,
+  onPatternChange,
+  onMessageChange,
+}: {
+  numeric: boolean;
+  textLike: boolean;
+  disabled: boolean;
+  min: string;
+  max: string;
+  pattern: string;
+  message: string;
+  onMinChange: (value: string) => void;
+  onMaxChange: (value: string) => void;
+  onPatternChange: (value: string) => void;
+  onMessageChange: (value: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-border p-3">
+      <p className="font-mono text-[10px] uppercase tracking-[0.05em] text-muted-foreground">
+        Validation — enforced as CHECK constraints in Postgres
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="fe-min">{numeric ? 'Minimum value' : 'Minimum length'}</Label>
+          <Input
+            id="fe-min"
+            type="number"
+            value={min}
+            disabled={disabled}
+            onChange={(e) => onMinChange(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="fe-max">{numeric ? 'Maximum value' : 'Maximum length'}</Label>
+          <Input
+            id="fe-max"
+            type="number"
+            value={max}
+            disabled={disabled}
+            onChange={(e) => onMaxChange(e.target.value)}
+          />
+        </div>
+      </div>
+      {textLike && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="fe-pattern">Pattern (POSIX regex)</Label>
+          <Input
+            id="fe-pattern"
+            value={pattern}
+            disabled={disabled}
+            onChange={(e) => onPatternChange(e.target.value)}
+            placeholder="^[A-Z]{2}-\d+$"
+            className="font-mono"
+          />
+        </div>
+      )}
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="fe-message">Custom validation message</Label>
+        <Input
+          id="fe-message"
+          value={message}
+          disabled={disabled}
+          onChange={(e) => onMessageChange(e.target.value)}
+          placeholder="Must look like AB-123"
+        />
+      </div>
+    </div>
+  );
+}
+ValidationPanel.displayName = 'ValidationPanel';
 
 function FlagRow({
   label,

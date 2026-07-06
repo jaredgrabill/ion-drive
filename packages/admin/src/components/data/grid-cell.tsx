@@ -41,6 +41,47 @@ function Null() {
   return <span className="text-muted-foreground/50">—</span>;
 }
 
+// --- Case subcomponents ------------------------------------------------
+
+/**
+ * Enum badge pill. Choice colors are presentation-only metadata from the
+ * field designer (uiOptions.choiceColors, Phase 10); uncolored choices fall
+ * back to the standard info badge.
+ */
+function EnumCell({ value, field }: { value: unknown; field?: FieldDefinition }) {
+  const colors = (field?.uiOptions?.choiceColors ?? {}) as Record<string, string>;
+  const color = colors[String(value)];
+  if (!color) return <Badge variant="info">{String(value)}</Badge>;
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs"
+      style={{
+        borderColor: `${color}66`,
+        backgroundColor: `${color}1f`,
+      }}
+    >
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+      {String(value)}
+    </span>
+  );
+}
+
+/** JSON `{ }` chip with key count; full pretty-printed value in the tooltip. */
+function JsonCell({ value }: { value: unknown }) {
+  const keys = typeof value === 'object' && value !== null ? Object.keys(value).length : 0;
+  return (
+    <span
+      className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground"
+      title={JSON.stringify(value, null, 2)}
+    >
+      {'{ }'}
+      <Badge variant="outline" className="px-1.5">
+        {keys}
+      </Badge>
+    </span>
+  );
+}
+
 // --- Component -------------------------------------------------------
 
 export function GridCell({ value, kind, field }: GridCellProps) {
@@ -92,31 +133,8 @@ export function GridCell({ value, kind, field }: GridCellProps) {
     case 'datetime':
       return <span className="whitespace-nowrap">{formatDate(value, 'MMM d, yyyy HH:mm')}</span>;
 
-    case 'enum': {
-      // Choice colors are presentation-only metadata from the field designer
-      // (uiOptions.choiceColors, Phase 10).
-      const colors = (field?.uiOptions?.choiceColors ?? {}) as Record<string, string>;
-      const color = colors[String(value)];
-      if (color) {
-        return (
-          <span
-            className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs"
-            style={{
-              borderColor: `${color}66`,
-              backgroundColor: `${color}1f`,
-            }}
-          >
-            <span
-              aria-hidden
-              className="h-1.5 w-1.5 rounded-full"
-              style={{ backgroundColor: color }}
-            />
-            {String(value)}
-          </span>
-        );
-      }
-      return <Badge variant="info">{String(value)}</Badge>;
-    }
+    case 'enum':
+      return <EnumCell value={value} field={field} />;
 
     case 'uuid':
       return (
@@ -137,20 +155,8 @@ export function GridCell({ value, kind, field }: GridCellProps) {
         </span>
       );
 
-    case 'json': {
-      const keys = typeof value === 'object' && value !== null ? Object.keys(value).length : 0;
-      return (
-        <span
-          className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground"
-          title={JSON.stringify(value, null, 2)}
-        >
-          {'{ }'}
-          <Badge variant="outline" className="px-1.5">
-            {keys}
-          </Badge>
-        </span>
-      );
-    }
+    case 'json':
+      return <JsonCell value={value} />;
 
     case 'email':
       return (

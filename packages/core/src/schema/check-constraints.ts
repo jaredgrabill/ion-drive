@@ -66,53 +66,77 @@ export function buildCheckConstraints(
   constraints: FieldConstraints | undefined,
 ): CheckConstraintSpec[] {
   if (!constraints) return [];
-  const specs: CheckConstraintSpec[] = [];
   const prefix = checkConstraintPrefix(tableName, columnName);
   const col = `"${columnName}"`;
   const numeric = NUMERIC_TYPES.has(columnType);
   const textLike = isTextLike(columnType);
 
-  if (constraints.min !== undefined && (numeric || textLike)) {
-    specs.push({
-      name: `${prefix}min`,
-      kind: 'min',
-      expression: numeric
-        ? `${col} >= ${constraints.min}`
-        : `char_length(${col}) >= ${constraints.min}`,
-    });
-  }
-  if (constraints.max !== undefined && (numeric || textLike)) {
-    specs.push({
-      name: `${prefix}max`,
-      kind: 'max',
-      expression: numeric
-        ? `${col} <= ${constraints.max}`
-        : `char_length(${col}) <= ${constraints.max}`,
-    });
-  }
-  if (constraints.pattern && textLike) {
-    specs.push({
-      name: `${prefix}pattern`,
-      kind: 'pattern',
-      expression: `${col} ~ ${literal(constraints.pattern)}`,
-    });
-  }
-  if (constraints.enumValues && constraints.enumValues.length > 0) {
-    const values = constraints.enumValues.map(literal).join(', ');
-    if (columnType === 'multi_enum') {
-      specs.push({
-        name: `${prefix}enum`,
-        kind: 'enum',
-        expression: `${col} <@ ARRAY[${values}]::TEXT[]`,
-      });
-    } else if (textLike) {
-      specs.push({
-        name: `${prefix}enum`,
-        kind: 'enum',
-        expression: `${col} IN (${values})`,
-      });
-    }
-  }
+  const specs = [
+    boundSpec('min', constraints.min, { prefix, col, numeric, textLike }),
+    boundSpec('max', constraints.max, { prefix, col, numeric, textLike }),
+    patternSpec(constraints.pattern, { prefix, col, textLike }),
+    enumSpec(constraints.enumValues, columnType, { prefix, col, textLike }),
+  ];
+  return specs.filter((s): s is CheckConstraintSpec => s !== undefined);
+}
 
-  return specs;
+/**
+ * Renders a min/max bound: a value bound for numeric types, a `char_length()`
+ * bound for text-like types, nothing for types where bounds don't apply.
+ */
+function boundSpec(
+  kind: 'min' | 'max',
+  bound: number | undefined,
+  ctx: { prefix: string; col: string; numeric: boolean; textLike: boolean },
+): CheckConstraintSpec | undefined {
+  if (bound === undefined || !(ctx.numeric || ctx.textLike)) return undefined;
+  const op = kind === 'min' ? '>=' : '<=';
+  return {
+    name: `${ctx.prefix}${kind}`,
+    kind,
+    expression: ctx.numeric
+      ? `${ctx.col} ${op} ${bound}`
+      : `char_length(${ctx.col}) ${op} ${bound}`,
+  };
+}
+
+/** Renders a POSIX regex match constraint (text-like types only). */
+function patternSpec(
+  pattern: string | undefined,
+  ctx: { prefix: string; col: string; textLike: boolean },
+): CheckConstraintSpec | undefined {
+  if (!pattern || !ctx.textLike) return undefined;
+  return {
+    name: `${ctx.prefix}pattern`,
+    kind: 'pattern',
+    expression: `${ctx.col} ~ ${literal(pattern)}`,
+  };
+}
+
+/**
+ * Renders enum membership: `<@ ARRAY[...]` containment for multi_enum,
+ * `IN (...)` for single-select text-like types.
+ */
+function enumSpec(
+  enumValues: string[] | undefined,
+  columnType: ColumnTypeName,
+  ctx: { prefix: string; col: string; textLike: boolean },
+): CheckConstraintSpec | undefined {
+  if (!enumValues || enumValues.length === 0) return undefined;
+  const values = enumValues.map(literal).join(', ');
+  if (columnType === 'multi_enum') {
+    return {
+      name: `${ctx.prefix}enum`,
+      kind: 'enum',
+      expression: `${ctx.col} <@ ARRAY[${values}]::TEXT[]`,
+    };
+  }
+  if (ctx.textLike) {
+    return {
+      name: `${ctx.prefix}enum`,
+      kind: 'enum',
+      expression: `${ctx.col} IN (${values})`,
+    };
+  }
+  return undefined;
 }

@@ -44,6 +44,17 @@ function ChartCard({ title, children }: { title: string; children: ReactNode }) 
 }
 ChartCard.displayName = 'ChartCard';
 
+/** Sums each surface's request counts across all traffic points. */
+function sumBySurface(points: { bySurface: Record<string, number> }[]): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const point of points) {
+    for (const [surface, count] of Object.entries(point.bySurface)) {
+      totals[surface] = (totals[surface] ?? 0) + count;
+    }
+  }
+  return totals;
+}
+
 export function Metrics() {
   const [period, setPeriod] = useState<TrafficPeriod>('24h');
   const traffic = useQuery({
@@ -53,12 +64,7 @@ export function Metrics() {
   });
 
   const summary = traffic.data;
-  const totalBySurface: Record<string, number> = {};
-  for (const point of summary?.points ?? []) {
-    for (const [surface, count] of Object.entries(point.bySurface)) {
-      totalBySurface[surface] = (totalBySurface[surface] ?? 0) + count;
-    }
-  }
+  const totalBySurface = sumBySurface(summary?.points ?? []);
   const empty = (summary?.totals.requests ?? 0) === 0;
 
   return (
@@ -90,47 +96,7 @@ export function Metrics() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <ChartCard title="Request rate">
-            {empty ? (
-              <EmptyChart />
-            ) : (
-              summary && (
-                <MetricLineChart
-                  points={summary.points}
-                  dataKey="total"
-                  name="Requests"
-                  bucketMinutes={summary.bucketMinutes}
-                />
-              )
-            )}
-          </ChartCard>
-          <ChartCard title="Error rate">
-            {empty ? (
-              <EmptyChart />
-            ) : (
-              summary && (
-                <MetricLineChart
-                  points={summary.points}
-                  dataKey="errors"
-                  name="Errors"
-                  color="hsl(var(--ion-red))"
-                  bucketMinutes={summary.bucketMinutes}
-                />
-              )
-            )}
-          </ChartCard>
-          <ChartCard title="Latency percentiles">
-            {empty ? (
-              <EmptyChart />
-            ) : (
-              summary && <LatencyBarChart latency={summary.latency} height={200} />
-            )}
-          </ChartCard>
-          <ChartCard title="Requests by surface">
-            {empty ? <EmptyChart /> : <SurfaceBarChart bySurface={totalBySurface} height={200} />}
-          </ChartCard>
-        </div>
+        <ChartsGrid summary={summary} totalBySurface={totalBySurface} empty={empty} />
       )}
 
       {!traffic.isLoading && !empty && summary && (
@@ -144,6 +110,62 @@ export function Metrics() {
   );
 }
 Metrics.displayName = 'Metrics';
+
+/** The 2×2 chart grid: request rate, error rate, latency, and surface mix. */
+function ChartsGrid({
+  summary,
+  totalBySurface,
+  empty,
+}: {
+  summary: Awaited<ReturnType<typeof api.traffic>> | undefined;
+  totalBySurface: Record<string, number>;
+  empty: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <ChartCard title="Request rate">
+        {empty ? (
+          <EmptyChart />
+        ) : (
+          summary && (
+            <MetricLineChart
+              points={summary.points}
+              dataKey="total"
+              name="Requests"
+              bucketMinutes={summary.bucketMinutes}
+            />
+          )
+        )}
+      </ChartCard>
+      <ChartCard title="Error rate">
+        {empty ? (
+          <EmptyChart />
+        ) : (
+          summary && (
+            <MetricLineChart
+              points={summary.points}
+              dataKey="errors"
+              name="Errors"
+              color="hsl(var(--ion-red))"
+              bucketMinutes={summary.bucketMinutes}
+            />
+          )
+        )}
+      </ChartCard>
+      <ChartCard title="Latency percentiles">
+        {empty ? (
+          <EmptyChart />
+        ) : (
+          summary && <LatencyBarChart latency={summary.latency} height={200} />
+        )}
+      </ChartCard>
+      <ChartCard title="Requests by surface">
+        {empty ? <EmptyChart /> : <SurfaceBarChart bySurface={totalBySurface} height={200} />}
+      </ChartCard>
+    </div>
+  );
+}
+ChartsGrid.displayName = 'ChartsGrid';
 
 function EmptyChart() {
   return (

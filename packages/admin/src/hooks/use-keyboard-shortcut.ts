@@ -22,6 +22,23 @@ export interface KeyboardShortcutOptions {
   enabled?: boolean;
 }
 
+/** Whether the event matches the key + modifier combo (meta = Cmd or Ctrl). */
+function comboMatches(event: KeyboardEvent, key: string, meta: boolean, shift: boolean): boolean {
+  if (event.key.toLowerCase() !== key.toLowerCase()) return false;
+  if (meta && !(event.metaKey || event.ctrlKey)) return false;
+  if (!meta && (event.metaKey || event.ctrlKey)) return false;
+  return shift === event.shiftKey;
+}
+
+/** Whether the event originated from a text-entry element (input/textarea/select/contenteditable). */
+function isTypingTarget(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null;
+  const tag = target?.tagName;
+  return (
+    tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable === true
+  );
+}
+
 /**
  * @param key - `KeyboardEvent.key`, case-insensitive (e.g. "k", "Escape").
  * @param handler - Called when the combo matches.
@@ -36,16 +53,8 @@ export function useKeyboardShortcut(
   useEffect(() => {
     if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== key.toLowerCase()) return;
-      if (meta && !(event.metaKey || event.ctrlKey)) return;
-      if (!meta && (event.metaKey || event.ctrlKey)) return;
-      if (shift !== event.shiftKey) return;
-      if (!allowInInputs) {
-        const target = event.target as HTMLElement | null;
-        const tag = target?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable)
-          return;
-      }
+      if (!comboMatches(event, key, meta, shift)) return;
+      if (!allowInInputs && isTypingTarget(event)) return;
       event.preventDefault();
       handler(event);
     };

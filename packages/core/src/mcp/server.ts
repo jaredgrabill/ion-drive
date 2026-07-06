@@ -17,8 +17,24 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { DataService } from '../data/data-service.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
-import type { ColumnTypeName, FieldConstraints } from '../schema/types.js';
+import type { ColumnTypeName, FieldConstraints, FieldDefinition } from '../schema/types.js';
 import { COLUMN_TYPES } from '../schema/types.js';
+
+/**
+ * One-line human summary of a field for the schema-overview resource:
+ * `name (type, required, unique, one of: a|b, min 1, max 9) — description`.
+ */
+function describeFieldForOverview(f: FieldDefinition): string {
+  const notes = [
+    f.columnType,
+    f.isRequired ? 'required' : null,
+    f.isUnique ? 'unique' : null,
+    f.constraints?.enumValues ? `one of: ${f.constraints.enumValues.join('|')}` : null,
+    f.constraints?.min !== undefined ? `min ${f.constraints.min}` : null,
+    f.constraints?.max !== undefined ? `max ${f.constraints.max}` : null,
+  ].filter(Boolean);
+  return `${f.name} (${notes.join(', ')})${f.description ? ` — ${f.description}` : ''}`;
+}
 
 /** Field constraints as an MCP tool argument (mirrors FieldConstraints). */
 const constraintsShape = z
@@ -59,19 +75,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       displayName: obj.displayName,
       description: obj.description,
       fieldCount: obj.fields.length,
-      fields: obj.fields
-        .filter((f) => !f.isSystem)
-        .map((f) => {
-          const notes = [
-            f.columnType,
-            f.isRequired ? 'required' : null,
-            f.isUnique ? 'unique' : null,
-            f.constraints?.enumValues ? `one of: ${f.constraints.enumValues.join('|')}` : null,
-            f.constraints?.min !== undefined ? `min ${f.constraints.min}` : null,
-            f.constraints?.max !== undefined ? `max ${f.constraints.max}` : null,
-          ].filter(Boolean);
-          return `${f.name} (${notes.join(', ')})${f.description ? ` — ${f.description}` : ''}`;
-        }),
+      fields: obj.fields.filter((f) => !f.isSystem).map(describeFieldForOverview),
     }));
 
     return {

@@ -12,7 +12,7 @@
  * Tab commits and moves on.
  */
 
-import { type KeyboardEvent, useEffect, useRef } from 'react';
+import { type KeyboardEvent, type RefObject, useEffect, useRef } from 'react';
 import type { FieldDefinition } from '../../lib/types';
 import { Checkbox, Input, Select, Textarea } from '../ui';
 import { type CellKind, NUMERIC_KINDS, cellKindOf } from './grid-types';
@@ -61,6 +61,67 @@ export function editValueOf(value: unknown): string {
   return String(value);
 }
 
+// --- Keyboard + input-type helpers --------------------------------------
+
+/**
+ * Shared editor keyboard contract: Enter commits (except in multi-line
+ * controls, where Enter inserts a newline), Escape cancels.
+ */
+function handleEditorKeyDown(
+  e: KeyboardEvent,
+  kind: CellKind,
+  onCommit?: () => void,
+  onCancel?: () => void,
+): void {
+  if (e.key === 'Enter' && kind !== 'longText' && kind !== 'json') {
+    e.preventDefault();
+    onCommit?.();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    onCancel?.();
+  }
+}
+
+/** Native input `type` for the fallback text input of a cell kind. */
+function inputTypeFor(kind: CellKind, numeric: boolean): string {
+  if (numeric) return 'number';
+  if (kind === 'email') return 'email';
+  if (kind === 'url') return 'url';
+  return 'text';
+}
+
+// --- Click-to-set star rating editor ------------------------------------
+
+interface RatingEditorProps {
+  field: FieldDefinition;
+  value: string;
+  onChange: (value: string) => void;
+}
+
+/** Five click-to-set stars; the current value and above render amber. */
+function RatingEditor({ field, value, onChange }: RatingEditorProps) {
+  return (
+    <div className="flex gap-0.5" aria-label={field.displayName}>
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          aria-pressed={Number(value) >= star}
+          aria-label={`${star} stars`}
+          className="text-lg leading-none transition-transform hover:scale-110"
+          onClick={() => onChange(String(star))}
+        >
+          <span className={star <= Number(value) ? 'text-ion-amber' : 'text-muted-foreground/40'}>
+            ★
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+RatingEditor.displayName = 'RatingEditor';
+
 // --- Component -------------------------------------------------------
 
 export function GridCellEditor({
@@ -82,16 +143,7 @@ export function GridCellEditor({
     }
   }, [autoFocus]);
 
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter' && kind !== 'longText' && kind !== 'json') {
-      e.preventDefault();
-      onCommit?.();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      onCancel?.();
-    }
-  };
+  const onKeyDown = (e: KeyboardEvent) => handleEditorKeyDown(e, kind, onCommit, onCancel);
 
   switch (kind) {
     case 'boolean':
@@ -104,26 +156,7 @@ export function GridCellEditor({
       );
 
     case 'rating':
-      return (
-        <div className="flex gap-0.5" aria-label={field.displayName}>
-          {[1, 2, 3, 4, 5].map((star) => (
-            <button
-              key={star}
-              type="button"
-              aria-pressed={Number(value) >= star}
-              aria-label={`${star} stars`}
-              className="text-lg leading-none transition-transform hover:scale-110"
-              onClick={() => onChange(String(star))}
-            >
-              <span
-                className={star <= Number(value) ? 'text-ion-amber' : 'text-muted-foreground/40'}
-              >
-                ★
-              </span>
-            </button>
-          ))}
-        </div>
-      );
+      return <RatingEditor field={field} value={value} onChange={onChange} />;
 
     case 'enum': {
       // Choice values come from the field's constraints (Phase 10 — the same
@@ -174,28 +207,62 @@ export function GridCellEditor({
     case 'uuid':
       return <span className="font-mono text-xs text-muted-foreground">{value || '—'}</span>;
 
-    default: {
-      // Constraint hints (Phase 10): numbers get min/max, text gets maxLength.
-      const numeric = NUMERIC_KINDS.has(kind);
-      const constraints = field.constraints ?? undefined;
+    default:
       return (
-        <Input
-          ref={inputRef}
-          type={numeric ? 'number' : kind === 'email' ? 'email' : kind === 'url' ? 'url' : 'text'}
-          min={numeric ? constraints?.min : undefined}
-          max={numeric ? constraints?.max : undefined}
-          maxLength={!numeric ? constraints?.max : undefined}
+        <ConstrainedTextInput
+          field={field}
+          kind={kind}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={onChange}
           onKeyDown={onKeyDown}
-          className="h-8"
-          aria-label={field.displayName}
+          inputRef={inputRef}
         />
       );
-    }
   }
 }
 GridCellEditor.displayName = 'GridCellEditor';
+
+// --- Fallback constrained text/number input ------------------------------
+
+interface ConstrainedTextInputProps {
+  field: FieldDefinition;
+  kind: CellKind;
+  value: string;
+  onChange: (value: string) => void;
+  onKeyDown: (e: KeyboardEvent) => void;
+  inputRef: RefObject<HTMLInputElement | null>;
+}
+
+/**
+ * Fallback single-line editor with constraint hints (Phase 10): numbers get
+ * min/max, text gets maxLength, email/url get their native input type.
+ */
+function ConstrainedTextInput({
+  field,
+  kind,
+  value,
+  onChange,
+  onKeyDown,
+  inputRef,
+}: ConstrainedTextInputProps) {
+  const numeric = NUMERIC_KINDS.has(kind);
+  const constraints = field.constraints ?? undefined;
+  return (
+    <Input
+      ref={inputRef}
+      type={inputTypeFor(kind, numeric)}
+      min={numeric ? constraints?.min : undefined}
+      max={numeric ? constraints?.max : undefined}
+      maxLength={!numeric ? constraints?.max : undefined}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={onKeyDown}
+      className="h-8"
+      aria-label={field.displayName}
+    />
+  );
+}
+ConstrainedTextInput.displayName = 'ConstrainedTextInput';
 
 // --- Select-based enum editor (used when values are known) -------------
 

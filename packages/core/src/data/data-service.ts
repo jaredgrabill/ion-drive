@@ -21,7 +21,11 @@ import type {
 import type { MessageBus } from '../messaging/message-bus.js';
 import { NoopBus } from '../messaging/noop-bus.js';
 import type { SchemaRegistry } from '../schema/schema-registry.js';
-import { COLUMN_TYPES, type FieldConstraints } from '../schema/types.js';
+import {
+  COLUMN_TYPES,
+  type FieldConstraints,
+  type RelationshipDefinition,
+} from '../schema/types.js';
 import type {
   BulkResult,
   FilterCondition,
@@ -462,37 +466,49 @@ export class DataService {
 
       if (rel.type === 'many_to_many') {
         await this.expandManyToMany(objectName, rows, rel);
-        continue;
+      } else {
+        await this.expandForeignKey(objectName, rows, rel);
       }
+    }
+  }
 
-      // The FK lives on this object when it points outward (many_to_one /
-      // one_to_one from here) or when a one_to_many names it as the target.
-      const fkOnThisObject =
-        rel.type === 'one_to_many'
-          ? rel.targetObjectName === objectName
-          : rel.sourceObjectName === objectName;
-      if (!fkOnThisObject) continue;
+  /**
+   * Expands a FK-backed relationship (many_to_one / one_to_one / one_to_many)
+   * where the FK column lives on **this** object: one batched fetch of the
+   * other side, each row gains `row[relName] = relatedRecord | null`.
+   */
+  private async expandForeignKey(
+    objectName: string,
+    rows: Record<string, unknown>[],
+    rel: RelationshipDefinition,
+  ): Promise<void> {
+    // The FK lives on this object when it points outward (many_to_one /
+    // one_to_one from here) or when a one_to_many names it as the target.
+    const fkOnThisObject =
+      rel.type === 'one_to_many'
+        ? rel.targetObjectName === objectName
+        : rel.sourceObjectName === objectName;
+    if (!fkOnThisObject) return;
 
-      const otherObject = rel.type === 'one_to_many' ? rel.sourceObjectName : rel.targetObjectName;
-      const otherTable = this.registry.getTableName(otherObject);
-      if (!otherTable) continue;
+    const otherObject = rel.type === 'one_to_many' ? rel.sourceObjectName : rel.targetObjectName;
+    const otherTable = this.registry.getTableName(otherObject);
+    if (!otherTable) return;
 
-      const fkColumn = `${rel.name}_id`;
-      const ids = [...new Set(rows.map((r) => r[fkColumn]).filter((v) => v != null))];
-      if (ids.length === 0) {
-        for (const row of rows) row[rel.name] = null;
-        continue;
-      }
-      const related = await this.db
-        .selectFrom(otherTable)
-        .selectAll()
-        .where('id', 'in', ids)
-        .execute();
-      const byId = new Map((related as Record<string, unknown>[]).map((r) => [String(r.id), r]));
-      for (const row of rows) {
-        const fk = row[fkColumn];
-        row[rel.name] = fk == null ? null : (byId.get(String(fk)) ?? null);
-      }
+    const fkColumn = `${rel.name}_id`;
+    const ids = [...new Set(rows.map((r) => r[fkColumn]).filter((v) => v != null))];
+    if (ids.length === 0) {
+      for (const row of rows) row[rel.name] = null;
+      return;
+    }
+    const related = await this.db
+      .selectFrom(otherTable)
+      .selectAll()
+      .where('id', 'in', ids)
+      .execute();
+    const byId = new Map((related as Record<string, unknown>[]).map((r) => [String(r.id), r]));
+    for (const row of rows) {
+      const fk = row[fkColumn];
+      row[rel.name] = fk == null ? null : (byId.get(String(fk)) ?? null);
     }
   }
 
@@ -500,7 +516,7 @@ export class DataService {
   private async expandManyToMany(
     objectName: string,
     rows: Record<string, unknown>[],
-    rel: NonNullable<NonNullable<ReturnType<SchemaRegistry['getObject']>>['relationships']>[number],
+    rel: RelationshipDefinition,
   ): Promise<void> {
     const isSource = rel.sourceObjectName === objectName;
     const otherObject = isSource ? rel.targetObjectName : rel.sourceObjectName;
@@ -508,15 +524,7 @@ export class DataService {
     const otherTable = this.registry.getTableName(otherObject);
     if (!thisTable || !otherTable) return;
 
-    // Junction info is recorded since Phase 10; fall back to the naming
-    // convention for relationships created before that.
-    const sourceTable = this.registry.getTableName(rel.sourceObjectName) ?? '';
-    const targetTable = this.registry.getTableName(rel.targetObjectName) ?? '';
-    const junction = rel.junctionTable ?? `${sourceTable}_${targetTable}`;
-    const sourceCol = rel.junctionSourceColumn ?? `${sourceTable}_id`;
-    const targetCol = rel.junctionTargetColumn ?? `${targetTable}_id`;
-    const thisCol = isSource ? sourceCol : targetCol;
-    const otherCol = isSource ? targetCol : sourceCol;
+    const { junction, thisCol, otherCol } = this.resolveJunction(rel, isSource);
 
     const ids = rows.map((r) => r.id).filter((v) => v != null);
     const links = (await this.db
@@ -534,20 +542,32 @@ export class DataService {
             .selectAll()
             .where('id', 'in', otherIds)
             .execute()) as Record<string, unknown>[]);
-    const byId = new Map(related.map((r) => [String(r.id), r]));
 
-    const grouped = new Map<string, Record<string, unknown>[]>();
-    for (const link of links) {
-      const key = String(link[thisCol]);
-      const other = byId.get(String(link[otherCol]));
-      if (!other) continue;
-      const list = grouped.get(key) ?? [];
-      list.push(other);
-      grouped.set(key, list);
-    }
+    const grouped = groupLinkedRecords(links, thisCol, otherCol, related);
     for (const row of rows) {
       row[rel.name] = grouped.get(String(row.id)) ?? [];
     }
+  }
+
+  /**
+   * Resolves a many_to_many relationship's junction table and the column pair
+   * as seen from this object's side. Junction info is recorded since Phase 10;
+   * falls back to the naming convention for relationships created before that.
+   */
+  private resolveJunction(
+    rel: RelationshipDefinition,
+    isSource: boolean,
+  ): { junction: string; thisCol: string; otherCol: string } {
+    const sourceTable = this.registry.getTableName(rel.sourceObjectName) ?? '';
+    const targetTable = this.registry.getTableName(rel.targetObjectName) ?? '';
+    const junction = rel.junctionTable ?? `${sourceTable}_${targetTable}`;
+    const sourceCol = rel.junctionSourceColumn ?? `${sourceTable}_id`;
+    const targetCol = rel.junctionTargetColumn ?? `${targetTable}_id`;
+    return {
+      junction,
+      thisCol: isSource ? sourceCol : targetCol,
+      otherCol: isSource ? targetCol : sourceCol,
+    };
   }
 
   /**
@@ -690,6 +710,29 @@ function escapeLikePattern(term: string): string {
   return term.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+/**
+ * Groups junction-table links by this-side id, resolving each other-side id to
+ * its fetched record (links whose target record is missing are skipped).
+ */
+function groupLinkedRecords(
+  links: Record<string, unknown>[],
+  thisCol: string,
+  otherCol: string,
+  related: Record<string, unknown>[],
+): Map<string, Record<string, unknown>[]> {
+  const byId = new Map(related.map((r) => [String(r.id), r]));
+  const grouped = new Map<string, Record<string, unknown>[]>();
+  for (const link of links) {
+    const key = String(link[thisCol]);
+    const other = byId.get(String(link[otherCol]));
+    if (!other) continue;
+    const list = grouped.get(key) ?? [];
+    list.push(other);
+    grouped.set(key, list);
+  }
+  return grouped;
+}
+
 /** Numeric column types where min/max bound the value (not the length). */
 const NUMERIC_CATEGORIES = new Set(['number']);
 
@@ -707,46 +750,72 @@ function constraintViolation(
   const isNumeric = NUMERIC_CATEGORIES.has(category) || columnType === 'rating';
 
   if (isNumeric && typeof value === 'number') {
-    if (constraints.min !== undefined && value < constraints.min) {
-      return `must be at least ${constraints.min}`;
-    }
-    if (constraints.max !== undefined && value > constraints.max) {
-      return `must be at most ${constraints.max}`;
-    }
+    const problem = numericViolation(value, constraints);
+    if (problem) return problem;
   }
 
   if (typeof value === 'string') {
-    if (constraints.min !== undefined && !isNumeric && value.length < constraints.min) {
-      return `must be at least ${constraints.min} characters`;
-    }
-    if (constraints.max !== undefined && !isNumeric && value.length > constraints.max) {
-      return `must be at most ${constraints.max} characters`;
-    }
-    if (constraints.pattern) {
-      try {
-        if (!new RegExp(constraints.pattern).test(value)) {
-          return `must match the pattern ${constraints.pattern}`;
-        }
-      } catch {
-        // Invalid JS regex (POSIX-only syntax) — let Postgres be the judge.
-      }
-    }
-    if (constraints.enumValues?.length && columnType !== 'multi_enum') {
-      if (!constraints.enumValues.includes(value)) {
-        return `must be one of: ${constraints.enumValues.join(', ')}`;
-      }
-    }
+    const problem = stringViolation(value, columnType, constraints, isNumeric);
+    if (problem) return problem;
   }
 
-  if (columnType === 'multi_enum' && Array.isArray(value) && constraints.enumValues?.length) {
-    const invalid = value.filter(
-      (v) => typeof v === 'string' && !constraints.enumValues?.includes(v),
-    );
-    if (invalid.length > 0) {
-      return `contains invalid value(s): ${invalid.join(', ')} (allowed: ${constraints.enumValues.join(', ')})`;
-    }
+  if (columnType === 'multi_enum' && Array.isArray(value)) {
+    return multiEnumViolation(value, constraints);
   }
 
+  return null;
+}
+
+/** Checks a numeric value against min/max bounds. */
+function numericViolation(value: number, constraints: FieldConstraints): string | null {
+  if (constraints.min !== undefined && value < constraints.min) {
+    return `must be at least ${constraints.min}`;
+  }
+  if (constraints.max !== undefined && value > constraints.max) {
+    return `must be at most ${constraints.max}`;
+  }
+  return null;
+}
+
+/** Checks a string value against length bounds, pattern, and enum membership. */
+function stringViolation(
+  value: string,
+  columnType: string,
+  constraints: FieldConstraints,
+  isNumeric: boolean,
+): string | null {
+  if (constraints.min !== undefined && !isNumeric && value.length < constraints.min) {
+    return `must be at least ${constraints.min} characters`;
+  }
+  if (constraints.max !== undefined && !isNumeric && value.length > constraints.max) {
+    return `must be at most ${constraints.max} characters`;
+  }
+  if (constraints.pattern) {
+    try {
+      if (!new RegExp(constraints.pattern).test(value)) {
+        return `must match the pattern ${constraints.pattern}`;
+      }
+    } catch {
+      // Invalid JS regex (POSIX-only syntax) — let Postgres be the judge.
+    }
+  }
+  if (constraints.enumValues?.length && columnType !== 'multi_enum') {
+    if (!constraints.enumValues.includes(value)) {
+      return `must be one of: ${constraints.enumValues.join(', ')}`;
+    }
+  }
+  return null;
+}
+
+/** Checks a multi_enum array value: every item must be an allowed choice. */
+function multiEnumViolation(value: unknown[], constraints: FieldConstraints): string | null {
+  if (!constraints.enumValues?.length) return null;
+  const invalid = value.filter(
+    (v) => typeof v === 'string' && !constraints.enumValues?.includes(v),
+  );
+  if (invalid.length > 0) {
+    return `contains invalid value(s): ${invalid.join(', ')} (allowed: ${constraints.enumValues.join(', ')})`;
+  }
   return null;
 }
 

@@ -36,7 +36,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useDebounce } from '../../hooks';
 import { ApiError, api } from '../../lib/api';
 import { consumeGridSearchPrefill } from '../../lib/grid-prefill';
-import type { DataObjectDefinition, FieldDefinition } from '../../lib/types';
+import type { DataObjectDefinition, FieldDefinition, PaginationMeta } from '../../lib/types';
 import { cn } from '../../lib/utils';
 import {
   AlertDialog,
@@ -85,6 +85,90 @@ interface EditingCell {
 interface FocusedCell {
   row: number;
   col: number;
+}
+
+// --- Pure helpers --------------------------------------------------------
+
+/** Tri-state header checkbox value for the select-all control. */
+function selectAllState(allSelected: boolean, someSelected: boolean): boolean | 'indeterminate' {
+  if (allSelected) return true;
+  return someSelected ? 'indeterminate' : false;
+}
+
+/** CSV-quotes a cell value (objects JSON-stringified, quotes doubled). */
+function csvCell(v: unknown): string {
+  const s = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Handles a navigation/edit key on the grid container (roving focus).
+ * Extracted from the component so the keyboard contract reads as one unit:
+ * arrows/Tab move, Enter edits, Space toggles booleans, Delete clears.
+ */
+function handleGridKey(
+  e: React.KeyboardEvent,
+  ctx: {
+    focused: FocusedCell;
+    rows: GridRow[];
+    visibleFields: FieldDefinition[];
+    setFocused: (cell: FocusedCell) => void;
+    beginEdit: (rowIndex: number, colIndex: number) => void;
+    saveCell: (vars: { rowId: string; field: string; value: unknown }) => void;
+  },
+): void {
+  const { focused, rows, visibleFields, setFocused, beginEdit, saveCell } = ctx;
+  const maxRow = rows.length - 1;
+  const maxCol = visibleFields.length - 1;
+  const move = (dr: number, dc: number) => {
+    e.preventDefault();
+    setFocused({
+      row: Math.max(0, Math.min(maxRow, focused.row + dr)),
+      col: Math.max(0, Math.min(maxCol, focused.col + dc)),
+    });
+  };
+  switch (e.key) {
+    case 'ArrowUp':
+      move(-1, 0);
+      return;
+    case 'ArrowDown':
+      move(1, 0);
+      return;
+    case 'ArrowLeft':
+      move(0, -1);
+      return;
+    case 'ArrowRight':
+      move(0, 1);
+      return;
+    case 'Tab':
+      move(0, e.shiftKey ? -1 : 1);
+      return;
+    case 'Enter':
+      e.preventDefault();
+      beginEdit(focused.row, focused.col);
+      return;
+    case ' ': {
+      const field = visibleFields[focused.col];
+      const row = rows[focused.row];
+      if (field && row && cellKindOf(field.columnType) === 'boolean') {
+        e.preventDefault();
+        saveCell({ rowId: String(row.id), field: field.name, value: !row[field.columnName] });
+      }
+      return;
+    }
+    case 'Delete':
+    case 'Backspace': {
+      const field = visibleFields[focused.col];
+      const row = rows[focused.row];
+      if (field && row && !field.isPrimary) {
+        e.preventDefault();
+        saveCell({ rowId: String(row.id), field: field.name, value: null });
+      }
+      return;
+    }
+    default:
+      return;
+  }
 }
 
 // --- Component ---------------------------------------------------------
@@ -277,55 +361,14 @@ export function DataGrid({ object }: DataGridProps) {
     (e: React.KeyboardEvent) => {
       if (editing) return; // the editor handles its own keys
       if (!focused) return;
-      const maxRow = rows.length - 1;
-      const maxCol = visibleFields.length - 1;
-      const move = (dr: number, dc: number) => {
-        e.preventDefault();
-        setFocused({
-          row: Math.max(0, Math.min(maxRow, focused.row + dr)),
-          col: Math.max(0, Math.min(maxCol, focused.col + dc)),
-        });
-      };
-      switch (e.key) {
-        case 'ArrowUp':
-          return move(-1, 0);
-        case 'ArrowDown':
-          return move(1, 0);
-        case 'ArrowLeft':
-          return move(0, -1);
-        case 'ArrowRight':
-          return move(0, 1);
-        case 'Tab':
-          return move(0, e.shiftKey ? -1 : 1);
-        case 'Enter':
-          e.preventDefault();
-          return beginEdit(focused.row, focused.col);
-        case ' ': {
-          const field = visibleFields[focused.col];
-          const row = rows[focused.row];
-          if (field && row && cellKindOf(field.columnType) === 'boolean') {
-            e.preventDefault();
-            saveCell.mutate({
-              rowId: String(row.id),
-              field: field.name,
-              value: !row[field.columnName],
-            });
-          }
-          return;
-        }
-        case 'Delete':
-        case 'Backspace': {
-          const field = visibleFields[focused.col];
-          const row = rows[focused.row];
-          if (field && row && !field.isPrimary) {
-            e.preventDefault();
-            saveCell.mutate({ rowId: String(row.id), field: field.name, value: null });
-          }
-          return;
-        }
-        default:
-          return;
-      }
+      handleGridKey(e, {
+        focused,
+        rows,
+        visibleFields,
+        setFocused,
+        beginEdit,
+        saveCell: saveCell.mutate,
+      });
     },
     [editing, focused, rows, visibleFields, beginEdit, saveCell],
   );
@@ -333,15 +376,7 @@ export function DataGrid({ object }: DataGridProps) {
   // --- Toolbar actions ---
   const exportCsv = () => {
     const header = visibleFields.map((f) => f.displayName).join(',');
-    const lines = rows.map((row) =>
-      visibleFields
-        .map((f) => {
-          const v = row[f.columnName];
-          const s = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
-          return `"${s.replace(/"/g, '""')}"`;
-        })
-        .join(','),
-    );
+    const lines = rows.map((row) => visibleFields.map((f) => csvCell(row[f.columnName])).join(','));
     const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -371,10 +406,6 @@ export function DataGrid({ object }: DataGridProps) {
   };
 
   const widthOf = (f: FieldDefinition) => prefs.widths[f.name] ?? DEFAULT_COLUMN_WIDTH;
-  const from = pagination ? (pagination.page - 1) * pagination.pageSize + 1 : 0;
-  const to = pagination
-    ? Math.min(pagination.page * pagination.pageSize, pagination.totalCount)
-    : 0;
 
   // --- Render ---
   return (
@@ -398,21 +429,9 @@ export function DataGrid({ object }: DataGridProps) {
       {records.isLoading ? (
         <GridSkeleton fields={visibleFields} />
       ) : rows.length === 0 ? (
-        <EmptyState
-          icon={<Inbox className="h-8 w-8" />}
-          title={search || filters.length ? 'No matching records' : 'No records yet'}
-          hint={
-            search || filters.length
-              ? 'Try adjusting your search or filters.'
-              : 'Add your first record to get started.'
-          }
-          action={
-            !search && filters.length === 0 ? (
-              <Button size="sm" onClick={() => setSheet({ mode: 'create' })}>
-                New record
-              </Button>
-            ) : undefined
-          }
+        <GridEmptyState
+          hasQuery={Boolean(search) || filters.length > 0}
+          onCreate={() => setSheet({ mode: 'create' })}
         />
       ) : (
         <div
@@ -430,13 +449,10 @@ export function DataGrid({ object }: DataGridProps) {
                   style={{ width: 64, minWidth: 64 }}
                 >
                   <Checkbox
-                    checked={
-                      table.getIsAllRowsSelected()
-                        ? true
-                        : table.getIsSomeRowsSelected()
-                          ? 'indeterminate'
-                          : false
-                    }
+                    checked={selectAllState(
+                      table.getIsAllRowsSelected(),
+                      table.getIsSomeRowsSelected(),
+                    )}
                     onCheckedChange={(v) => table.toggleAllRowsSelected(v === true)}
                     aria-label="Select all rows"
                   />
@@ -496,9 +512,6 @@ export function DataGrid({ object }: DataGridProps) {
                       </span>
                     </td>
                     {visibleFields.map((field, colIndex) => {
-                      const kind = cellKindOf(field.columnType);
-                      const linkRel = linkedRelationshipOf(object, field);
-                      const isEditing = editing?.rowId === rowId && editing.field === field.name;
                       const isPending = pendingCells.has(`${rowId}:${field.name}`);
                       return (
                         // Roving-focus spreadsheet cell: focus moves via the grid's
@@ -520,43 +533,16 @@ export function DataGrid({ object }: DataGridProps) {
                           onClick={() => setFocused({ row: rowIndex, col: colIndex })}
                           onDoubleClick={() => beginEdit(rowIndex, colIndex)}
                         >
-                          {isEditing && editing ? (
-                            linkRel ? (
-                              // Linked-record fields edit through the picker;
-                              // choosing a record commits immediately.
-                              <RecordPicker
-                                targetObject={linkTargetOf(object, linkRel)}
-                                value={editing.value}
-                                displayField={field.uiOptions?.displayField as string | undefined}
-                                onChange={(id) => {
-                                  saveCell.mutate({
-                                    rowId,
-                                    field: field.name,
-                                    value: id === '' ? null : id,
-                                  });
-                                  setEditing(null);
-                                }}
-                                aria-label={`Link ${field.displayName}`}
-                              />
-                            ) : (
-                              <GridCellEditor
-                                field={field}
-                                value={editing.value}
-                                onChange={(value) => setEditing({ ...editing, value })}
-                                onCommit={commitEdit}
-                                onCancel={() => setEditing(null)}
-                                autoFocus
-                              />
-                            )
-                          ) : linkRel ? (
-                            <RecordChip
-                              targetObject={linkTargetOf(object, linkRel)}
-                              id={row[field.columnName]}
-                              displayField={field.uiOptions?.displayField as string | undefined}
-                            />
-                          ) : (
-                            <GridCell value={row[field.columnName]} kind={kind} field={field} />
-                          )}
+                          <GridDataCellContent
+                            object={object}
+                            field={field}
+                            row={row}
+                            rowId={rowId}
+                            editing={editing}
+                            setEditing={setEditing}
+                            commitEdit={commitEdit}
+                            saveCell={saveCell.mutate}
+                          />
                           {isPending && (
                             <span
                               aria-hidden
@@ -581,45 +567,13 @@ export function DataGrid({ object }: DataGridProps) {
 
       {/* Pagination */}
       {pagination && rows.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-          <span>
-            Showing {from.toLocaleString()}–{to.toLocaleString()} of{' '}
-            {pagination.totalCount.toLocaleString()} records
-          </span>
-          <div className="flex items-center gap-2">
-            <Select
-              className="w-24"
-              value={String(pageSize)}
-              aria-label="Page size"
-              onChange={(e) => setPageSize(Number(e.target.value))}
-            >
-              {PAGE_SIZES.map((size) => (
-                <option key={size} value={size}>
-                  {size} / page
-                </option>
-              ))}
-            </Select>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!pagination.hasPreviousPage}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Previous
-            </Button>
-            <span>
-              Page {pagination.page} of {Math.max(pagination.totalPages, 1)}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!pagination.hasNextPage}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
+        <GridPagination
+          pagination={pagination}
+          pageSize={pageSize}
+          onPageSizeChange={setPageSize}
+          onPrevious={() => setPage((p) => p - 1)}
+          onNext={() => setPage((p) => p + 1)}
+        />
       )}
 
       <BulkActions
@@ -656,6 +610,162 @@ export function DataGrid({ object }: DataGridProps) {
   );
 }
 DataGrid.displayName = 'DataGrid';
+
+// --- Cell content --------------------------------------------------------
+
+interface GridDataCellContentProps {
+  object: DataObjectDefinition;
+  field: FieldDefinition;
+  row: GridRow;
+  rowId: string;
+  editing: EditingCell | null;
+  setEditing: (editing: EditingCell | null) => void;
+  commitEdit: () => void;
+  saveCell: (vars: { rowId: string; field: string; value: unknown }) => void;
+}
+
+/**
+ * The value area of one grid cell: the type-aware read renderer (GridCell /
+ * RecordChip for link fields) or, while this cell is being edited, the inline
+ * editor (GridCellEditor / RecordPicker — picking a record commits immediately).
+ */
+function GridDataCellContent({
+  object,
+  field,
+  row,
+  rowId,
+  editing,
+  setEditing,
+  commitEdit,
+  saveCell,
+}: GridDataCellContentProps) {
+  const kind = cellKindOf(field.columnType);
+  const linkRel = linkedRelationshipOf(object, field);
+  const isEditing = editing?.rowId === rowId && editing.field === field.name;
+
+  if (isEditing && editing) {
+    if (linkRel) {
+      // Linked-record fields edit through the picker; choosing a record
+      // commits immediately.
+      return (
+        <RecordPicker
+          targetObject={linkTargetOf(object, linkRel)}
+          value={editing.value}
+          displayField={field.uiOptions?.displayField as string | undefined}
+          onChange={(id) => {
+            saveCell({ rowId, field: field.name, value: id === '' ? null : id });
+            setEditing(null);
+          }}
+          aria-label={`Link ${field.displayName}`}
+        />
+      );
+    }
+    return (
+      <GridCellEditor
+        field={field}
+        value={editing.value}
+        onChange={(value) => setEditing({ ...editing, value })}
+        onCommit={commitEdit}
+        onCancel={() => setEditing(null)}
+        autoFocus
+      />
+    );
+  }
+
+  if (linkRel) {
+    return (
+      <RecordChip
+        targetObject={linkTargetOf(object, linkRel)}
+        id={row[field.columnName]}
+        displayField={field.uiOptions?.displayField as string | undefined}
+      />
+    );
+  }
+  return <GridCell value={row[field.columnName]} kind={kind} field={field} />;
+}
+GridDataCellContent.displayName = 'GridDataCellContent';
+
+// --- Empty state ---------------------------------------------------------
+
+/** Empty grid body: "no records yet" (with create CTA) vs "no matches". */
+function GridEmptyState({ hasQuery, onCreate }: { hasQuery: boolean; onCreate: () => void }) {
+  return (
+    <EmptyState
+      icon={<Inbox className="h-8 w-8" />}
+      title={hasQuery ? 'No matching records' : 'No records yet'}
+      hint={
+        hasQuery ? 'Try adjusting your search or filters.' : 'Add your first record to get started.'
+      }
+      action={
+        !hasQuery ? (
+          <Button size="sm" onClick={onCreate}>
+            New record
+          </Button>
+        ) : undefined
+      }
+    />
+  );
+}
+GridEmptyState.displayName = 'GridEmptyState';
+
+// --- Pagination footer -----------------------------------------------------
+
+interface GridPaginationProps {
+  pagination: PaginationMeta;
+  pageSize: number;
+  onPageSizeChange: (size: number) => void;
+  onPrevious: () => void;
+  onNext: () => void;
+}
+
+/** Record range summary + page-size select + Previous/Next controls. */
+function GridPagination({
+  pagination,
+  pageSize,
+  onPageSizeChange,
+  onPrevious,
+  onNext,
+}: GridPaginationProps) {
+  const from = (pagination.page - 1) * pagination.pageSize + 1;
+  const to = Math.min(pagination.page * pagination.pageSize, pagination.totalCount);
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+      <span>
+        Showing {from.toLocaleString()}–{to.toLocaleString()} of{' '}
+        {pagination.totalCount.toLocaleString()} records
+      </span>
+      <div className="flex items-center gap-2">
+        <Select
+          className="w-24"
+          value={String(pageSize)}
+          aria-label="Page size"
+          onChange={(e) => onPageSizeChange(Number(e.target.value))}
+        >
+          {PAGE_SIZES.map((size) => (
+            <option key={size} value={size}>
+              {size} / page
+            </option>
+          ))}
+        </Select>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!pagination.hasPreviousPage}
+          onClick={onPrevious}
+        >
+          Previous
+        </Button>
+        <span>
+          Page {pagination.page} of {Math.max(pagination.totalPages, 1)}
+        </span>
+        <Button variant="outline" size="sm" disabled={!pagination.hasNextPage} onClick={onNext}>
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}
+GridPagination.displayName = 'GridPagination';
 
 // --- Skeleton ----------------------------------------------------------
 

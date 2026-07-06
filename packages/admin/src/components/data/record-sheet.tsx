@@ -33,6 +33,48 @@ import { RecordPicker } from './record-picker';
 
 // --- Schema derivation --------------------------------------------------
 
+type Constraints = NonNullable<FieldDefinition['constraints']>;
+
+/** Adds numeric min/max issues (value bounds) for a number-kind field. */
+function addNumericConstraintIssues(value: string, ctx: z.RefinementCtx, c: Constraints): void {
+  const n = Number(value);
+  if (c.min !== undefined && n < c.min) {
+    ctx.addIssue({ code: 'custom', message: `Must be at least ${c.min}` });
+  }
+  if (c.max !== undefined && n > c.max) {
+    ctx.addIssue({ code: 'custom', message: `Must be at most ${c.max}` });
+  }
+}
+
+/** Adds text issues: length bounds, pattern match, and enum membership. */
+function addTextConstraintIssues(
+  value: string,
+  ctx: z.RefinementCtx,
+  c: Constraints,
+  kind: CellKind,
+): void {
+  if (c.min !== undefined && value.length < c.min) {
+    ctx.addIssue({ code: 'custom', message: `At least ${c.min} characters` });
+  }
+  if (c.max !== undefined && value.length > c.max) {
+    ctx.addIssue({ code: 'custom', message: `At most ${c.max} characters` });
+  }
+  if (c.pattern) {
+    try {
+      if (!new RegExp(c.pattern).test(value)) {
+        ctx.addIssue({ code: 'custom', message: c.message ?? `Must match ${c.pattern}` });
+      }
+    } catch {
+      // POSIX-only regex — the server (and Postgres) remain the judge.
+    }
+  }
+  if (kind === 'enum' && c.enumValues?.length && value !== '') {
+    if (!c.enumValues.includes(value)) {
+      ctx.addIssue({ code: 'custom', message: `Must be one of: ${c.enumValues.join(', ')}` });
+    }
+  }
+}
+
 /** Builds a per-field string validator from the field definition. */
 function fieldSchema(field: FieldDefinition, kind: CellKind): z.ZodTypeAny {
   let schema = z.string();
@@ -47,41 +89,10 @@ function fieldSchema(field: FieldDefinition, kind: CellKind): z.ZodTypeAny {
     schema = schema.superRefine((value, ctx) => {
       if (optionalOk(value)) return;
       if (numeric && value !== '') {
-        const n = Number(value);
-        if (constraints.min !== undefined && n < constraints.min) {
-          ctx.addIssue({ code: 'custom', message: `Must be at least ${constraints.min}` });
-        }
-        if (constraints.max !== undefined && n > constraints.max) {
-          ctx.addIssue({ code: 'custom', message: `Must be at most ${constraints.max}` });
-        }
+        addNumericConstraintIssues(value, ctx, constraints);
         return;
       }
-      if (constraints.min !== undefined && value.length < constraints.min) {
-        ctx.addIssue({ code: 'custom', message: `At least ${constraints.min} characters` });
-      }
-      if (constraints.max !== undefined && value.length > constraints.max) {
-        ctx.addIssue({ code: 'custom', message: `At most ${constraints.max} characters` });
-      }
-      if (constraints.pattern) {
-        try {
-          if (!new RegExp(constraints.pattern).test(value)) {
-            ctx.addIssue({
-              code: 'custom',
-              message: constraints.message ?? `Must match ${constraints.pattern}`,
-            });
-          }
-        } catch {
-          // POSIX-only regex — the server (and Postgres) remain the judge.
-        }
-      }
-      if (kind === 'enum' && constraints.enumValues?.length && value !== '') {
-        if (!constraints.enumValues.includes(value)) {
-          ctx.addIssue({
-            code: 'custom',
-            message: `Must be one of: ${constraints.enumValues.join(', ')}`,
-          });
-        }
-      }
+      addTextConstraintIssues(value, ctx, constraints, kind);
     }) as unknown as z.ZodString;
   }
 

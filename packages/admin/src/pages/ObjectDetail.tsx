@@ -248,6 +248,133 @@ function blockOwnerOf(managedBy: string | undefined): string | null {
   return managedBy?.startsWith('block:') ? managedBy.slice('block:'.length) : null;
 }
 
+/** Flag badges for a field row: system/block/required/unique/indexed/choices. */
+function FieldFlags({ field }: { field: FieldDefinition }) {
+  const owner = blockOwnerOf(field.managedBy);
+  return (
+    <div className="flex flex-wrap gap-1">
+      {field.isSystem && <Badge variant="outline">system</Badge>}
+      {owner && (
+        <SimpleTooltip label={`Managed by the "${owner}" block — structural changes are protected`}>
+          <Badge variant="secondary" className="gap-1">
+            <ShieldCheck className="h-3 w-3" aria-hidden /> {owner}
+          </Badge>
+        </SimpleTooltip>
+      )}
+      {field.isRequired && <Badge>required</Badge>}
+      {field.isUnique && <Badge variant="secondary">unique</Badge>}
+      {field.isIndexed && <Badge variant="secondary">indexed</Badge>}
+      {field.constraints?.enumValues && (
+        <Badge variant="outline">{field.constraints.enumValues.length} choices</Badge>
+      )}
+    </div>
+  );
+}
+FieldFlags.displayName = 'FieldFlags';
+
+/**
+ * One row of the schema field table. User fields (`index !== null`) are
+ * drag-to-reorderable and get edit/remove actions; system fields render
+ * pinned and read-only.
+ */
+function FieldRow({
+  object,
+  field,
+  index,
+  dragging,
+  pgType,
+  onDragStart,
+  onDrop,
+  onDragEnd,
+  onEdit,
+  onRemove,
+}: {
+  object: DataObjectDefinition;
+  field: FieldDefinition;
+  /** Position among the user fields, or null for pinned system fields. */
+  index: number | null;
+  dragging: boolean;
+  pgType: string | undefined;
+  onDragStart: (index: number) => void;
+  onDrop: (index: number) => void;
+  onDragEnd: () => void;
+  onEdit: (field: FieldDefinition) => void;
+  onRemove: (field: FieldDefinition) => void;
+}) {
+  const linkRel = linkedRelationshipOf(object, field);
+  const draggable = index !== null;
+  return (
+    <tr
+      className={cn('border-b border-border/60 last:border-0', dragging && 'opacity-40')}
+      draggable={draggable}
+      onDragStart={draggable ? () => onDragStart(index) : undefined}
+      onDragOver={draggable ? (e) => e.preventDefault() : undefined}
+      onDrop={draggable ? () => onDrop(index) : undefined}
+      onDragEnd={draggable ? onDragEnd : undefined}
+    >
+      <td className="py-2 pr-4">
+        <span className="flex items-center gap-1.5">
+          {draggable && (
+            <GripVertical
+              className="h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/40"
+              aria-hidden
+            />
+          )}
+          <span>
+            <span className="font-medium">{field.displayName}</span>
+            <span className="ml-2 font-mono text-xs text-muted-foreground">{field.name}</span>
+            {field.description && (
+              <span className="block max-w-md truncate text-xs text-muted-foreground">
+                {field.description}
+              </span>
+            )}
+          </span>
+        </span>
+      </td>
+      <td className="py-2 pr-4">
+        {linkRel ? (
+          <Badge variant="info" className="gap-1 font-mono">
+            <Link2 className="h-3 w-3" aria-hidden /> {linkTargetOf(object, linkRel)}
+          </Badge>
+        ) : (
+          <span className="inline-flex items-center gap-1.5">
+            <Badge variant="outline" className="font-mono">
+              {field.columnType}
+            </Badge>
+            <span className="font-mono text-[10px] text-muted-foreground">{pgType}</span>
+          </span>
+        )}
+      </td>
+      <td className="py-2 pr-4">
+        <FieldFlags field={field} />
+      </td>
+      <td className="py-2 text-right">
+        {!field.isSystem && !field.isPrimary && (
+          <span className="inline-flex">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Edit ${field.name}`}
+              onClick={() => onEdit(field)}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Remove ${field.name}`}
+              onClick={() => onRemove(field)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </span>
+        )}
+      </td>
+    </tr>
+  );
+}
+FieldRow.displayName = 'FieldRow';
+
 function SchemaTab({ object }: { object: DataObjectDefinition }) {
   const queryClient = useQueryClient();
   const [editorField, setEditorField] = useState<FieldDefinition | null | 'add'>(null);
@@ -311,103 +438,21 @@ function SchemaTab({ object }: { object: DataObjectDefinition }) {
   const typeInfoOf = (columnType: string) =>
     (columnTypes.data ?? []).find((t) => t.name === columnType);
 
-  const renderRow = (field: FieldDefinition, index: number | null) => {
-    const linkRel = linkedRelationshipOf(object, field);
-    const owner = blockOwnerOf(field.managedBy);
-    const draggable = index !== null;
-    return (
-      <tr
-        key={field.name}
-        className={cn(
-          'border-b border-border/60 last:border-0',
-          draggable && dragIndex === index && 'opacity-40',
-        )}
-        draggable={draggable}
-        onDragStart={draggable ? () => setDragIndex(index) : undefined}
-        onDragOver={draggable ? (e) => e.preventDefault() : undefined}
-        onDrop={draggable ? () => onDrop(index) : undefined}
-        onDragEnd={draggable ? () => setDragIndex(null) : undefined}
-      >
-        <td className="py-2 pr-4">
-          <span className="flex items-center gap-1.5">
-            {draggable && (
-              <GripVertical
-                className="h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/40"
-                aria-hidden
-              />
-            )}
-            <span>
-              <span className="font-medium">{field.displayName}</span>
-              <span className="ml-2 font-mono text-xs text-muted-foreground">{field.name}</span>
-              {field.description && (
-                <span className="block max-w-md truncate text-xs text-muted-foreground">
-                  {field.description}
-                </span>
-              )}
-            </span>
-          </span>
-        </td>
-        <td className="py-2 pr-4">
-          {linkRel ? (
-            <Badge variant="info" className="gap-1 font-mono">
-              <Link2 className="h-3 w-3" aria-hidden /> {linkTargetOf(object, linkRel)}
-            </Badge>
-          ) : (
-            <span className="inline-flex items-center gap-1.5">
-              <Badge variant="outline" className="font-mono">
-                {field.columnType}
-              </Badge>
-              <span className="font-mono text-[10px] text-muted-foreground">
-                {typeInfoOf(field.columnType)?.pg}
-              </span>
-            </span>
-          )}
-        </td>
-        <td className="py-2 pr-4">
-          <div className="flex flex-wrap gap-1">
-            {field.isSystem && <Badge variant="outline">system</Badge>}
-            {owner && (
-              <SimpleTooltip
-                label={`Managed by the "${owner}" block — structural changes are protected`}
-              >
-                <Badge variant="secondary" className="gap-1">
-                  <ShieldCheck className="h-3 w-3" aria-hidden /> {owner}
-                </Badge>
-              </SimpleTooltip>
-            )}
-            {field.isRequired && <Badge>required</Badge>}
-            {field.isUnique && <Badge variant="secondary">unique</Badge>}
-            {field.isIndexed && <Badge variant="secondary">indexed</Badge>}
-            {field.constraints?.enumValues && (
-              <Badge variant="outline">{field.constraints.enumValues.length} choices</Badge>
-            )}
-          </div>
-        </td>
-        <td className="py-2 text-right">
-          {!field.isSystem && !field.isPrimary && (
-            <span className="inline-flex">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Edit ${field.name}`}
-                onClick={() => setEditorField(field)}
-              >
-                <Pencil className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Remove ${field.name}`}
-                onClick={() => setRemovingField(field)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </span>
-          )}
-        </td>
-      </tr>
-    );
-  };
+  const renderRow = (field: FieldDefinition, index: number | null) => (
+    <FieldRow
+      key={field.name}
+      object={object}
+      field={field}
+      index={index}
+      dragging={index !== null && dragIndex === index}
+      pgType={typeInfoOf(field.columnType)?.pg}
+      onDragStart={setDragIndex}
+      onDrop={onDrop}
+      onDragEnd={() => setDragIndex(null)}
+      onEdit={setEditorField}
+      onRemove={setRemovingField}
+    />
+  );
 
   const removingOwner = removingField ? blockOwnerOf(removingField.managedBy) : null;
 

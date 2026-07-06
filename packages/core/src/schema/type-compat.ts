@@ -120,6 +120,24 @@ export function assessTypeChange(from: ColumnTypeName, to: ColumnTypeName): Type
   if (NUMERIC_RANGE[from] && NUMERIC_RANGE[to]) return assessNumberToNumber(from, to);
   if (TEXT_RENDERABLE.has(from) && TEXT_LIKE.has(to)) return assessToText(from, to);
 
+  const special = assessSpecialPair(from, to);
+  if (special) return special;
+
+  return {
+    compatible: false,
+    reason: `Cannot convert "${COLUMN_TYPES[from].label}" (${COLUMN_TYPES[from].pg}) to "${COLUMN_TYPES[to].label}" (${COLUMN_TYPES[to].pg}). Create a new field and migrate the data instead.`,
+  };
+}
+
+/**
+ * Explicitly-allowed one-off pairs outside the family rules: array relabels
+ * (same physical TEXT[] type) and date/datetime conversions. Returns undefined
+ * when the pair isn't one of them (i.e. the conversion is incompatible).
+ */
+function assessSpecialPair(
+  from: ColumnTypeName,
+  to: ColumnTypeName,
+): TypeChangeAssessment | undefined {
   // Same physical type (TEXT[]) — pure relabel.
   if (
     (from === 'multi_enum' && to === 'array_text') ||
@@ -139,11 +157,7 @@ export function assessTypeChange(from: ColumnTypeName, to: ColumnTypeName): Type
       message: 'Converting timestamps to dates discards the time of day for every existing row.',
     };
   }
-
-  return {
-    compatible: false,
-    reason: `Cannot convert "${COLUMN_TYPES[from].label}" (${COLUMN_TYPES[from].pg}) to "${COLUMN_TYPES[to].label}" (${COLUMN_TYPES[to].pg}). Create a new field and migrate the data instead.`,
-  };
+  return undefined;
 }
 
 function assessTextToText(from: ColumnTypeName, to: ColumnTypeName): TypeChangeAssessment {

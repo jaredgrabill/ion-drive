@@ -282,20 +282,33 @@ function diffObjectFields(
   return entries;
 }
 
+/** Whether two optional booleans differ (absent means false). */
+function flagChanged(snap: boolean | undefined, current: boolean | undefined): boolean {
+  return (snap ?? false) !== (current ?? false);
+}
+
 /** Computes the FieldModification that turns `current` into `snap`. */
 function fieldUpdates(snap: SnapshotField, current: FieldDefinition): FieldModification {
+  return {
+    ...structuralFieldUpdates(snap, current),
+    ...presentationFieldUpdates(snap, current),
+  };
+}
+
+/** Structural half of {@link fieldUpdates}: type, flags, default, constraints. */
+function structuralFieldUpdates(snap: SnapshotField, current: FieldDefinition): FieldModification {
   const updates: FieldModification = {};
 
   if (snap.columnType !== current.columnType) {
     updates.columnType = snap.columnType as FieldDefinition['columnType'];
   }
-  if ((snap.isRequired ?? false) !== (current.isRequired ?? false)) {
+  if (flagChanged(snap.isRequired, current.isRequired)) {
     updates.isRequired = snap.isRequired ?? false;
   }
-  if ((snap.isUnique ?? false) !== (current.isUnique ?? false)) {
+  if (flagChanged(snap.isUnique, current.isUnique)) {
     updates.isUnique = snap.isUnique ?? false;
   }
-  if ((snap.isIndexed ?? false) !== (current.isIndexed ?? false)) {
+  if (flagChanged(snap.isIndexed, current.isIndexed)) {
     updates.isIndexed = snap.isIndexed ?? false;
   }
   if ((snap.defaultValue ?? null) !== (current.defaultValue ?? null)) {
@@ -304,6 +317,17 @@ function fieldUpdates(snap: SnapshotField, current: FieldDefinition): FieldModif
   if (normalize(snap.constraints) !== normalize(current.constraints)) {
     updates.constraints = snap.constraints ?? null;
   }
+
+  return updates;
+}
+
+/** Presentation half of {@link fieldUpdates}: display name, description, uiOptions, sort. */
+function presentationFieldUpdates(
+  snap: SnapshotField,
+  current: FieldDefinition,
+): FieldModification {
+  const updates: FieldModification = {};
+
   if (snap.displayName !== current.displayName) updates.displayName = snap.displayName;
   if ((snap.description ?? null) !== (current.description ?? null)) {
     updates.description = snap.description ?? null;

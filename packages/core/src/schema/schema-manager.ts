@@ -376,12 +376,7 @@ export class SchemaManager {
     // constraints themselves change (a length check would block an ALTER TYPE
     // to a number; names embed the column), and re-created at the end against
     // the field's final shape.
-    const typeChanging =
-      updates.columnType !== undefined && updates.columnType !== field.columnType;
-    const renaming = updates.name !== undefined && updates.name !== field.name;
-    const constraintsChanging = updates.constraints !== undefined;
-    const needsConstraintSync =
-      constraintsChanging || ((typeChanging || renaming) && field.constraints !== undefined);
+    const needsConstraintSync = constraintSyncNeeded(field, updates);
     if (needsConstraintSync) {
       executed.push(...(await ddlExecutor.dropCheckConstraints(table, column)));
     }
@@ -400,6 +395,34 @@ export class SchemaManager {
       );
     }
 
+    executed.push(...(await this.executeFlagChanges(table, column, field, updates)));
+
+    // Rename last so every step above operated on the original column name.
+    if (updates.name !== undefined && updates.name !== field.name) {
+      executed.push(...(await ddlExecutor.renameColumn(table, column, updates.name)));
+    }
+
+    // Re-create CHECK constraints against the final column name/type/rules.
+    if (needsConstraintSync) {
+      executed.push(...(await this.recreateCheckConstraints(table, column, field, updates)));
+    }
+
+    return executed;
+  }
+
+  /**
+   * Runs the default/required/unique/indexed toggle steps of a field
+   * modification (in that order), skipping flags that aren't actually changing.
+   */
+  private async executeFlagChanges(
+    table: string,
+    column: string,
+    field: FieldDefinition,
+    updates: FieldModification,
+  ): Promise<string[]> {
+    const executed: string[] = [];
+    const { ddlExecutor } = this;
+
     if (updates.defaultValue !== undefined) {
       executed.push(
         ...(updates.defaultValue === null || updates.defaultValue === ''
@@ -415,6 +438,21 @@ export class SchemaManager {
           : await ddlExecutor.dropNotNull(table, column)),
       );
     }
+
+    executed.push(...(await this.executeUniqueAndIndexToggles(table, column, field, updates)));
+
+    return executed;
+  }
+
+  /** Runs the unique-constraint and index toggle steps of a field modification. */
+  private async executeUniqueAndIndexToggles(
+    table: string,
+    column: string,
+    field: FieldDefinition,
+    updates: FieldModification,
+  ): Promise<string[]> {
+    const executed: string[] = [];
+    const { ddlExecutor } = this;
 
     if (updates.isUnique !== undefined && updates.isUnique !== (field.isUnique ?? false)) {
       executed.push(
@@ -433,28 +471,29 @@ export class SchemaManager {
       );
     }
 
-    // Rename last so every step above operated on the original column name.
-    if (updates.name !== undefined && updates.name !== field.name) {
-      executed.push(...(await ddlExecutor.renameColumn(table, column, updates.name)));
-    }
-
-    // Re-create CHECK constraints against the final column name/type/rules.
-    if (needsConstraintSync) {
-      const effectiveConstraints =
-        updates.constraints === null ? undefined : (updates.constraints ?? field.constraints);
-      if (effectiveConstraints) {
-        executed.push(
-          ...(await ddlExecutor.addCheckConstraints(table, {
-            ...field,
-            columnName: updates.name ?? column,
-            columnType: updates.columnType ?? field.columnType,
-            constraints: effectiveConstraints,
-          })),
-        );
-      }
-    }
-
     return executed;
+  }
+
+  /**
+   * Re-creates a modified field's CHECK constraints against its final
+   * name/type/rules (constraints dropped up front by the caller). No-op when
+   * the modification cleared the constraints entirely.
+   */
+  private async recreateCheckConstraints(
+    table: string,
+    column: string,
+    field: FieldDefinition,
+    updates: FieldModification,
+  ): Promise<string[]> {
+    const effectiveConstraints =
+      updates.constraints === null ? undefined : (updates.constraints ?? field.constraints);
+    if (!effectiveConstraints) return [];
+    return this.ddlExecutor.addCheckConstraints(table, {
+      ...field,
+      columnName: updates.name ?? column,
+      columnType: updates.columnType ?? field.columnType,
+      constraints: effectiveConstraints,
+    });
   }
 
   /** Keeps the `_ion_indexes` ledger in step with an isIndexed toggle. */
@@ -587,61 +626,9 @@ export class SchemaManager {
       relationship.type === 'one_to_many' ||
       relationship.type === 'many_to_one'
     ) {
-      // Create FK column on the "many" side (or source for one_to_one)
-      const fkTable =
-        relationship.type === 'one_to_many' ? targetObj.tableName : sourceObj.tableName;
-      const fkObjectName =
-        relationship.type === 'one_to_many'
-          ? relationship.targetObjectName
-          : relationship.sourceObjectName;
-      const referencedTable =
-        relationship.type === 'one_to_many' ? sourceObj.tableName : targetObj.tableName;
-
-      const fkColumnName = `${relationship.name}_id`;
-      const fkField: FieldDefinition = {
-        name: fkColumnName,
-        displayName: `${relationship.displayName} ID`,
-        columnName: fkColumnName,
-        columnType: 'uuid',
-        isIndexed: true,
-        managedBy: relationship.managedBy,
-      };
-
-      // Add the FK column
-      await this.ddlExecutor.addColumn(fkTable, fkField);
-
-      // Add the FK constraint
-      const onDelete = relationship.cascadeDelete ? 'CASCADE' : 'RESTRICT';
-      await this.ddlExecutor.addForeignKey(
-        fkTable,
-        fkColumnName,
-        referencedTable,
-        'id',
-        onDelete as 'CASCADE' | 'SET NULL' | 'RESTRICT',
-      );
-
-      // Record field metadata
-      const fkMetaObj = await this.metadataStore.getObject(fkObjectName);
-      if (fkMetaObj) {
-        const fieldRecord = await this.metadataStore.createField(fkMetaObj.id, fkField);
-        sourceFieldId = fieldRecord.id;
-      }
+      sourceFieldId = await this.createRelationshipFkColumn(relationship, sourceObj, targetObj);
     } else if (relationship.type === 'many_to_many') {
-      // Create junction table
-      const junctionTable = `${sourceObj.tableName}_${targetObj.tableName}`;
-      const sourceCol = `${sourceObj.tableName}_id`;
-      const targetCol = `${targetObj.tableName}_id`;
-
-      await this.ddlExecutor.createJunctionTable(
-        junctionTable,
-        sourceObj.tableName,
-        targetObj.tableName,
-        sourceCol,
-        targetCol,
-      );
-      relationship.junctionTable = junctionTable;
-      relationship.junctionSourceColumn = sourceCol;
-      relationship.junctionTargetColumn = targetCol;
+      await this.createRelationshipJunction(relationship, sourceObj, targetObj);
     }
 
     // Record relationship metadata
@@ -676,6 +663,82 @@ export class SchemaManager {
     await this.refreshObject(relationship.targetObjectName);
 
     return { preview, success: true };
+  }
+
+  /**
+   * FK-backed relationship setup (one_to_one / one_to_many / many_to_one):
+   * adds the `<name>_id` column on the "many" side (target for one_to_many,
+   * source otherwise), the FK constraint, and the field metadata. Returns the
+   * created field's id for the relationship record.
+   */
+  private async createRelationshipFkColumn(
+    relationship: RelationshipDefinition,
+    sourceObj: DataObjectDefinition,
+    targetObj: DataObjectDefinition,
+  ): Promise<string | undefined> {
+    // Create FK column on the "many" side (or source for one_to_one)
+    const fkTable = relationship.type === 'one_to_many' ? targetObj.tableName : sourceObj.tableName;
+    const fkObjectName =
+      relationship.type === 'one_to_many'
+        ? relationship.targetObjectName
+        : relationship.sourceObjectName;
+    const referencedTable =
+      relationship.type === 'one_to_many' ? sourceObj.tableName : targetObj.tableName;
+
+    const fkColumnName = `${relationship.name}_id`;
+    const fkField: FieldDefinition = {
+      name: fkColumnName,
+      displayName: `${relationship.displayName} ID`,
+      columnName: fkColumnName,
+      columnType: 'uuid',
+      isIndexed: true,
+      managedBy: relationship.managedBy,
+    };
+
+    // Add the FK column
+    await this.ddlExecutor.addColumn(fkTable, fkField);
+
+    // Add the FK constraint
+    const onDelete = relationship.cascadeDelete ? 'CASCADE' : 'RESTRICT';
+    await this.ddlExecutor.addForeignKey(
+      fkTable,
+      fkColumnName,
+      referencedTable,
+      'id',
+      onDelete as 'CASCADE' | 'SET NULL' | 'RESTRICT',
+    );
+
+    // Record field metadata
+    const fkMetaObj = await this.metadataStore.getObject(fkObjectName);
+    if (!fkMetaObj) return undefined;
+    const fieldRecord = await this.metadataStore.createField(fkMetaObj.id, fkField);
+    return fieldRecord.id;
+  }
+
+  /**
+   * many_to_many relationship setup: creates the junction table and stamps its
+   * name/columns onto the relationship (recorded in `_ion_relationships` so
+   * expand can find it later).
+   */
+  private async createRelationshipJunction(
+    relationship: RelationshipDefinition,
+    sourceObj: DataObjectDefinition,
+    targetObj: DataObjectDefinition,
+  ): Promise<void> {
+    const junctionTable = `${sourceObj.tableName}_${targetObj.tableName}`;
+    const sourceCol = `${sourceObj.tableName}_id`;
+    const targetCol = `${targetObj.tableName}_id`;
+
+    await this.ddlExecutor.createJunctionTable(
+      junctionTable,
+      sourceObj.tableName,
+      targetObj.tableName,
+      sourceCol,
+      targetCol,
+    );
+    relationship.junctionTable = junctionTable;
+    relationship.junctionSourceColumn = sourceCol;
+    relationship.junctionTargetColumn = targetCol;
   }
 
   // =========================================================================
@@ -816,6 +879,19 @@ export class SchemaManager {
       createdAt: new Date(),
     };
   }
+}
+
+/**
+ * Whether a field modification requires dropping and re-creating the column's
+ * CHECK constraints: the constraints themselves change, or the type/name
+ * changes while constraints exist (a length check would block an ALTER TYPE to
+ * a number; constraint names embed the column name).
+ */
+function constraintSyncNeeded(field: FieldDefinition, updates: FieldModification): boolean {
+  const typeChanging = updates.columnType !== undefined && updates.columnType !== field.columnType;
+  const renaming = updates.name !== undefined && updates.name !== field.name;
+  const constraintsChanging = updates.constraints !== undefined;
+  return constraintsChanging || ((typeChanging || renaming) && field.constraints !== undefined);
 }
 
 /** `contact_email` → `Contact Email` (display names for adopted structure). */

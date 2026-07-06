@@ -24,7 +24,12 @@ import { type Kysely, sql } from 'kysely';
 import type { ConfigStore } from '../config/config-store.js';
 import type { TenantDatabase } from '../db/types.js';
 import type { SchemaRegistry } from './schema-registry.js';
-import { COLUMN_TYPES, type ColumnTypeName, managedByBlock } from './types.js';
+import {
+  COLUMN_TYPES,
+  type ColumnTypeName,
+  type DataObjectDefinition,
+  managedByBlock,
+} from './types.js';
 
 export const DOCTOR_IGNORES_KEY = 'schema_doctor_ignores';
 
@@ -101,12 +106,7 @@ export class SchemaDoctor {
     );
 
     // --- DB → metadata: unmanaged tables/columns, type mismatches ---
-    const tables = new Map<string, CatalogColumn[]>();
-    for (const col of catalog) {
-      const list = tables.get(col.table_name) ?? [];
-      list.push(col);
-      tables.set(col.table_name, list);
-    }
+    const tables = groupByTable(catalog);
 
     for (const [tableName, columns] of tables) {
       if (tableName.startsWith('_ion_') || this.systemTables.has(tableName)) continue;
@@ -124,72 +124,12 @@ export class SchemaDoctor {
         continue;
       }
 
-      const fieldsByColumn = new Map(obj.fields.map((f) => [f.columnName, f]));
-      const blockOwner = managedByBlock(obj.managedBy);
-      for (const col of columns) {
-        const field = fieldsByColumn.get(col.column_name);
-        if (!field) {
-          findings.push({
-            kind: 'unmanaged_column',
-            severity: blockOwner ? 'critical' : 'warning',
-            table: tableName,
-            column: col.column_name,
-            objectName: obj.name,
-            detail: blockOwner
-              ? `Column "${col.column_name}" on "${tableName}" is not described by any field — this table is managed by the "${blockOwner}" block, so unmanaged drift may break it.`
-              : `Column "${col.column_name}" on "${tableName}" is not described by any field. Adopt it to expose it through the API.`,
-            suggestedType: inferColumnType(col),
-            ignoreKey: `${tableName}.${col.column_name}`,
-          });
-          continue;
-        }
-        const mismatch = typeMismatch(field.columnType, col);
-        if (mismatch) {
-          const owner = managedByBlock(field.managedBy) ?? blockOwner;
-          const blockNote = owner
-            ? ` This field is managed by the "${owner}" block — the mismatch may break it.`
-            : '';
-          findings.push({
-            kind: 'type_mismatch',
-            severity: owner ? 'critical' : 'warning',
-            table: tableName,
-            column: col.column_name,
-            objectName: obj.name,
-            detail: `Column "${col.column_name}" on "${tableName}" is ${mismatch.actual} in the database but the field "${field.name}" is declared as ${field.columnType} (${mismatch.expected}).${blockNote}`,
-            ignoreKey: `${tableName}.${col.column_name}`,
-          });
-        }
-      }
+      findings.push(...checkManagedTable(obj, tableName, columns));
     }
 
     // --- metadata → DB: missing tables/columns ---
     for (const obj of objects) {
-      const columns = tables.get(obj.tableName);
-      if (!columns) {
-        findings.push({
-          kind: 'missing_table',
-          severity: 'critical',
-          table: obj.tableName,
-          objectName: obj.name,
-          detail: `Object "${obj.name}" is registered but its table "${obj.tableName}" does not exist. API calls against it will fail.`,
-          ignoreKey: obj.tableName,
-        });
-        continue;
-      }
-      const present = new Set(columns.map((c) => c.column_name));
-      for (const field of obj.fields) {
-        if (!present.has(field.columnName)) {
-          findings.push({
-            kind: 'missing_column',
-            severity: 'critical',
-            table: obj.tableName,
-            column: field.columnName,
-            objectName: obj.name,
-            detail: `Field "${field.name}" on "${obj.name}" is registered but column "${field.columnName}" does not exist in the database.`,
-            ignoreKey: `${obj.tableName}.${field.columnName}`,
-          });
-        }
-      }
+      findings.push(...checkObjectPresence(obj, tables));
     }
 
     const visible = findings.filter((f) => !ignores.includes(f.ignoreKey));
@@ -242,6 +182,135 @@ export class SchemaDoctor {
     const stored = await this.options.configStore?.get<string[]>(DOCTOR_IGNORES_KEY);
     return Array.isArray(stored) ? [...stored] : [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnosis helpers
+// ---------------------------------------------------------------------------
+
+/** Groups the flat catalog rows by table name, preserving column order. */
+function groupByTable(catalog: CatalogColumn[]): Map<string, CatalogColumn[]> {
+  const tables = new Map<string, CatalogColumn[]>();
+  for (const col of catalog) {
+    const list = tables.get(col.table_name) ?? [];
+    list.push(col);
+    tables.set(col.table_name, list);
+  }
+  return tables;
+}
+
+/**
+ * DB → metadata checks for one managed table: reports columns no field
+ * describes (`unmanaged_column`) and PG-family disagreements (`type_mismatch`).
+ * Block-owned drift escalates to critical (ADR-017).
+ */
+function checkManagedTable(
+  obj: DataObjectDefinition,
+  tableName: string,
+  columns: CatalogColumn[],
+): DoctorFinding[] {
+  const findings: DoctorFinding[] = [];
+  const fieldsByColumn = new Map(obj.fields.map((f) => [f.columnName, f]));
+  const blockOwner = managedByBlock(obj.managedBy);
+
+  for (const col of columns) {
+    const field = fieldsByColumn.get(col.column_name);
+    if (!field) {
+      findings.push(unmanagedColumnFinding(obj, tableName, col, blockOwner));
+      continue;
+    }
+    const mismatch = typeMismatch(field.columnType, col);
+    if (mismatch) {
+      const owner = managedByBlock(field.managedBy) ?? blockOwner;
+      findings.push(typeMismatchFinding(obj, tableName, col, field, mismatch, owner));
+    }
+  }
+  return findings;
+}
+
+/** Builds the finding for a column no field describes. */
+function unmanagedColumnFinding(
+  obj: DataObjectDefinition,
+  tableName: string,
+  col: CatalogColumn,
+  blockOwner: string | null,
+): DoctorFinding {
+  return {
+    kind: 'unmanaged_column',
+    severity: blockOwner ? 'critical' : 'warning',
+    table: tableName,
+    column: col.column_name,
+    objectName: obj.name,
+    detail: blockOwner
+      ? `Column "${col.column_name}" on "${tableName}" is not described by any field — this table is managed by the "${blockOwner}" block, so unmanaged drift may break it.`
+      : `Column "${col.column_name}" on "${tableName}" is not described by any field. Adopt it to expose it through the API.`,
+    suggestedType: inferColumnType(col),
+    ignoreKey: `${tableName}.${col.column_name}`,
+  };
+}
+
+/** Builds the finding for a column whose PG type family disagrees with metadata. */
+function typeMismatchFinding(
+  obj: DataObjectDefinition,
+  tableName: string,
+  col: CatalogColumn,
+  field: DataObjectDefinition['fields'][number],
+  mismatch: { expected: string; actual: string },
+  owner: string | null,
+): DoctorFinding {
+  const blockNote = owner
+    ? ` This field is managed by the "${owner}" block — the mismatch may break it.`
+    : '';
+  return {
+    kind: 'type_mismatch',
+    severity: owner ? 'critical' : 'warning',
+    table: tableName,
+    column: col.column_name,
+    objectName: obj.name,
+    detail: `Column "${col.column_name}" on "${tableName}" is ${mismatch.actual} in the database but the field "${field.name}" is declared as ${field.columnType} (${mismatch.expected}).${blockNote}`,
+    ignoreKey: `${tableName}.${col.column_name}`,
+  };
+}
+
+/**
+ * metadata → DB checks for one registered object: reports a missing table, or
+ * (when the table exists) fields whose columns are gone. Both are critical —
+ * API calls against them fail.
+ */
+function checkObjectPresence(
+  obj: DataObjectDefinition,
+  tables: Map<string, CatalogColumn[]>,
+): DoctorFinding[] {
+  const columns = tables.get(obj.tableName);
+  if (!columns) {
+    return [
+      {
+        kind: 'missing_table',
+        severity: 'critical',
+        table: obj.tableName,
+        objectName: obj.name,
+        detail: `Object "${obj.name}" is registered but its table "${obj.tableName}" does not exist. API calls against it will fail.`,
+        ignoreKey: obj.tableName,
+      },
+    ];
+  }
+
+  const findings: DoctorFinding[] = [];
+  const present = new Set(columns.map((c) => c.column_name));
+  for (const field of obj.fields) {
+    if (!present.has(field.columnName)) {
+      findings.push({
+        kind: 'missing_column',
+        severity: 'critical',
+        table: obj.tableName,
+        column: field.columnName,
+        objectName: obj.name,
+        detail: `Field "${field.name}" on "${obj.name}" is registered but column "${field.columnName}" does not exist in the database.`,
+        ignoreKey: `${obj.tableName}.${field.columnName}`,
+      });
+    }
+  }
+  return findings;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,21 +380,31 @@ function typeMismatch(
   return { expected, actual };
 }
 
+/** Exact-match declared PG types → family (parameterised types are handled by prefix). */
+const PG_FAMILY_EXACT: Record<string, string> = {
+  TEXT: 'text',
+  INTEGER: 'integer',
+  SERIAL: 'integer',
+  BIGINT: 'bigint',
+  SMALLINT: 'smallint',
+  'DOUBLE PRECISION': 'float',
+  REAL: 'float',
+  BOOLEAN: 'boolean',
+  DATE: 'date',
+  TIME: 'time',
+  UUID: 'uuid',
+  JSONB: 'json',
+  JSON: 'json',
+  INET: 'inet',
+};
+
 function pgFamily(pg: string): string {
   const upper = pg.toUpperCase();
-  if (upper.startsWith('VARCHAR') || upper === 'TEXT') return 'text';
-  if (upper === 'INTEGER' || upper === 'SERIAL') return 'integer';
-  if (upper === 'BIGINT') return 'bigint';
-  if (upper === 'SMALLINT') return 'smallint';
+  if (upper.startsWith('VARCHAR')) return 'text';
   if (upper.startsWith('NUMERIC')) return 'numeric';
-  if (upper === 'DOUBLE PRECISION' || upper === 'REAL') return 'float';
-  if (upper === 'BOOLEAN') return 'boolean';
-  if (upper === 'DATE') return 'date';
   if (upper.startsWith('TIMESTAMP')) return 'timestamp';
-  if (upper === 'TIME') return 'time';
-  if (upper === 'UUID') return 'uuid';
-  if (upper === 'JSONB' || upper === 'JSON') return 'json';
-  if (upper === 'INET') return 'inet';
+  const exact = PG_FAMILY_EXACT[upper];
+  if (exact) return exact;
   if (upper.endsWith('[]')) return 'array';
   return upper.toLowerCase();
 }

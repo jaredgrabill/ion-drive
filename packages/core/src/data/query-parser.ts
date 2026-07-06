@@ -100,41 +100,53 @@ function parseFilters(query: Record<string, unknown>): FilterCondition[] {
 
   for (const [key, rawValue] of Object.entries(query)) {
     if (RESERVED_KEYS.has(key) || rawValue === undefined || rawValue === '') continue;
-
-    // Check for operator syntax: field[operator]. The operator is matched
-    // permissively (letters, underscores, and comparison symbols) then
-    // normalised through the alias table.
-    const match = key.match(/^([a-zA-Z_][a-zA-Z0-9_]*)(?:\[([^\]]+)\])?$/);
-    if (!match) continue;
-
-    const field = match[1] as string;
-    const rawOperator = (match[2] ?? 'eq').trim().toLowerCase();
-    const operator = OPERATOR_ALIASES[rawOperator];
-    if (!operator) continue;
-
-    let value: unknown = rawValue;
-
-    // Parse special operators
-    if (operator === 'in' || operator === 'nin') {
-      // Comma-separated values, each coerced to number/boolean/null when it looks like one
-      value = String(rawValue)
-        .split(',')
-        .map((v) => coerceValue(v.trim()));
-    } else if (operator === 'is_null' || operator === 'is_not_null') {
-      value = null;
-    } else if (typeof rawValue === 'string') {
-      // Try to parse as number or boolean
-      value = coerceValue(rawValue);
-    }
-
-    filters.push({
-      field,
-      operator,
-      value,
-    });
+    const condition = parseFilterEntry(key, rawValue);
+    if (condition) filters.push(condition);
   }
 
   return filters;
+}
+
+/**
+ * Parses a single `field[operator]=value` query entry into a FilterCondition.
+ * Returns undefined when the key is not filter-shaped or names an unknown
+ * operator (such entries are silently ignored, matching prior behavior).
+ */
+function parseFilterEntry(key: string, rawValue: unknown): FilterCondition | undefined {
+  // Check for operator syntax: field[operator]. The operator is matched
+  // permissively (letters, underscores, and comparison symbols) then
+  // normalised through the alias table.
+  const match = key.match(/^([a-zA-Z_][a-zA-Z0-9_]*)(?:\[([^\]]+)\])?$/);
+  if (!match) return undefined;
+
+  const field = match[1] as string;
+  const rawOperator = (match[2] ?? 'eq').trim().toLowerCase();
+  const operator = OPERATOR_ALIASES[rawOperator];
+  if (!operator) return undefined;
+
+  return { field, operator, value: coerceFilterValue(operator, rawValue) };
+}
+
+/**
+ * Coerces a raw filter value according to its operator: list operators split
+ * on commas (each item coerced), null-check operators carry no value, and
+ * plain string values are coerced to number/boolean/null when they look like one.
+ */
+function coerceFilterValue(operator: FilterOperator, rawValue: unknown): unknown {
+  if (operator === 'in' || operator === 'nin') {
+    // Comma-separated values, each coerced to number/boolean/null when it looks like one
+    return String(rawValue)
+      .split(',')
+      .map((v) => coerceValue(v.trim()));
+  }
+  if (operator === 'is_null' || operator === 'is_not_null') {
+    return null;
+  }
+  if (typeof rawValue === 'string') {
+    // Try to parse as number or boolean
+    return coerceValue(rawValue);
+  }
+  return rawValue;
 }
 
 /**

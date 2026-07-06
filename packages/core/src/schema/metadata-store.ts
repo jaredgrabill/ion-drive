@@ -20,6 +20,25 @@ import type {
 } from '../db/types.js';
 import type { DataObjectDefinition, FieldDefinition, RelationshipDefinition } from './types.js';
 
+/**
+ * Scalar FieldDefinition properties `updateField` copies verbatim, keyed by
+ * property name → `_ion_fields` column. JSON bags (constraints, uiOptions)
+ * are handled separately because they serialize on write.
+ */
+const FIELD_UPDATE_COLUMNS = {
+  name: 'name',
+  columnName: 'column_name',
+  columnType: 'column_type',
+  displayName: 'display_name',
+  isRequired: 'is_required',
+  isUnique: 'is_unique',
+  isIndexed: 'is_indexed',
+  defaultValue: 'default_value',
+  sortOrder: 'sort_order',
+  description: 'description',
+  managedBy: 'managed_by',
+} as const;
+
 export class MetadataStore {
   constructor(private readonly db: Kysely<SystemDatabase>) {}
 
@@ -149,23 +168,19 @@ export class MetadataStore {
     },
   ): Promise<IonField> {
     const values: Record<string, unknown> = { updated_at: new Date() };
-    if (updates.name !== undefined) values.name = updates.name;
-    if (updates.columnName !== undefined) values.column_name = updates.columnName;
-    if (updates.columnType !== undefined) values.column_type = updates.columnType;
-    if (updates.displayName !== undefined) values.display_name = updates.displayName;
-    if (updates.isRequired !== undefined) values.is_required = updates.isRequired;
-    if (updates.isUnique !== undefined) values.is_unique = updates.isUnique;
-    if (updates.isIndexed !== undefined) values.is_indexed = updates.isIndexed;
-    if (updates.defaultValue !== undefined) values.default_value = updates.defaultValue;
+
+    // Scalar properties copy straight through to their snake_case column.
+    for (const [prop, column] of Object.entries(FIELD_UPDATE_COLUMNS)) {
+      const value = updates[prop as keyof typeof FIELD_UPDATE_COLUMNS];
+      if (value !== undefined) values[column] = value;
+    }
+    // JSON-bag properties serialize on the way in; null clears the column.
     if (updates.constraints !== undefined) {
       values.constraints = updates.constraints ? JSON.stringify(updates.constraints) : null;
     }
-    if (updates.sortOrder !== undefined) values.sort_order = updates.sortOrder;
-    if (updates.description !== undefined) values.description = updates.description;
     if (updates.uiOptions !== undefined) {
       values.ui_options = updates.uiOptions ? JSON.stringify(updates.uiOptions) : null;
     }
-    if (updates.managedBy !== undefined) values.managed_by = updates.managedBy;
 
     return this.db
       .updateTable('_ion_fields')
