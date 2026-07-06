@@ -195,6 +195,15 @@ export class BlockInstaller {
   ): Promise<void> {
     const { schemaManager } = this.services;
     for (const rel of manifest.relationships) {
+      // Idempotent-friendly like objects/tasks/roles: a relationship with this
+      // name already on the source object is skipped (force reinstall path).
+      const existing = schemaManager.registry
+        .getRelationships(rel.sourceObjectName)
+        .some((r) => r.name === rel.name && r.sourceObjectName === rel.sourceObjectName);
+      if (existing) {
+        report.warnings.push(`Relationship "${rel.name}" already exists — skipped.`);
+        continue;
+      }
       // Both endpoints must resolve (from this block or an already-installed one).
       const missingEndpoint = this.unresolvedEndpoint(rel, dryRun);
       if (missingEndpoint) {

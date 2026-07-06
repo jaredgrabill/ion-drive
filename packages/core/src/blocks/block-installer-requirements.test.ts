@@ -13,7 +13,10 @@ import { ActionRegistry } from './action-registry.js';
 import { BlockInstallError, BlockInstaller } from './block-installer.js';
 import { parseManifest } from './block-manifest.js';
 
-const schemaManager = { getObject: () => undefined } as unknown as SchemaManager;
+const schemaManager = {
+  getObject: () => undefined,
+  registry: { getRelationships: () => [] },
+} as unknown as SchemaManager;
 const dataService = {} as DataService;
 const bus = { hasHandler: (name: string) => name === 'log_event' } as unknown as MessageBus;
 

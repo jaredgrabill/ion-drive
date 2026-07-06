@@ -418,4 +418,91 @@ describe('platform lifecycle (integration)', () => {
     expect((await api('GET', '/api/v1/schema/objects/it_projects')).status).toBe(404);
     expect((await api('GET', '/api/v1/data/it_projects')).status).toBe(404);
   });
+
+  it('exposes block actions and hooks with requires validation (Phase 14)', async () => {
+    if (!app) throw new Error('Server not booted');
+
+    const manifest = {
+      name: 'it_logic',
+      version: '0.0.1',
+      title: 'Integration Logic Block',
+      objects: [
+        {
+          name: 'it_widgets',
+          displayName: 'IT Widgets',
+          fields: [{ name: 'label', displayName: 'Label', columnType: 'text', isRequired: true }],
+        },
+      ],
+      actions: [{ name: 'stamp', description: 'Creates a widget with a stamped label.' }],
+      hooks: [{ name: 'echo' }],
+    };
+
+    // Requires validation: install fails actionably while no handler is registered…
+    const missing = await api('POST', '/api/v1/blocks/install', { manifest });
+    expect(missing.status).toBe(500);
+    expect(missing.body.message).toContain('did you vendor its code?');
+    expect(missing.body.message).toContain('/blocks/it_logic');
+    // …and preview reports the same facts as warnings instead of failing.
+    const preview = await api('POST', '/api/v1/blocks/preview', { manifest });
+    expect(preview.status).toBe(200);
+    expect((preview.body.data as Json).warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining('it_logic.stamp')]),
+    );
+
+    // Simulate the vendored plugin registering its handlers (in a scaffolded
+    // project this happens in the block plugin's setup at boot).
+    app.actionRegistry.registerAction({
+      block: 'it_logic',
+      name: 'stamp',
+      handler: async (ctx) => {
+        const created = await ctx.dataService.create('it_widgets', {
+          label: `stamped:${String(ctx.input.label ?? 'default')}`,
+        });
+        return { id: created.data.id, label: created.data.label };
+      },
+    });
+    app.actionRegistry.registerHook({
+      block: 'it_logic',
+      name: 'echo',
+      handler: async (ctx) => ({
+        status: 202,
+        body: { bytes: ctx.rawBody.length, method: ctx.method },
+      }),
+    });
+
+    const install = await api('POST', '/api/v1/blocks/install', { manifest });
+    expect(install.status).toBe(201);
+    expect((install.body.data as Json).actionsExposed).toEqual(['stamp']);
+
+    // RBAC: unauthenticated invocation is rejected; the admin API key passes.
+    const unauthed = await request('POST', '/api/v1/blocks/it_logic/actions/stamp', {
+      body: { label: 'x' },
+    });
+    expect(unauthed.status).toBe(401);
+
+    const invoked = await api('POST', '/api/v1/blocks/it_logic/actions/stamp', { label: 'x' });
+    expect(invoked.status).toBe(200);
+    expect((invoked.body.data as Json).label).toBe('stamped:x');
+
+    // Undeclared action → 404 (declaration-gated surface).
+    expect((await api('POST', '/api/v1/blocks/it_logic/actions/nope', {})).status).toBe(404);
+
+    // Hooks are session-auth exempt and receive the raw body.
+    const hook = await request('POST', '/api/v1/hooks/it_logic/echo', {
+      body: { hello: true },
+    });
+    expect(hook.status).toBe(202);
+    expect(hook.body).toEqual({ bytes: JSON.stringify({ hello: true }).length, method: 'POST' });
+
+    // The action rides the docs surfaces: OpenAPI path + MCP-visible listing.
+    const spec = await request('GET', '/api/v1/openapi.json');
+    expect(Object.keys(spec.body.paths as Json)).toEqual(
+      expect.arrayContaining([
+        '/api/v1/blocks/it_logic/actions/stamp',
+        '/api/v1/hooks/it_logic/echo',
+      ]),
+    );
+
+    await api('DELETE', '/api/v1/blocks/it_logic?dropData=true');
+  });
 });

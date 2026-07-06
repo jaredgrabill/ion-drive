@@ -173,7 +173,10 @@ export class BlockEngine {
     await this.store.begin(manifest);
     try {
       const report = await this.installer.install(manifest, { dryRun: false });
-      await this.store.finish(manifest.name, 'installed', report.objectsCreated);
+      // On a force reinstall the objects already exist (skipped, not created) —
+      // keep the prior ledger ownership so uninstall still knows what to drop.
+      const owned = [...new Set([...(existing?.createdObjects ?? []), ...report.objectsCreated])];
+      await this.store.finish(manifest.name, 'installed', owned);
       return report;
     } catch (err) {
       await this.store.finish(manifest.name, 'failed', []);
