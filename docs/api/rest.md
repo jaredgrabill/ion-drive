@@ -29,8 +29,12 @@ A machine-readable, always-current [OpenAPI 3.1 spec](#openapi) is served at
 | `POST` | `/api/v1/data/:object/bulk` | Bulk create (`{ "data": [...] }`) |
 | `DELETE` | `/api/v1/data/:object/bulk` | Bulk delete (`{ "ids": [...] }`) |
 | `GET` | `/api/v1/data/:object/:id` | Get one record by id |
-| `PATCH` | `/api/v1/data/:object/:id` | Partial update |
+| `PATCH` | `/api/v1/data/:object/:id` | Partial update — send only the fields you're changing |
 | `DELETE` | `/api/v1/data/:object/:id` | Delete |
+
+> There is deliberately no `PUT` full-replace verb: with runtime-defined schemas, replaying a
+> stale full document would silently null out fields added since it was read. `PATCH` is the
+> only update verb across REST, GraphQL, MCP, and the client SDK.
 
 ### List
 

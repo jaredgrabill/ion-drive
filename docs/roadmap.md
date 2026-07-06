@@ -10,7 +10,12 @@ item found in a full review of the codebase after Phase 10 shipped, and organize
 proposed future phases. When a phase ships, move its note into `implementation_plan.md` /
 `CLAUDE.md` as usual and prune it here.
 
-Legend: 🔴 broken/misleading today · 🟠 gap vs. our own stated conventions · 🟡 planned-but-missing capability · ⚪ polish.
+Legend: 🔴 broken/misleading today · 🟠 gap vs. our own stated conventions · 🟡 planned-but-missing capability · ⚪ polish · ✅ resolved.
+
+> [!NOTE]
+> **Same-day sweep (2026-07-06):** immediately after this review, the low-hanging findings were
+> fixed — F1, F3, F4, F5, F7, F13, the F2 script breakage, the MCP half of F6, the admin logs
+> export, and the contributor skills from §3.1. Rows below are marked ✅ with what remains.
 
 ---
 
@@ -20,11 +25,11 @@ Legend: 🔴 broken/misleading today · 🟠 gap vs. our own stated conventions 
 
 | # | Finding | Detail |
 |:--|:--|:--|
-| F1 | **No CI pipeline** | `.github/` does not exist at all. `ci.yml` was in the Phase 0 plan and was never created. Also missing: PR/issue templates, `SECURITY.md`, `CODE_OF_CONDUCT.md`. Every "tests pass" claim so far is local-only. |
-| F2 | **`pnpm test:integration` is broken** | `packages/core/package.json` points at `vitest.integration.config.ts`, which does not exist. No `*.integration.test.ts` files exist anywhere. All end-to-end verification to date has been ad-hoc live smokes that were discarded afterward. |
-| F3 | **Observability overlay overpromises** | `docker/docker-compose.observability.yml` header says "All pre-configured with Ion Drive dashboards", but the Grafana provisioning and Prometheus config mounts are commented out and the referenced files don't exist. As shipped: Prometheus never scrapes `/metrics`, Grafana has no datasources or dashboards, and Loki/Tempo reference config files that aren't mounted. |
-| F4 | **Docs drift: block catalog** | `docs/getting-started.md` lists the catalog as "crm, invoicing, communications" — the `audit` block (Phase 9) is missing. |
-| F5 | **No `.env.example`** | Config is env-driven (`ION_*`) but there is no discoverable example env file at the repo root or in `docker/`. |
+| F1 | ✅ **No CI pipeline** | Fixed 2026-07-06: `.github/workflows/ci.yml` (lint/typecheck/test/build + a Postgres-17 integration job), PR/issue templates, `SECURITY.md`. Still missing: `CODE_OF_CONDUCT.md`. |
+| F2 | ✅/🟡 **`pnpm test:integration` was broken** | Script fixed 2026-07-06 (`vitest.integration.config.ts` created, `passWithNoTests`). The actual integration test suite still doesn't exist — codifying the live smokes remains Phase 11 work. |
+| F3 | ✅ **Observability overlay overpromised** | Fixed 2026-07-06: Prometheus scrape config (`/metrics` via host-gateway), Grafana datasources + Ion Drive Overview dashboard provisioning, Loki/Tempo single-binary configs, mounts wired, broken image tags corrected. Validated (`compose config`, YAML/JSON parse) but not yet live-tested against a running stack. |
+| F4 | ✅ **Docs drift: block catalog** | Fixed 2026-07-06 in `docs/getting-started.md` and both README spots. The `new-block` skill now ends with a catalog-enumeration checklist step. |
+| F5 | ✅ **No `.env.example`** | Added 2026-07-06, every var cross-checked against `config/index.ts` (including the new `ION_RATE_LIMIT_*`). |
 
 ### 1.2 Surface-parity gaps 🟠
 
@@ -33,10 +38,10 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 
 | # | Finding | Detail |
 |:--|:--|:--|
-| F6 | **`expand=` is REST-only** | Phase 10 implemented relationship expansion in `DataService`, exposed on REST list/getById. GraphQL has **no relationship traversal at all** (no nested object types, no `expand` arg — relations are bare FK scalars). MCP `query_data`/`get_record` have no `expand` parameter either. |
-| F7 | **No `ion.event.*` metrics** | The event dispatcher emits an OTel span per delivery but no metric instruments; tasks have `ion.task.*` counters/histograms. `telemetry/metrics.ts` + `span-attributes.ts` need the matching instruments. |
-| F8 | **PUT missing** | The original plan promised `PUT` + `PATCH`; only `PATCH` exists. Probably fine (partial update is the primary verb) — but it's an undocumented deviation. Decide: add a PUT full-replace route or record PATCH-only as deliberate in the REST docs. |
-| F9 | **Migration `sql_down` is write-only** | Every migration records `sql_down`, but nothing ever reads it — there is no rollback API, CLI command, or admin surface. Either build rollback (careful: naive down-SQL loses data) or stop implying it ("history/rollback" in `schema-manager.ts` docs). |
+| F6 | ✅/🟠 **`expand=` is REST-only** | MCP half fixed 2026-07-06: `query_data`/`get_record` gained `expand` (same `string[]` contract as REST). GraphQL still has **no relationship traversal** (no nested object types — relations are bare FK scalars); that remains Phase 13. |
+| F7 | ✅ **No `ion.event.*` metrics** | Fixed 2026-07-06: `ion.event.published` counter, `ion.event.deliveries` counter (`ion.outcome` attr), `ion.event.delivery.duration` histogram — recorded in `OutboxBus.publish` and the dispatcher, documented in `docs/concepts/events.md`. |
+| F8 | ✅ **PUT missing** | Decided 2026-07-06: PATCH-only is deliberate (a stale full-replace would silently null runtime-added fields); documented in `docs/api/rest.md`. |
+| F9 | ✅/🟡 **Migration `sql_down` is write-only** | Wording fixed 2026-07-06 (`schema-manager.ts` no longer implies rollback exists). Building an actual rollback API/CLI remains open — if pursued, it needs data-loss guards like the rest of the change pipeline. |
 
 ### 1.3 Planned-but-missing platform capabilities 🟡
 
@@ -45,7 +50,7 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 | F10 | **Multi-tenancy is aspirational** | Positioning says "database-per-tenant by default"; the plan's verification scenarios (create tenant → isolated DB) are unmet. Today: `createTenantDb` exists but there is exactly one tenant DB from config — no tenant provisioning, routing, lifecycle, or per-tenant migrations. |
 | F11 | **Actor identity** (carried from Phase 9) | No `created_by`/`updated_by` system fields; event payloads carry no `actorId`; `audit_log.changed_by` is always null; `_ion_migrations.applied_by` never populated. Requires threading `request.auth` through `DataService` writes on all three surfaces. |
 | F12 | **Field-level RBAC** | `permission-engine.ts` says "field-level scoping is a future extension". Object-level only today. Row-level policies (owner-scoped reads) are also absent — relevant for the app-backend positioning. |
-| F13 | **No rate limiting / brute-force protection** | CORS + helmet are wired; `@fastify/rate-limit` is not. Auth endpoints and the public data API have no throttle. |
+| F13 | ✅ **No rate limiting / brute-force protection** | Fixed 2026-07-06: `@fastify/rate-limit`, config-gated `ION_RATE_LIMIT_*` (default on: 300/min global per IP, 20/min on `/api/auth/*` via an independent keyed bucket), `/health`+`/metrics` exempt. Live-smoked against Postgres. |
 | F14 | **No realtime** | No way for an app to subscribe to data changes (SSE/WebSocket). The outbox + dispatcher already produce ordered `data.<object>.<op>` events — a realtime bridge is mostly transport work. (Logs already stream over SSE, so the pattern exists in-repo.) |
 | F15 | **No outbound webhooks** | Composable today only by hand (subscription + `http_request` task handler). A first-class `webhook` event handler (signed payloads, retries, delivery log) is a natural near-term win on the same infrastructure. |
 | F16 | **No file/blob storage** | "Self-hosted Firebase" implies a storage story. Nothing exists — needs a `StorageProvider` port (Phase 9 pattern), a local-disk default, an S3-compatible plugin, and a `file` field type. |
@@ -69,7 +74,7 @@ The end-user story ("init a project, pull blocks, manage schema") has gaps once 
 
 Carried from Phases 8–10 (see memory/ADR notes), still valid:
 
-- **Admin:** m2m link editing (chip lists + junction rows); command-palette record search (global `q=`); logs export button; column pinning; "delete → Undo" toast; popover calendar date picker; stat-card trend deltas (needs persisted stats history); `vitest-axe` assertions (dep installed, unused).
+- **Admin:** m2m link editing (chip lists + junction rows); command-palette record search (global `q=`); ~~logs export button~~ (✅ 2026-07-06 — JSON/CSV export of the filtered view); column pinning; "delete → Undo" toast; popover calendar date picker; stat-card trend deltas (needs persisted stats history); `vitest-axe` assertions (dep installed, unused).
 - **Schema engine:** doctor's `AUTH_TABLES` allowlist is hardcoded (ask the `AuthProvider` for its tables); `renderDefaultExpression` treats any value ending in `)` as a SQL expression (needs an `isLiteral` escape hatch); no admin UI for snapshots (CLI-first by design — revisit).
 - **Code health:** ~27 Biome cognitive-complexity warnings (schema engine, data-service, designer components, dashboard). A helper-extraction pass would clear most.
 - **Docs:** `docs/deployment/kubernetes.md` (planned, never written); backup/restore guide; security hardening checklist; performance benchmarks (both promised under Phase 7 "Polish").
@@ -80,12 +85,12 @@ Carried from Phases 8–10 (see memory/ADR notes), still valid:
 
 Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 
-### Phase 11 — Launch readiness (CI, tests, ops) — *fixes every 🔴*
-1. GitHub Actions CI: lint, typecheck, unit tests, build on PR/push; a second job with a Postgres 17 service container running integration tests. (F1)
-2. Real integration test suite: create `vitest.integration.config.ts` + codify the Phase 4/6/9/10 live smokes as repeatable `*.integration.test.ts` against Postgres. (F2)
-3. Observability overlay that works: Prometheus scrape config for `/metrics`, Grafana datasource + starter dashboard provisioning, Loki/Tempo configs; or scale the header claim back to match. (F3)
-4. Rate limiting via `@fastify/rate-limit`, config-gated (`ION_RATE_LIMIT_*`), stricter bucket on `/api/auth/*`. (F13)
-5. Repo hygiene: `.env.example`, `SECURITY.md`, issue/PR templates; fix getting-started catalog drift. (F4, F5)
+### Phase 11 — Launch readiness (CI, tests, ops)
+1. ~~GitHub Actions CI~~ ✅ 2026-07-06. (F1)
+2. Real integration test suite: codify the Phase 4/6/9/10 live smokes as repeatable `*.integration.test.ts` against Postgres (the config + CI job are already in place waiting for them). (F2)
+3. ~~Observability overlay provisioning~~ ✅ 2026-07-06 — remaining: live-test the stack once against real traffic and iterate the dashboard. (F3)
+4. ~~Rate limiting~~ ✅ 2026-07-06. (F13)
+5. ~~Repo hygiene~~ ✅ 2026-07-06 (`CODE_OF_CONDUCT.md` still optional). (F4, F5)
 6. Release pipeline: changesets (or similar), npm publish workflow for `core`/`cli`/`client`/`blocks`, Docker image publish. (F23)
 7. Docs: `deployment/kubernetes.md`, backup/restore, security checklist. (⚪)
 
@@ -93,13 +98,13 @@ Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 1. Actor identity: `created_by`/`updated_by` system fields, actor threaded from `request.auth` through `DataService` on all surfaces, `actorId` in event payloads, `audit_log.changed_by` populated, `applied_by` on migrations. (F11)
 2. First-class **webhooks**: `webhook` handler (HMAC-signed payloads, retry/backoff, delivery log), admin CRUD page, block-manifest support. (F15)
 3. **Realtime subscriptions**: SSE endpoint (`/api/v1/events/stream?topics=data.contacts.*`) bridging the dispatcher, RBAC-filtered; GraphQL subscriptions over the same bridge if cheap. (F14)
-4. `ion.event.*` metrics + DLQ admin surface (failed-deliveries view, retry). (F7, F18)
+4. ~~`ion.event.*` metrics~~ (✅ 2026-07-06) + DLQ admin surface (failed-deliveries view, retry). (F7, F18)
 
 ### Phase 13 — Relational completeness (parity + schema engine)
-1. GraphQL relationship traversal: nested object types resolved through the same `DataService.expand` machinery (batched, depth-capped); MCP `query_data`/`get_record` gain `expand`. (F6)
+1. GraphQL relationship traversal: nested object types resolved through the same `DataService.expand` machinery (batched, depth-capped). (F6 — the MCP half shipped 2026-07-06.)
 2. `SchemaManager.removeRelationship` + snapshot prune of relationships + admin delete action. (F17)
 3. Admin m2m link editing (chip list cell, junction editing in RecordSheet). (⚪)
-4. Decide + document PUT and migration rollback story. (F8, F9)
+4. ~~Decide + document PUT~~ (✅ PATCH-only, documented); migration rollback build-or-drop decision. (F8, F9)
 
 ### Phase 14 — Standalone developer experience (CLI grows up)
 1. `ion-drive init` scaffolds a runnable project: `docker-compose.yml` (server + Postgres), `.env`, client starter, **and an agent-instructions file** (see Part 3). (F21, F24)
@@ -134,6 +139,8 @@ Claude Code loads on demand; repo-level `CLAUDE.md` is always-on context.)
 | **`live-smoke`** | Every phase ended with an N-check live smoke, re-invented each time. Codify: boot against dev Postgres (`docker/docker-compose.yml`, port overridable via env), sign up first admin, mint API key, run checks, tear down. Becomes the seed for integration tests (Phase 11). |
 | **`new-block`** | Authoring a catalog block: TS manifest with `satisfies BlockManifestInput` → `pnpm --filter @ionshift/ion-drive-blocks emit` → drift test → registry entry → getting-started catalog line (prevents F4-style drift). |
 | **`finish-phase`** | The close-out ritual: ADR → `implementation_plan.md` status note → `CLAUDE.md` status section → roadmap pruning → memory follow-ups. Consistently done so far but only by convention. |
+
+> ✅ All four skills were created 2026-07-06 under `.claude/skills/`.
 
 `CLAUDE.md` itself is strong; the main gap it can't cover is *workflow* (the above), which is what skills are for.
 

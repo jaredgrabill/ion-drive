@@ -25,8 +25,8 @@ Ion Drive is a **self-hosted, open-source platform** that lets you define custom
 - **🔌 Automatic API Surface** — Every data object instantly gets REST endpoints, GraphQL types, and MCP tools. Download an always-current OpenAPI spec.
 - **🔎 Rich Querying** — Full-text `search`, per-property operators (`status[neq]=archived&age[gt]=21`), sorting, and pagination on every list endpoint — with a typed client SDK that builds the queries for you.
 - **🤖 LLM/Agent Native** — Built-in MCP server lets AI agents introspect your schema and CRUD data with zero integration code.
-- **📦 Building Blocks** — Pull in pre-built modules (CRM, invoicing, communications) like `shadcn/ui` — you own the code, customize freely.
-- **🏢 Multi-Tenant** — Per-tenant database isolation out of the box.
+- **📦 Building Blocks** — Pull in pre-built modules (CRM, invoicing, communications, audit) like `shadcn/ui` — you own the code, customize freely.
+- **🏢 Multi-Tenant** — Designed for per-tenant database isolation (tenant management is on the [roadmap](docs/roadmap.md)).
 - **📊 Built-in Observability** — OpenTelemetry instrumentation with optional Grafana stack. Pre-built dashboards included.
 - **🔐 Pluggable Auth** — Better Auth (self-hosted) by default, swap to WorkOS/Auth0/Clerk via config.
 - **⚙️ Admin Console** — Visual schema designer, Airtable-like data grid, user management, secrets vault, monitoring dashboards.

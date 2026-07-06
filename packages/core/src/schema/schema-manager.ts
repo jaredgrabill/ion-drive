@@ -9,7 +9,8 @@
  * 1. Build a ChangeSet describing the proposed changes
  * 2. Validate the ChangeSet (preview mode — no side effects)
  * 3. If valid, execute the ChangeSet (DDL + metadata + cache update)
- * 4. Record the migration for history/rollback
+ * 4. Record the migration for history (down-SQL is captured per migration,
+ *    but no rollback API exists yet — see docs/roadmap.md F9)
  */
 
 import type { Kysely } from 'kysely';
