@@ -31,6 +31,18 @@ export interface GraphQLRoutesOptions {
 type YogaContext = { req: FastifyRequest; reply: FastifyReply };
 
 /**
+ * Shapes yoga's variadic log args for pino: a leading Error moves under the
+ * `err` key (so pino's serializer expands stack/message), everything else
+ * becomes the log message / extras.
+ */
+function toPinoArgs(args: unknown[]): Record<string, unknown> {
+  const errIndex = args.findIndex((a) => a instanceof Error);
+  if (errIndex === -1) return { graphql: args };
+  const rest = args.filter((_, i) => i !== errIndex);
+  return { err: args[errIndex], graphql: rest };
+}
+
+/**
  * Builds a schema provider that rebuilds only when the registry version changes.
  */
 function createSchemaProvider(
@@ -60,11 +72,13 @@ export function registerGraphQLRoutes(options: GraphQLRoutesOptions): FastifyPlu
       graphqlEndpoint: endpoint,
       graphiql,
       // Fastify owns logging; let it flow through the request logger.
+      // Errors must land under pino's `err` key — a raw Error inside an array
+      // serializes to `{}` and masked GraphQL errors become invisible in logs.
       logging: {
-        debug: (...args) => fastify.log.debug(args),
-        info: (...args) => fastify.log.info(args),
-        warn: (...args) => fastify.log.warn(args),
-        error: (...args) => fastify.log.error(args),
+        debug: (...args) => fastify.log.debug(toPinoArgs(args)),
+        info: (...args) => fastify.log.info(toPinoArgs(args)),
+        warn: (...args) => fastify.log.warn(toPinoArgs(args)),
+        error: (...args) => fastify.log.error(toPinoArgs(args)),
       },
     });
 
