@@ -110,7 +110,7 @@ ion-drive/
 │   ├── core/       # Fastify backend (schema engine, APIs, MCP, auth)
 │   ├── admin/      # React admin console (Vite SPA)
 │   ├── cli/        # CLI for project management and building blocks
-│   ├── blocks/     # Official building block catalog (crm, invoicing, communications)
+│   ├── blocks/     # Official building block catalog (crm, invoicing, communications, audit)
 │   └── client/     # Zero-dependency typed query builder + REST client SDK
 ├── docker/         # Docker Compose for dev and observability
 └── docs/           # Documentation

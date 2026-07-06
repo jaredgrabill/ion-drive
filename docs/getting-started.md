@@ -112,7 +112,7 @@ the CLI:
 
 ```bash
 npx ion-drive init        # scaffold ion.config.json + an optional client starter
-npx ion-drive list        # see the catalog (crm, invoicing, communications)
+npx ion-drive list        # see the catalog (crm, invoicing, communications, audit)
 npx ion-drive add crm     # install CRM (and resolve its dependencies)
 ```
 
