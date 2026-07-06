@@ -429,8 +429,11 @@ export async function createServer(
   await loadedPlugins.runReady();
 
   // --- Graceful shutdown ---
-  const shutdown = async () => {
-    server.log.info('Shutting down...');
+  // `close` releases every resource createServer acquired (dispatcher, task
+  // scheduler, plugins, HTTP server, telemetry, connection pools) without
+  // exiting the process — programmatic embedders and integration tests call it
+  // directly. The signal handlers wrap it with a process exit.
+  const close = async () => {
     dispatcher?.stop();
     taskEngine.stop();
     await loadedPlugins.runShutdown();
@@ -439,6 +442,11 @@ export async function createServer(
     await authPool.end();
     await systemDb.destroy();
     await tenantDb.destroy();
+  };
+
+  const shutdown = async () => {
+    server.log.info('Shutting down...');
+    await close();
     process.exit(0);
   };
 
@@ -461,6 +469,7 @@ export async function createServer(
     blockEngine,
     telemetry,
     logBuffer,
+    close,
   };
 }
 

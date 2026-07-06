@@ -67,13 +67,24 @@ either reuse existing credentials or `docker compose down -v` first.
 
 ## 5. Afterward: codify the keepers
 
-Ad-hoc smokes get discarded; the durable version is an integration test. Checks worth
-keeping should be written as `src/**/*.integration.test.ts` in `packages/core` (picked up by
-`vitest.integration.config.ts`, which is excluded from the unit run) and executed with:
+Ad-hoc smokes get discarded; the durable version is an integration test. The seed suite
+already exists: `packages/core/src/integration/platform.integration.test.ts` (added
+2026-07-06) boots the real server via `createServer()` — no port binding, Fastify
+`.inject()` — against a **per-run scratch database** (`CREATE DATABASE ion_it_<random>`
+on the server from `ION_DATABASE_URL`, dropped in `afterAll`) and covers auth bootstrap,
+schema + CRUD + constraints, `expand=`, GraphQL, outbox events, block lifecycle, and RBAC.
+**Extend that suite** (or add a sibling `*.integration.test.ts`) with new checks worth
+keeping rather than starting from scratch; it is picked up by
+`vitest.integration.config.ts` (excluded from the unit run) and executed with:
 
 ```bash
 pnpm --filter @ionshift/ion-drive-core test:integration
 ```
+
+Two footguns the seed suite already solves — copy its patterns: `createServer()` returns
+a `close()` for full teardown (dispatcher, pools, telemetry) without `process.exit`, and
+the integration vitest config aliases `graphql` to its CJS entry (vite-node otherwise
+splits graphql into two module realms and every GraphQL request 500s).
 
 Report the smoke as "N/N checks passed" with the feature areas covered, and note which
 checks you codified (or deliberately didn't) as integration tests.

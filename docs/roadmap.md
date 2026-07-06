@@ -26,7 +26,7 @@ Legend: 🔴 broken/misleading today · 🟠 gap vs. our own stated conventions 
 | # | Finding | Detail |
 |:--|:--|:--|
 | F1 | ✅ **No CI pipeline** | Fixed 2026-07-06: `.github/workflows/ci.yml` (lint/typecheck/test/build + a Postgres-17 integration job), PR/issue templates, `SECURITY.md`. Still missing: `CODE_OF_CONDUCT.md`. |
-| F2 | ✅/🟡 **`pnpm test:integration` was broken** | Script fixed 2026-07-06 (`vitest.integration.config.ts` created, `passWithNoTests`). The actual integration test suite still doesn't exist — codifying the live smokes remains Phase 11 work. |
+| F2 | ✅ **`pnpm test:integration` was broken** | Script fixed 2026-07-06 (`vitest.integration.config.ts` created). Suite seeded 2026-07-06: `packages/core/src/integration/platform.integration.test.ts` (scratch-DB-per-run, real `createServer()` over `.inject()`; auth bootstrap, schema/CRUD/constraints, expand, GraphQL, outbox events, block lifecycle, RBAC — `passWithNoTests` removed). Further scenarios (tasks, MCP, snapshot/doctor, secrets) still welcome. |
 | F3 | ✅ **Observability overlay overpromised** | Fixed 2026-07-06: Prometheus scrape config (`/metrics` via host-gateway), Grafana datasources + Ion Drive Overview dashboard provisioning, Loki/Tempo single-binary configs, mounts wired, broken image tags corrected. Validated (`compose config`, YAML/JSON parse) but not yet live-tested against a running stack. |
 | F4 | ✅ **Docs drift: block catalog** | Fixed 2026-07-06 in `docs/getting-started.md` and both README spots. The `new-block` skill now ends with a catalog-enumeration checklist step. |
 | F5 | ✅ **No `.env.example`** | Added 2026-07-06, every var cross-checked against `config/index.ts` (including the new `ION_RATE_LIMIT_*`). |
@@ -87,7 +87,7 @@ Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 
 ### Phase 11 — Launch readiness (CI, tests, ops)
 1. ~~GitHub Actions CI~~ ✅ 2026-07-06. (F1)
-2. Real integration test suite: codify the Phase 4/6/9/10 live smokes as repeatable `*.integration.test.ts` against Postgres (the config + CI job are already in place waiting for them). (F2)
+2. ~~Real integration test suite~~ ✅ seeded 2026-07-06 (`platform.integration.test.ts`: auth, schema, CRUD, expand, GraphQL, events, blocks, RBAC) — extend with tasks/MCP/snapshot-doctor/secrets scenarios as they earn their keep. (F2)
 3. ~~Observability overlay provisioning~~ ✅ 2026-07-06 — remaining: live-test the stack once against real traffic and iterate the dashboard. (F3)
 4. ~~Rate limiting~~ ✅ 2026-07-06. (F13)
 5. ~~Repo hygiene~~ ✅ 2026-07-06 (`CODE_OF_CONDUCT.md` still optional). (F4, F5)
