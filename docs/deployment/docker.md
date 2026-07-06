@@ -52,6 +52,10 @@ important ones:
 | `ION_REQUIRE_AUTH` | `false` | Enforce RBAC on data/schema/admin endpoints. |
 | `ION_PUBLIC_URL` | — | Public base URL (used as the auth base URL). |
 | `ION_CORS_ORIGINS` | `true` | Allowed CORS origins. |
+| `ION_RATE_LIMIT_ENABLED` | `true` | Per-IP HTTP rate limiting (429 beyond the limits below). |
+| `ION_RATE_LIMIT_MAX` | `300` | Max requests per IP per window (global bucket). |
+| `ION_RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window in milliseconds. |
+| `ION_RATE_LIMIT_AUTH_MAX` | `20` | Stricter per-IP limit for `/api/auth/*` in the same window. |
 | `ION_LOG_LEVEL` | `info` | `fatal`…`trace`. |
 | `ION_METRICS_ENABLED` | `true` | Prometheus endpoint at `/metrics`. |
 | `ION_OTEL_ENABLED` | `false` | Export traces/logs (+ optionally metrics) over OTLP/HTTP. |

@@ -12,6 +12,7 @@ import { registerDataRoutes } from './api/data-routes.js';
 import { registerGraphQLRoutes } from './api/graphql/plugin.js';
 import { registerLogRoutes } from './api/log-routes.js';
 import { registerOpenApiRoutes } from './api/openapi-routes.js';
+import { installRateLimit } from './api/rate-limit-options.js';
 import { registerSchemaRoutes } from './api/schema-routes.js';
 import { registerStatsRoutes } from './api/stats-routes.js';
 import { registerTaskRoutes } from './api/task-routes.js';
@@ -145,6 +146,11 @@ export async function createServer(
   await server.register(helmet, {
     contentSecurityPolicy: config.nodeEnv === 'production',
   });
+
+  // Per-IP rate limiting (config-gated, on by default): a generous global
+  // bucket plus a stricter one for the Better Auth catch-all at /api/auth/*.
+  // See api/rate-limit-options.ts for the bucket mechanics.
+  await installRateLimit(server, config);
 
   // --- Database connections ---
   const systemDb = createSystemDb({ connectionString: config.databaseUrl });

@@ -50,6 +50,20 @@ const configSchema = z.object({
   /** When true, RBAC is enforced on data/schema/admin endpoints. */
   requireAuth: z.coerce.boolean().default(false),
 
+  // --- Rate limiting ---
+
+  /** Enable per-IP HTTP rate limiting (global bucket + stricter auth bucket). */
+  rateLimitEnabled: envBoolean(true),
+
+  /** Max requests per IP per window for the global bucket. */
+  rateLimitMax: z.coerce.number().int().positive().default(300),
+
+  /** Rate-limit window length in milliseconds (shared by both buckets). */
+  rateLimitWindowMs: z.coerce.number().int().positive().default(60000),
+
+  /** Stricter max requests per IP per window for auth endpoints (`/api/auth/*`). */
+  rateLimitAuthMax: z.coerce.number().int().positive().default(20),
+
   /** Public base URL of this server (used as the auth baseURL). */
   publicUrl: z.string().url().optional(),
 
@@ -147,6 +161,10 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     encryptionKey: process.env.ION_ENCRYPTION_KEY,
     authSecret: process.env.ION_AUTH_SECRET,
     requireAuth: process.env.ION_REQUIRE_AUTH,
+    rateLimitEnabled: process.env.ION_RATE_LIMIT_ENABLED,
+    rateLimitMax: process.env.ION_RATE_LIMIT_MAX,
+    rateLimitWindowMs: process.env.ION_RATE_LIMIT_WINDOW_MS,
+    rateLimitAuthMax: process.env.ION_RATE_LIMIT_AUTH_MAX,
     publicUrl: process.env.ION_PUBLIC_URL,
     adminUrl: process.env.ION_ADMIN_URL,
     otelEnabled: process.env.ION_OTEL_ENABLED,
