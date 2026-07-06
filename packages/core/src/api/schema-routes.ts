@@ -8,7 +8,14 @@
 
 import type { FastifyInstance, FastifyPluginCallback } from 'fastify';
 import { z } from 'zod';
+import type { SchemaDoctor } from '../schema/doctor.js';
 import type { SchemaManager } from '../schema/index.js';
+import {
+  type SchemaSnapshot,
+  applySnapshot,
+  diffSnapshot,
+  exportSnapshot,
+} from '../schema/snapshot.js';
 import { COLUMN_TYPES } from '../schema/types.js';
 import type { ColumnTypeName, FieldDefinition } from '../schema/types.js';
 import { recordSchemaChange } from '../telemetry/metrics.js';
@@ -16,6 +23,14 @@ import { recordSchemaChange } from '../telemetry/metrics.js';
 // ---------------------------------------------------------------------------
 // Zod schemas for request validation
 // ---------------------------------------------------------------------------
+
+const constraintsSchema = z.object({
+  min: z.number().optional(),
+  max: z.number().optional(),
+  pattern: z.string().optional(),
+  enumValues: z.array(z.string()).optional(),
+  message: z.string().optional(),
+});
 
 const fieldSchema = z.object({
   name: z
@@ -30,16 +45,37 @@ const fieldSchema = z.object({
   isUnique: z.boolean().optional().default(false),
   isIndexed: z.boolean().optional().default(false),
   defaultValue: z.string().nullable().optional(),
-  constraints: z
-    .object({
-      min: z.number().optional(),
-      max: z.number().optional(),
-      pattern: z.string().optional(),
-      enumValues: z.array(z.string()).optional(),
-      message: z.string().optional(),
-    })
-    .optional(),
+  constraints: constraintsSchema.optional(),
+  description: z.string().max(2000).nullable().optional(),
+  uiOptions: z.record(z.unknown()).nullable().optional(),
+  sortOrder: z.number().int().optional(),
 });
+
+/** Partial update for PATCH /objects/:name/fields/:fieldName (Phase 10). */
+const modifyFieldSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(255)
+      .regex(
+        /^[a-z][a-z0-9_]*$/,
+        'Must start with a letter, lowercase, alphanumeric + underscores',
+      ),
+    displayName: z.string().min(1).max(255),
+    description: z.string().max(2000).nullable(),
+    uiOptions: z.record(z.unknown()).nullable(),
+    columnType: z.string().refine((v) => v in COLUMN_TYPES, 'Invalid column type'),
+    isRequired: z.boolean(),
+    isUnique: z.boolean(),
+    isIndexed: z.boolean(),
+    defaultValue: z.string().nullable(),
+    constraints: constraintsSchema.nullable(),
+    sortOrder: z.number().int(),
+    backfillValue: z.string(),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, 'At least one field property must be provided');
 
 const createObjectSchema = z.object({
   name: z
@@ -68,7 +104,31 @@ const addRelationshipSchema = z.object({
 // Route registration
 // ---------------------------------------------------------------------------
 
-export function registerSchemaRoutes(schemaManager: SchemaManager): FastifyPluginCallback {
+/** The wire shape POST /snapshot accepts (validated loosely; the schema engine re-validates). */
+const snapshotSchema = z.object({
+  formatVersion: z.number().int(),
+  exportedAt: z.string().optional(),
+  objects: z.array(
+    z.object({
+      name: z.string(),
+      displayName: z.string(),
+      description: z.string().optional(),
+      managedBy: z.string().optional(),
+      fields: z.array(z.record(z.unknown())),
+    }),
+  ),
+  relationships: z.array(z.record(z.unknown())).default([]),
+});
+
+export interface SchemaRoutesOptions {
+  /** Enables /doctor endpoints when provided. */
+  doctor?: SchemaDoctor;
+}
+
+export function registerSchemaRoutes(
+  schemaManager: SchemaManager,
+  options: SchemaRoutesOptions = {},
+): FastifyPluginCallback {
   return (fastify: FastifyInstance, _opts: unknown, done: () => void) => {
     // --- List all objects ---
     fastify.get('/objects', async () => {
@@ -192,25 +252,67 @@ export function registerSchemaRoutes(schemaManager: SchemaManager): FastifyPlugi
       return reply.code(201).send({ success: true, preview: result.preview });
     });
 
+    // --- Modify a field (rename/type/flags/default/constraints/metadata) ---
+    // Preview-first contract: ?dryRun=true returns the ChangePreview without
+    // applying; ?force=true overrides block contract protection (ADR-017).
+    fastify.patch<{
+      Params: { name: string; fieldName: string };
+      Querystring: { dryRun?: string; force?: string };
+    }>('/objects/:name/fields/:fieldName', async (request, reply) => {
+      const { name, fieldName } = request.params;
+      const parsed = modifyFieldSchema.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: 'Validation Error',
+          issues: parsed.error.issues,
+        });
+      }
+
+      const dryRun = request.query.dryRun === 'true';
+      const force = request.query.force === 'true';
+      const updates = {
+        ...parsed.data,
+        columnType: parsed.data.columnType as ColumnTypeName | undefined,
+      };
+
+      const result = await schemaManager.modifyField(name, fieldName, updates, { dryRun, force });
+
+      if (dryRun) {
+        return { data: result.preview };
+      }
+      if (!result.success) {
+        return reply.code(422).send({
+          error: 'Schema Change Failed',
+          preview: result.preview,
+        });
+      }
+
+      recordSchemaChange('modify_field', name);
+      return { success: true, preview: result.preview, field: result.field };
+    });
+
     // --- Remove a field from an object ---
-    fastify.delete<{ Params: { name: string; fieldName: string } }>(
-      '/objects/:name/fields/:fieldName',
-      async (request, reply) => {
-        const { name, fieldName } = request.params;
+    fastify.delete<{
+      Params: { name: string; fieldName: string };
+      Querystring: { force?: string };
+    }>('/objects/:name/fields/:fieldName', async (request, reply) => {
+      const { name, fieldName } = request.params;
 
-        const result = await schemaManager.removeField(name, fieldName);
+      const result = await schemaManager.removeField(name, fieldName, {
+        force: request.query.force === 'true',
+      });
 
-        if (!result.success) {
-          return reply.code(422).send({
-            error: 'Schema Change Failed',
-            preview: result.preview,
-          });
-        }
+      if (!result.success) {
+        return reply.code(422).send({
+          error: 'Schema Change Failed',
+          preview: result.preview,
+        });
+      }
 
-        recordSchemaChange('drop_field', name);
-        return { success: true, preview: result.preview };
-      },
-    );
+      recordSchemaChange('drop_field', name);
+      return { success: true, preview: result.preview };
+    });
 
     // --- Add a relationship ---
     fastify.post('/relationships', async (request, reply) => {
@@ -248,6 +350,96 @@ export function registerSchemaRoutes(schemaManager: SchemaManager): FastifyPlugi
         count: types.length,
       };
     });
+
+    // --- Schema snapshot: export (Phase 10 / 4A) ---
+    fastify.get('/snapshot', async () => {
+      return { data: exportSnapshot(schemaManager.listObjects()) };
+    });
+
+    // --- Schema snapshot: diff / apply (Phase 10 / 4A) ---
+    // ?dryRun=true returns the computed diff without applying; ?prune=true also
+    // removes fields/objects absent from the snapshot; ?force=true overrides
+    // block contract protection on modified fields.
+    fastify.post<{ Querystring: { dryRun?: string; prune?: string; force?: string } }>(
+      '/snapshot',
+      async (request, reply) => {
+        const parsed = snapshotSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return reply.code(400).send({ error: 'Validation Error', issues: parsed.error.issues });
+        }
+
+        const snapshot = parsed.data as unknown as SchemaSnapshot;
+        const prune = request.query.prune === 'true';
+        const entries = diffSnapshot(snapshot, schemaManager.listObjects(), { prune });
+
+        if (request.query.dryRun === 'true') {
+          return { data: { changes: entries, changeCount: entries.length } };
+        }
+
+        const results = await applySnapshot(schemaManager, entries, {
+          force: request.query.force === 'true',
+        });
+        const failed = results.filter((r) => !r.success);
+        if (failed.length > 0) {
+          return reply.code(422).send({
+            error: 'Snapshot Partially Applied',
+            data: { results, applied: results.length - failed.length, failed: failed.length },
+          });
+        }
+        recordSchemaChange('apply_snapshot');
+        return { data: { results, applied: results.length, failed: 0 } };
+      },
+    );
+
+    // --- Drift doctor (Phase 10 / 4B) ---
+    if (options.doctor) {
+      const doctor = options.doctor;
+
+      fastify.get('/doctor', async () => {
+        return { data: await doctor.diagnose() };
+      });
+
+      // Adopt an unmanaged table (no column) or column into metadata.
+      fastify.post('/doctor/adopt', async (request, reply) => {
+        const body = z
+          .object({ table: z.string().min(1), column: z.string().min(1).optional() })
+          .safeParse(request.body);
+        if (!body.success) {
+          return reply.code(400).send({ error: 'Validation Error', issues: body.error.issues });
+        }
+
+        const { table, column } = body.data;
+        const result = column
+          ? await schemaManager.adoptColumn(
+              schemaManager.listObjects().find((o) => o.tableName === table)?.name ?? table,
+              column,
+            )
+          : await schemaManager.adoptTable(table);
+
+        if (!result.success) {
+          return reply.code(422).send({ error: 'Adopt Failed', message: result.error });
+        }
+        recordSchemaChange('adopt', table);
+        return { success: true, data: result };
+      });
+
+      // Persisted allowlist: silence / re-enable a finding.
+      fastify.post('/doctor/ignore', async (request, reply) => {
+        const body = z.object({ key: z.string().min(1) }).safeParse(request.body);
+        if (!body.success) {
+          return reply.code(400).send({ error: 'Validation Error', issues: body.error.issues });
+        }
+        return { success: true, ignored: await doctor.ignore(body.data.key) };
+      });
+
+      fastify.post('/doctor/unignore', async (request, reply) => {
+        const body = z.object({ key: z.string().min(1) }).safeParse(request.body);
+        if (!body.success) {
+          return reply.code(400).send({ error: 'Validation Error', issues: body.error.issues });
+        }
+        return { success: true, ignored: await doctor.unignore(body.data.key) };
+      });
+    }
 
     // --- Preview changes (dry run) ---
     fastify.post('/preview', async (request, reply) => {

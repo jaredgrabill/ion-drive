@@ -113,11 +113,59 @@ const PaginationMeta = new GraphQLObjectType({
 // Type mapping
 // ---------------------------------------------------------------------------
 
+/** A GraphQL type usable in both input and output positions. */
+type DualPositionType = GraphQLOutputType & GraphQLInputType;
+
+/** GraphQL enum value name rules (also excludes the reserved literals). */
+const GRAPHQL_NAME = /^[_A-Za-z][_0-9A-Za-z]*$/;
+const GRAPHQL_RESERVED = new Set(['true', 'false', 'null']);
+
+/**
+ * Builds a real GraphQL enum type for a select field whose values are all
+ * identifier-safe, or returns null to fall back to String. The instance is
+ * built once per object (see {@link buildFieldTypeMap}) so the output type
+ * and the create/update inputs share it — GraphQL requires unique type names.
+ */
+function buildEnumType(objName: string, field: FieldDefinition): GraphQLEnumType | null {
+  const values = field.constraints?.enumValues;
+  if (!values?.length) return null;
+  const safe = values.every((v) => GRAPHQL_NAME.test(v) && !GRAPHQL_RESERVED.has(v));
+  if (!safe || new Set(values).size !== values.length) return null;
+
+  return new GraphQLEnumType({
+    name: `${pascalCase(objName)}${pascalCase(field.name)}Enum`,
+    description: field.description ?? `Allowed values for ${field.displayName}.`,
+    values: Object.fromEntries(values.map((v) => [v, { value: v }])),
+  });
+}
+
+/**
+ * Resolves each field of an object to its GraphQL type once, so enum types
+ * are shared across the output type and both input types.
+ */
+function buildFieldTypeMap(obj: DataObjectDefinition): Map<string, DualPositionType> {
+  const map = new Map<string, DualPositionType>();
+  for (const field of obj.fields) {
+    if (field.columnType === 'enum' || field.columnType === 'multi_enum') {
+      const enumType = buildEnumType(obj.name, field);
+      if (enumType) {
+        map.set(
+          field.name,
+          field.columnType === 'multi_enum' ? new GraphQLList(enumType) : enumType,
+        );
+        continue;
+      }
+    }
+    map.set(field.name, columnToGraphQLType(field));
+  }
+  return map;
+}
+
 /**
  * Maps an Ion Drive column type to a GraphQL type (used for both input and
  * output positions — the mappable scalar/list types are identical).
  */
-function columnToGraphQLType(field: FieldDefinition): GraphQLOutputType & GraphQLInputType {
+function columnToGraphQLType(field: FieldDefinition): DualPositionType {
   switch (field.columnType) {
     case 'integer':
     case 'auto_increment':
@@ -154,17 +202,20 @@ function columnToGraphQLType(field: FieldDefinition): GraphQLOutputType & GraphQ
  * Builds the output object type for a data object. Field resolvers read the
  * physical column name, since DataService returns column-keyed rows.
  */
-function buildObjectType(obj: DataObjectDefinition): GraphQLObjectType {
+function buildObjectType(
+  obj: DataObjectDefinition,
+  fieldTypes: Map<string, DualPositionType>,
+): GraphQLObjectType {
   return new GraphQLObjectType({
     name: pascalCase(obj.name),
     description: obj.description ?? undefined,
     fields: () => {
       const fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = {};
       for (const field of obj.fields) {
-        const base = columnToGraphQLType(field);
+        const base = fieldTypes.get(field.name) ?? columnToGraphQLType(field);
         fields[field.name] = {
           type: field.isPrimary ? new GraphQLNonNull(base) : base,
-          description: field.displayName,
+          description: field.description ?? field.displayName,
           resolve: (source) => source[field.columnName],
         };
       }
@@ -182,7 +233,10 @@ function writableFields(obj: DataObjectDefinition): FieldDefinition[] {
  * Builds create/update input types. Returns `undefined` for each when the
  * object has no writable fields (an empty input type is invalid in GraphQL).
  */
-function buildInputTypes(obj: DataObjectDefinition): {
+function buildInputTypes(
+  obj: DataObjectDefinition,
+  fieldTypes: Map<string, DualPositionType>,
+): {
   create?: GraphQLInputObjectType;
   update?: GraphQLInputObjectType;
 } {
@@ -192,11 +246,12 @@ function buildInputTypes(obj: DataObjectDefinition): {
   const createFields: GraphQLInputFieldConfigMap = {};
   const updateFields: GraphQLInputFieldConfigMap = {};
   for (const field of writable) {
-    const base = columnToGraphQLType(field);
+    const base = fieldTypes.get(field.name) ?? columnToGraphQLType(field);
     createFields[field.name] = {
       type: field.isRequired ? new GraphQLNonNull(base) : base,
+      description: field.description ?? undefined,
     };
-    updateFields[field.name] = { type: base };
+    updateFields[field.name] = { type: base, description: field.description ?? undefined };
   }
 
   const pascal = pascalCase(obj.name);
@@ -237,8 +292,9 @@ export function buildGraphQLSchema(
   const mutationFields: GraphQLFieldConfigMap<unknown, unknown> = {};
 
   for (const obj of objects) {
-    const objectType = buildObjectType(obj);
-    const { create: createInput, update: updateInput } = buildInputTypes(obj);
+    const fieldTypes = buildFieldTypeMap(obj);
+    const objectType = buildObjectType(obj, fieldTypes);
+    const { create: createInput, update: updateInput } = buildInputTypes(obj, fieldTypes);
 
     const listResult = new GraphQLObjectType({
       name: `${pascalCase(obj.name)}ListResult`,

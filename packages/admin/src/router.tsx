@@ -3,22 +3,37 @@
  *
  * The root route gates on the session: while loading it shows a spinner, when
  * signed out it renders the Login screen, and when signed in it renders the
- * AppShell (whose Outlet hosts the child routes below).
+ * AppShell (whose Outlet hosts the child routes below). Phase 8 added the
+ * Tasks/Blocks/Logs/Metrics/API Keys routes and the task detail view.
  */
 
 import { Outlet, createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
-import type { FC } from 'react';
-import { AppShell } from './components/AppShell';
+import { type FC, lazy } from 'react';
+import { AppShell } from './components/layout';
 import { Spinner } from './components/ui';
 import { useSession } from './lib/session';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
-import { ObjectDetail } from './pages/ObjectDetail';
 import { ObjectsList } from './pages/ObjectsList';
 import { Roles } from './pages/Roles';
 import { Secrets } from './pages/Secrets';
 import { SettingsPage } from './pages/Settings';
 import { Users } from './pages/Users';
+
+// Secondary pages are code-split; the AppShell's Suspense boundary shows a
+// spinner during chunk load. Dashboard/Objects stay eager (first paint).
+const ApiKeys = lazy(() => import('./pages/api-keys').then((m) => ({ default: m.ApiKeys })));
+// ObjectDetail carries the DataGrid (TanStack Table + virtualizer) — split it.
+const ObjectDetail = lazy(() =>
+  import('./pages/ObjectDetail').then((m) => ({ default: m.ObjectDetail })),
+);
+const Blocks = lazy(() => import('./pages/blocks').then((m) => ({ default: m.Blocks })));
+const Logs = lazy(() => import('./pages/logs').then((m) => ({ default: m.Logs })));
+const Metrics = lazy(() => import('./pages/metrics').then((m) => ({ default: m.Metrics })));
+const TaskDetail = lazy(() =>
+  import('./pages/task-detail').then((m) => ({ default: m.TaskDetail })),
+);
+const Tasks = lazy(() => import('./pages/tasks').then((m) => ({ default: m.Tasks })));
 
 function RootGate() {
   const { isLoading, isAuthenticated } = useSession();
@@ -46,9 +61,19 @@ const routeTree = rootRoute.addChildren([
     path: '/objects/$name',
     component: ObjectDetail,
   }),
+  route('/blocks', Blocks),
+  route('/tasks', Tasks),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/tasks/$id',
+    component: TaskDetail,
+  }),
   route('/users', Users),
   route('/roles', Roles),
+  route('/api-keys', ApiKeys),
   route('/secrets', Secrets),
+  route('/logs', Logs),
+  route('/metrics', Metrics),
   route('/settings', SettingsPage),
 ]);
 

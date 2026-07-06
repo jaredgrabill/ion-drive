@@ -117,7 +117,13 @@ export class SchemaRegistry {
     this.state.objects.set(definition.name, definition);
     if (definition.relationships) {
       for (const rel of definition.relationships) {
-        if (!this.state.relationships.some((r) => r.name === rel.name)) {
+        // Relationship names are scoped per source object (e.g. two blocks'
+        // objects may each have a "company" link), so dedupe on both.
+        if (
+          !this.state.relationships.some(
+            (r) => r.name === rel.name && r.sourceObjectName === rel.sourceObjectName,
+          )
+        ) {
           this.state.relationships.push(rel);
         }
       }

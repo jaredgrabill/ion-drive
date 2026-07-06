@@ -6,12 +6,14 @@
  * These tables are the source of truth for the runtime schema state.
  */
 
-import type { Kysely } from 'kysely';
+import { type Kysely, sql } from 'kysely';
 import type { SystemDatabase } from '../db/types.js';
 
 /**
  * Bootstraps all Ion Drive system tables if they don't already exist.
- * Safe to call multiple times — uses CREATE TABLE IF NOT EXISTS.
+ * Safe to call multiple times — uses CREATE TABLE IF NOT EXISTS, and
+ * `migrateSystemTables` upgrades pre-existing tables with columns added in
+ * later phases (ADD COLUMN IF NOT EXISTS).
  */
 export async function bootstrapSystemTables(db: Kysely<SystemDatabase>): Promise<void> {
   // Ensure uuid-ossp extension is available for gen_random_uuid()
@@ -24,6 +26,7 @@ export async function bootstrapSystemTables(db: Kysely<SystemDatabase>): Promise
     .addColumn('description', 'text')
     .addColumn('table_name', 'varchar(255)', (col) => col.notNull().unique())
     .addColumn('is_system', 'boolean', (col) => col.notNull().defaultTo(false))
+    .addColumn('managed_by', 'varchar(128)', (col) => col.notNull().defaultTo('user'))
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(db.fn('now')))
     .addColumn('updated_at', 'timestamptz', (col) => col.notNull().defaultTo(db.fn('now')))
     .execute();
@@ -47,6 +50,9 @@ export async function bootstrapSystemTables(db: Kysely<SystemDatabase>): Promise
     .addColumn('default_value', 'text')
     .addColumn('constraints', 'jsonb')
     .addColumn('sort_order', 'integer', (col) => col.notNull().defaultTo(0))
+    .addColumn('description', 'text')
+    .addColumn('ui_options', 'jsonb')
+    .addColumn('managed_by', 'varchar(128)', (col) => col.notNull().defaultTo('user'))
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(db.fn('now')))
     .addColumn('updated_at', 'timestamptz', (col) => col.notNull().defaultTo(db.fn('now')))
     .execute();
@@ -113,6 +119,31 @@ export async function bootstrapSystemTables(db: Kysely<SystemDatabase>): Promise
     .addColumn('is_auto', 'boolean', (col) => col.notNull().defaultTo(false))
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(db.fn('now')))
     .execute();
+
+  await migrateSystemTables(db);
+}
+
+/**
+ * Upgrades system tables created by earlier phases with columns added later.
+ * Every statement is `ADD COLUMN IF NOT EXISTS`, so this is a no-op on fresh
+ * installs (the CREATE TABLE definitions above already include the columns).
+ *
+ * Phase 10 additions: field `description`/`ui_options` (thin metadata) and
+ * `managed_by` provenance on both objects and fields (ADR-017).
+ */
+async function migrateSystemTables(db: Kysely<SystemDatabase>): Promise<void> {
+  await sql`ALTER TABLE "_ion_objects" ADD COLUMN IF NOT EXISTS "managed_by" VARCHAR(128) NOT NULL DEFAULT 'user'`.execute(
+    db,
+  );
+  await sql`ALTER TABLE "_ion_fields" ADD COLUMN IF NOT EXISTS "description" TEXT`.execute(db);
+  await sql`ALTER TABLE "_ion_fields" ADD COLUMN IF NOT EXISTS "ui_options" JSONB`.execute(db);
+  await sql`ALTER TABLE "_ion_fields" ADD COLUMN IF NOT EXISTS "managed_by" VARCHAR(128) NOT NULL DEFAULT 'user'`.execute(
+    db,
+  );
+  // Pre-Phase-10 rows: platform-internal fields are 'system'-managed.
+  await sql`UPDATE "_ion_fields" SET "managed_by" = 'system' WHERE "is_system" = TRUE AND "managed_by" = 'user'`.execute(
+    db,
+  );
 }
 
 /**

@@ -17,8 +17,20 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { DataService } from '../data/data-service.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
-import type { ColumnTypeName } from '../schema/types.js';
+import type { ColumnTypeName, FieldConstraints } from '../schema/types.js';
 import { COLUMN_TYPES } from '../schema/types.js';
+
+/** Field constraints as an MCP tool argument (mirrors FieldConstraints). */
+const constraintsShape = z
+  .object({
+    min: z.number().optional().describe('Minimum value (numbers) or length (text)'),
+    max: z.number().optional().describe('Maximum value (numbers) or length (text)'),
+    pattern: z.string().optional().describe('POSIX regex the value must match'),
+    enumValues: z.array(z.string()).optional().describe('Allowed values (select types)'),
+    message: z.string().optional().describe('Custom validation message shown to API callers'),
+  })
+  .optional()
+  .describe('Validation rules — enforced as PostgreSQL CHECK constraints');
 
 export interface McpServerOptions {
   schemaManager: SchemaManager;
@@ -49,7 +61,17 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       fieldCount: obj.fields.length,
       fields: obj.fields
         .filter((f) => !f.isSystem)
-        .map((f) => `${f.name} (${f.columnType}${f.isRequired ? ', required' : ''})`),
+        .map((f) => {
+          const notes = [
+            f.columnType,
+            f.isRequired ? 'required' : null,
+            f.isUnique ? 'unique' : null,
+            f.constraints?.enumValues ? `one of: ${f.constraints.enumValues.join('|')}` : null,
+            f.constraints?.min !== undefined ? `min ${f.constraints.min}` : null,
+            f.constraints?.max !== undefined ? `max ${f.constraints.max}` : null,
+          ].filter(Boolean);
+          return `${f.name} (${notes.join(', ')})${f.description ? ` — ${f.description}` : ''}`;
+        }),
     }));
 
     return {
@@ -132,6 +154,8 @@ export function createMcpServer(options: McpServerOptions): McpServer {
             is_unique: z.boolean().optional().describe('Whether the field must be unique'),
             is_indexed: z.boolean().optional().describe('Whether to create an index'),
             default_value: z.string().optional().describe('SQL default value expression'),
+            description: z.string().optional().describe('What this field holds (for agents/docs)'),
+            constraints: constraintsShape,
           }),
         )
         .describe('Field definitions'),
@@ -151,6 +175,8 @@ export function createMcpServer(options: McpServerOptions): McpServer {
           isUnique: f.is_unique,
           isIndexed: f.is_indexed,
           defaultValue: f.default_value,
+          description: f.description,
+          constraints: f.constraints as FieldConstraints | undefined,
         })),
       });
 
@@ -195,6 +221,8 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       is_required: z.boolean().optional().describe('Whether the field is required'),
       is_unique: z.boolean().optional().describe('Whether the field must be unique'),
       is_indexed: z.boolean().optional().describe('Whether to create an index'),
+      description: z.string().optional().describe('What this field holds (for agents/docs)'),
+      constraints: constraintsShape,
     },
     async ({
       object_name,
@@ -204,6 +232,8 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       is_required,
       is_unique,
       is_indexed,
+      description,
+      constraints,
     }) => {
       const result = await schemaManager.addField(object_name, {
         name,
@@ -213,6 +243,8 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         isRequired: is_required,
         isUnique: is_unique,
         isIndexed: is_indexed,
+        description,
+        constraints: constraints as FieldConstraints | undefined,
       });
 
       if (!result.success) {
@@ -230,6 +262,66 @@ export function createMcpServer(options: McpServerOptions): McpServer {
             text: `Field "${name}" added to "${object_name}" successfully.`,
           },
         ],
+      };
+    },
+  );
+
+  server.tool(
+    'modify_field',
+    'Modify an existing field: rename, change type, toggle required/unique/indexed, set default, or change validation constraints. Changes are validated against existing data first (e.g. narrowing a type checks current values; making a field required needs a backfill_value if NULLs exist). Use dry_run to preview the SQL and warnings without applying. Fields owned by a building block reject structural changes unless force is set.',
+    {
+      object_name: z.string().describe('Name of the data object'),
+      field_name: z.string().describe('Current name of the field to modify'),
+      new_name: z.string().optional().describe('Rename the field (changes the API name)'),
+      display_name: z.string().optional().describe('New display name'),
+      description: z.string().optional().describe('New field description'),
+      column_type: z
+        .string()
+        .optional()
+        .describe(
+          `Change the column type (validated for compatibility): ${Object.keys(COLUMN_TYPES).join(', ')}`,
+        ),
+      is_required: z.boolean().optional().describe('Toggle NOT NULL'),
+      is_unique: z.boolean().optional().describe('Toggle uniqueness (pre-checks duplicates)'),
+      is_indexed: z.boolean().optional().describe('Toggle index'),
+      default_value: z.string().nullable().optional().describe('Set (or null to clear) default'),
+      constraints: constraintsShape,
+      backfill_value: z
+        .string()
+        .optional()
+        .describe('Value written into existing NULL rows when setting is_required'),
+      dry_run: z.boolean().optional().describe('Preview only — return SQL + warnings'),
+      force: z.boolean().optional().describe('Override block contract protection'),
+    },
+    async (args) => {
+      const result = await schemaManager.modifyField(
+        args.object_name,
+        args.field_name,
+        {
+          name: args.new_name,
+          displayName: args.display_name,
+          description: args.description,
+          columnType: args.column_type as ColumnTypeName | undefined,
+          isRequired: args.is_required,
+          isUnique: args.is_unique,
+          isIndexed: args.is_indexed,
+          defaultValue: args.default_value,
+          constraints: args.constraints as FieldConstraints | undefined,
+          backfillValue: args.backfill_value,
+        },
+        { dryRun: args.dry_run, force: args.force },
+      );
+
+      const summary = {
+        success: result.success,
+        dryRun: args.dry_run ?? false,
+        sql: result.preview.sqlStatements,
+        warnings: result.preview.warnings.map((w) => w.message),
+        errors: result.preview.errors.map((e) => e.message),
+      };
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(summary, null, 2) }],
+        isError: !result.success && !args.dry_run,
       };
     },
   );

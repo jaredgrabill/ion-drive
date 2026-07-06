@@ -113,7 +113,7 @@ export class BlockInstaller {
       report.objectsCreated.push(obj.name);
       if (dryRun) continue;
 
-      const result = await schemaManager.createObject(toDataObjectDefinition(obj));
+      const result = await schemaManager.createObject(toDataObjectDefinition(obj, manifest.name));
       if (!result.success) {
         const detail = result.preview.errors.map((e) => e.message).join('; ');
         throw new BlockInstallError(
@@ -140,7 +140,9 @@ export class BlockInstaller {
       report.relationshipsCreated.push(rel.name);
       if (dryRun) continue;
 
-      const result = await schemaManager.addRelationship(toRelationshipDefinition(rel));
+      const result = await schemaManager.addRelationship(
+        toRelationshipDefinition(rel, manifest.name),
+      );
       if (!result.success) {
         const detail = result.preview.errors.map((e) => e.message).join('; ');
         throw new BlockInstallError(

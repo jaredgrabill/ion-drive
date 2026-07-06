@@ -21,6 +21,12 @@ import { devCommand } from './commands/dev.js';
 import { initCommand } from './commands/init.js';
 import { listCommand } from './commands/list.js';
 import { removeCommand } from './commands/remove.js';
+import {
+  schemaDiffCommand,
+  schemaDoctorCommand,
+  schemaPullCommand,
+  schemaPushCommand,
+} from './commands/schema.js';
 import { banner, c, log, sym } from './ui.js';
 
 const program = new Command();
@@ -80,6 +86,36 @@ program
   .description('Start the Ion Drive development server')
   .option('-p, --port <port>', 'Port to run the server on')
   .action((options) => devCommand(options));
+
+const schema = program
+  .command('schema')
+  .description('Schema sync & drift tools (pull/diff/push/doctor)');
+
+schema
+  .command('pull')
+  .description('Write the server schema snapshot to ion/schema.json')
+  .action(() => schemaPullCommand());
+
+schema
+  .command('diff')
+  .description('Show what applying the local snapshot would change')
+  .option('--prune', 'Also plan removal of fields/objects absent from the snapshot')
+  .action((options) => schemaDiffCommand(options));
+
+schema
+  .command('push')
+  .description('Apply the local snapshot to the server (preview + confirm)')
+  .option('-y, --yes', 'Skip the confirmation prompt')
+  .option('--prune', 'Also remove fields/objects absent from the snapshot (destructive)')
+  .option('-f, --force', 'Override block contract protection on modified fields')
+  .action((options) => schemaPushCommand(options));
+
+schema
+  .command('doctor')
+  .description('Diagnose drift between the live database and Ion Drive metadata')
+  .option('--adopt <key>', 'Adopt an unmanaged table or table.column into metadata')
+  .option('--ignore <key>', 'Silence a finding (persisted allowlist)')
+  .action((options) => schemaDoctorCommand(options));
 
 program.parseAsync().catch((err) => {
   log.error(err instanceof Error ? err.message : String(err));

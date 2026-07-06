@@ -133,4 +133,90 @@ export class IonApiClient {
     const qs = opts.dropData ? '?dropData=true' : '';
     return this.request('DELETE', `/api/v1/blocks/${encodeURIComponent(name)}${qs}`);
   }
+
+  // --- Schema snapshot & drift doctor (Phase 10) ---
+
+  /** Full declarative schema snapshot from the server. */
+  pullSnapshot(): Promise<SchemaSnapshotWire> {
+    return this.request('GET', '/api/v1/schema/snapshot');
+  }
+
+  /** Diffs a snapshot against the server without applying (dryRun). */
+  diffSnapshot(
+    snapshot: SchemaSnapshotWire,
+    opts: { prune?: boolean } = {},
+  ): Promise<{ changes: SnapshotChange[]; changeCount: number }> {
+    const params = new URLSearchParams({ dryRun: 'true' });
+    if (opts.prune) params.set('prune', 'true');
+    return this.request('POST', `/api/v1/schema/snapshot?${params}`, snapshot);
+  }
+
+  /** Applies a snapshot to the server through the validated schema pipeline. */
+  pushSnapshot(
+    snapshot: SchemaSnapshotWire,
+    opts: { prune?: boolean; force?: boolean } = {},
+  ): Promise<{ results: SnapshotApplyOutcome[]; applied: number; failed: number }> {
+    const params = new URLSearchParams();
+    if (opts.prune) params.set('prune', 'true');
+    if (opts.force) params.set('force', 'true');
+    const qs = params.toString() ? `?${params}` : '';
+    return this.request('POST', `/api/v1/schema/snapshot${qs}`, snapshot);
+  }
+
+  /** Runs the schema drift doctor. */
+  doctor(): Promise<DoctorReportWire> {
+    return this.request('GET', '/api/v1/schema/doctor');
+  }
+
+  /** Adopts an unmanaged table/column into metadata. */
+  adopt(table: string, column?: string): Promise<unknown> {
+    return this.request('POST', '/api/v1/schema/doctor/adopt', { table, column });
+  }
+
+  /** Silences a doctor finding via the persisted allowlist. */
+  ignoreFinding(key: string): Promise<unknown> {
+    return this.request('POST', '/api/v1/schema/doctor/ignore', { key });
+  }
+}
+
+// --- Wire types for the Phase 10 schema surface ---
+
+/** Opaque snapshot payload — the CLI round-trips it without interpreting. */
+export type SchemaSnapshotWire = Record<string, unknown> & {
+  formatVersion: number;
+  objects: unknown[];
+  relationships: unknown[];
+};
+
+export interface SnapshotChange {
+  kind: string;
+  objectName: string;
+  fieldName?: string;
+  relationshipName?: string;
+  summary: string;
+}
+
+export interface SnapshotApplyOutcome {
+  entry: SnapshotChange;
+  success: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface DoctorFindingWire {
+  kind: string;
+  severity: 'info' | 'warning' | 'critical';
+  table: string;
+  column?: string;
+  objectName?: string;
+  detail: string;
+  suggestedType?: string;
+  ignoreKey: string;
+}
+
+export interface DoctorReportWire {
+  healthy: boolean;
+  findings: DoctorFindingWire[];
+  ignored: string[];
+  checkedAt: string;
 }

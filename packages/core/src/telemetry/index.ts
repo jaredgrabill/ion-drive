@@ -22,3 +22,13 @@ export {
 } from './metrics.js';
 export { createOtelLogStream } from './log-bridge.js';
 export { ION_ATTR, surfaceForPath } from './span-attributes.js';
+export { LogBuffer, createLogBufferStream } from './log-buffer.js';
+export type { LogEntry, LogLevel, LogQuery } from './log-buffer.js';
+export { TrafficStats, trafficStats } from './traffic-stats.js';
+export type {
+  ErrorEntry,
+  TrafficPeriod,
+  TrafficPoint,
+  TrafficSample,
+  TrafficSummary,
+} from './traffic-stats.js';

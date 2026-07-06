@@ -156,13 +156,17 @@ export function registerDataRoutes(options: DataRoutesOptions): FastifyPluginCal
     });
 
     // --- GET BY ID ---
-    fastify.get<{ Params: { object: string; id: string } }>(
+    fastify.get<{ Params: { object: string; id: string }; Querystring: { expand?: string } }>(
       '/:object/:id',
       async (request, reply) => {
         const obj = resolveObject(request.params.object, reply);
         if (!obj) return reply;
         try {
-          const result = await dataService.getById(obj.name, request.params.id);
+          const expand = request.query.expand
+            ?.split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const result = await dataService.getById(obj.name, request.params.id, { expand });
           if (!result) return sendRecordNotFound(reply, obj, request.params.id);
           return result;
         } catch (err) {

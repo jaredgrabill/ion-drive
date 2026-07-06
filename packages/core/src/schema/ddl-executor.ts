@@ -11,6 +11,11 @@
  */
 
 import { type Kysely, sql } from 'kysely';
+import {
+  type CheckConstraintSpec,
+  buildCheckConstraints,
+  checkConstraintPrefix,
+} from './check-constraints.js';
 import { COLUMN_TYPES, SYSTEM_FIELDS } from './types.js';
 import type { ColumnTypeName, DataObjectDefinition, FieldDefinition } from './types.js';
 
@@ -92,6 +97,11 @@ export class DdlExecutor {
       }
     }
 
+    // Enforce field constraints as CHECK constraints (Phase 10, ADR-017 rule 1)
+    for (const field of definition.fields) {
+      statements.push(...(await this.addCheckConstraints(definition.tableName, field)));
+    }
+
     // Create updated_at trigger
     await this.createUpdatedAtTrigger(definition.tableName);
     statements.push(`CREATE TRIGGER update_updated_at ON "${definition.tableName}"`);
@@ -142,6 +152,8 @@ export class DdlExecutor {
       statements.push(`CREATE INDEX "${indexName}" ON "${tableName}" ("${field.columnName}")`);
     }
 
+    statements.push(...(await this.addCheckConstraints(tableName, field)));
+
     return statements;
   }
 
@@ -161,6 +173,231 @@ export class DdlExecutor {
     await this.db.schema.alterTable(tableName).renameColumn(oldName, newName).execute();
 
     return [`ALTER TABLE "${tableName}" RENAME COLUMN "${oldName}" TO "${newName}"`];
+  }
+
+  // -------------------------------------------------------------------------
+  // Column modification (Phase 10)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Changes a column's type. `usingCast` (e.g. `::BIGINT`) is appended as a
+   * `USING` expression when the conversion has no assignment cast; when
+   * omitted, Postgres applies its own coercion and errors on lossy values —
+   * a deliberate backstop behind the validator's pre-checks.
+   */
+  async alterColumnType(
+    tableName: string,
+    columnName: string,
+    targetPgType: string,
+    usingCast?: string,
+  ): Promise<string[]> {
+    const using = usingCast ? ` USING "${columnName}"${usingCast}` : '';
+    const statement = `ALTER TABLE "${tableName}" ALTER COLUMN "${columnName}" TYPE ${targetPgType}${using}`;
+    await sql.raw(statement).execute(this.db);
+    return [statement];
+  }
+
+  /** Sets (or replaces) a column's DEFAULT expression. */
+  async setColumnDefault(
+    tableName: string,
+    columnName: string,
+    defaultValue: string,
+  ): Promise<string[]> {
+    const rendered = renderDefaultExpression(defaultValue);
+    const statement = `ALTER TABLE "${tableName}" ALTER COLUMN "${columnName}" SET DEFAULT ${rendered}`;
+    await sql.raw(statement).execute(this.db);
+    return [statement];
+  }
+
+  /** Clears a column's DEFAULT expression. */
+  async dropColumnDefault(tableName: string, columnName: string): Promise<string[]> {
+    const statement = `ALTER TABLE "${tableName}" ALTER COLUMN "${columnName}" DROP DEFAULT`;
+    await sql.raw(statement).execute(this.db);
+    return [statement];
+  }
+
+  /**
+   * Makes a column NOT NULL. When `backfillValue` is provided, existing NULL
+   * rows are first updated to it (rendered like a DEFAULT expression) so the
+   * constraint can be applied.
+   */
+  async setNotNull(
+    tableName: string,
+    columnName: string,
+    backfillValue?: string,
+  ): Promise<string[]> {
+    const statements: string[] = [];
+    if (backfillValue !== undefined) {
+      const rendered = renderDefaultExpression(backfillValue);
+      const update = `UPDATE "${tableName}" SET "${columnName}" = ${rendered} WHERE "${columnName}" IS NULL`;
+      await sql.raw(update).execute(this.db);
+      statements.push(update);
+    }
+    const alter = `ALTER TABLE "${tableName}" ALTER COLUMN "${columnName}" SET NOT NULL`;
+    await sql.raw(alter).execute(this.db);
+    statements.push(alter);
+    return statements;
+  }
+
+  /** Removes a column's NOT NULL constraint. */
+  async dropNotNull(tableName: string, columnName: string): Promise<string[]> {
+    const statement = `ALTER TABLE "${tableName}" ALTER COLUMN "${columnName}" DROP NOT NULL`;
+    await sql.raw(statement).execute(this.db);
+    return [statement];
+  }
+
+  /** Adds a named UNIQUE constraint on a single column. */
+  async addUniqueConstraint(tableName: string, columnName: string): Promise<string[]> {
+    const constraintName = `ion_uq_${tableName}_${columnName}`;
+    const statement = `ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" UNIQUE ("${columnName}")`;
+    await sql.raw(statement).execute(this.db);
+    return [statement];
+  }
+
+  /**
+   * Drops the UNIQUE constraint covering exactly this column, whatever it was
+   * named (inline `col.unique()` uses PG's default `<table>_<col>_key`; ours
+   * use `ion_uq_*`). No-op if none exists.
+   */
+  async dropUniqueConstraint(tableName: string, columnName: string): Promise<string[]> {
+    const name = await this.findUniqueConstraint(tableName, columnName);
+    if (!name) return [];
+    const statement = `ALTER TABLE "${tableName}" DROP CONSTRAINT "${name}"`;
+    await sql.raw(statement).execute(this.db);
+    return [statement];
+  }
+
+  /** Finds the name of a single-column UNIQUE constraint, if any. */
+  async findUniqueConstraint(tableName: string, columnName: string): Promise<string | null> {
+    const result = await sql<{ conname: string }>`
+      SELECT con.conname
+      FROM pg_constraint con
+      JOIN pg_class rel ON rel.oid = con.conrelid
+      JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+      WHERE nsp.nspname = 'public'
+        AND rel.relname = ${tableName}
+        AND con.contype = 'u'
+        AND con.conkey = (
+          SELECT ARRAY[attnum]::smallint[] FROM pg_attribute
+          WHERE attrelid = rel.oid AND attname = ${columnName}
+        )
+      LIMIT 1
+    `.execute(this.db);
+    return result.rows[0]?.conname ?? null;
+  }
+
+  // -------------------------------------------------------------------------
+  // CHECK constraints (Phase 10 — field constraints enforced in Postgres)
+  // -------------------------------------------------------------------------
+
+  /** Adds every CHECK constraint a field's constraints imply. */
+  async addCheckConstraints(tableName: string, field: FieldDefinition): Promise<string[]> {
+    const specs = buildCheckConstraints(
+      tableName,
+      field.columnName,
+      field.columnType,
+      field.constraints ?? undefined,
+    );
+    const statements: string[] = [];
+    for (const spec of specs) {
+      const statement = `ALTER TABLE "${tableName}" ADD CONSTRAINT "${spec.name}" CHECK (${spec.expression})`;
+      await sql.raw(statement).execute(this.db);
+      statements.push(statement);
+    }
+    return statements;
+  }
+
+  /** Drops every Ion-managed CHECK constraint on a column (by name prefix). */
+  async dropCheckConstraints(tableName: string, columnName: string): Promise<string[]> {
+    const prefix = checkConstraintPrefix(tableName, columnName);
+    const existing = await sql<{ conname: string }>`
+      SELECT con.conname
+      FROM pg_constraint con
+      JOIN pg_class rel ON rel.oid = con.conrelid
+      JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+      WHERE nsp.nspname = 'public'
+        AND rel.relname = ${tableName}
+        AND con.contype = 'c'
+        AND con.conname LIKE ${`${prefix}%`}
+    `.execute(this.db);
+
+    const statements: string[] = [];
+    for (const row of existing.rows) {
+      const statement = `ALTER TABLE "${tableName}" DROP CONSTRAINT "${row.conname}"`;
+      await sql.raw(statement).execute(this.db);
+      statements.push(statement);
+    }
+    return statements;
+  }
+
+  /**
+   * Number of existing rows that would violate a proposed CHECK expression.
+   * `IS FALSE` deliberately lets NULL evaluations pass, matching CHECK
+   * semantics.
+   */
+  async countCheckViolations(tableName: string, spec: CheckConstraintSpec): Promise<number> {
+    const result = await sql<{ count: string }>`
+      SELECT COUNT(*) AS count FROM ${sql.table(tableName)}
+      WHERE (${sql.raw(spec.expression)}) IS FALSE
+    `.execute(this.db);
+    return Number.parseInt(result.rows[0]?.count ?? '0', 10);
+  }
+
+  // -------------------------------------------------------------------------
+  // Data pre-checks (used by the ChangeValidator before risky modifications)
+  // -------------------------------------------------------------------------
+
+  /** Longest existing value (in characters) of a column, rendered as text. */
+  async getMaxTextLength(tableName: string, columnName: string): Promise<number> {
+    const result = await sql<{ max_len: number | null }>`
+      SELECT MAX(CHAR_LENGTH(${sql.ref(columnName)}::text)) AS max_len
+      FROM ${sql.table(tableName)}
+    `.execute(this.db);
+    return result.rows[0]?.max_len ?? 0;
+  }
+
+  /** Number of rows whose numeric value falls outside [min, max]. */
+  async countOutOfRange(
+    tableName: string,
+    columnName: string,
+    min: number,
+    max: number,
+  ): Promise<number> {
+    const result = await sql<{ count: string }>`
+      SELECT COUNT(*) AS count FROM ${sql.table(tableName)}
+      WHERE ${sql.ref(columnName)} < ${min} OR ${sql.ref(columnName)} > ${max}
+    `.execute(this.db);
+    return Number.parseInt(result.rows[0]?.count ?? '0', 10);
+  }
+
+  /** Number of rows where the column is NULL. */
+  async countNulls(tableName: string, columnName: string): Promise<number> {
+    const result = await sql<{ count: string }>`
+      SELECT COUNT(*) AS count FROM ${sql.table(tableName)}
+      WHERE ${sql.ref(columnName)} IS NULL
+    `.execute(this.db);
+    return Number.parseInt(result.rows[0]?.count ?? '0', 10);
+  }
+
+  /** Sample of duplicated values (for unique-toggle preview errors). */
+  async findDuplicateValues(
+    tableName: string,
+    columnName: string,
+    limit = 5,
+  ): Promise<{ value: string; count: number }[]> {
+    const result = await sql<{ value: string | null; count: string }>`
+      SELECT ${sql.ref(columnName)}::text AS value, COUNT(*) AS count
+      FROM ${sql.table(tableName)}
+      WHERE ${sql.ref(columnName)} IS NOT NULL
+      GROUP BY ${sql.ref(columnName)}
+      HAVING COUNT(*) > 1
+      ORDER BY COUNT(*) DESC
+      LIMIT ${limit}
+    `.execute(this.db);
+    return result.rows.map((r) => ({
+      value: r.value ?? 'NULL',
+      count: Number.parseInt(r.count, 10),
+    }));
   }
 
   /**
@@ -280,6 +517,37 @@ export class DdlExecutor {
     `.execute(this.db);
 
     return result.rows[0]?.exists ?? false;
+  }
+
+  /**
+   * Describes a table's columns from the catalog (used by the drift doctor's
+   * adopt action to import unmanaged tables/columns into metadata).
+   */
+  async describeTable(tableName: string): Promise<
+    {
+      column_name: string;
+      data_type: string;
+      udt_name: string;
+      character_maximum_length: number | null;
+      is_nullable: string;
+      column_default: string | null;
+    }[]
+  > {
+    const result = await sql<{
+      column_name: string;
+      data_type: string;
+      udt_name: string;
+      character_maximum_length: number | null;
+      is_nullable: string;
+      column_default: string | null;
+    }>`
+      SELECT column_name, data_type, udt_name, character_maximum_length,
+             is_nullable, column_default
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = ${tableName}
+      ORDER BY ordinal_position
+    `.execute(this.db);
+    return result.rows;
   }
 
   /**

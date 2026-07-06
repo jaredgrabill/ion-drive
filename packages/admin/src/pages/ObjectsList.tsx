@@ -1,18 +1,30 @@
+/**
+ * ObjectsList — data-object gallery + creation dialog.
+ *
+ * Cards link to ObjectDetail. The create dialog composes name/display/
+ * description plus draft fields (name, type, required Checkbox). The
+ * command palette's "Create new object" action sets a sessionStorage flag
+ * this page reads on mount to auto-open the dialog. Mutations toast.
+ */
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { Plus, Trash2 } from 'lucide-react';
+import { Database, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { CREATE_OBJECT_FLAG } from '../components/layout/command-palette';
 import {
   Badge,
   Button,
   Card,
   CardContent,
+  Checkbox,
   Dialog,
   EmptyState,
   Input,
   Label,
   Select,
-  Spinner,
+  Skeleton,
+  toast,
 } from '../components/ui';
 import { ApiError, api } from '../lib/api';
 import type { FieldDefinition } from '../lib/types';
@@ -27,7 +39,11 @@ export function ObjectsList() {
   const queryClient = useQueryClient();
   const objects = useQuery({ queryKey: ['objects'], queryFn: () => api.listObjects() });
   const columnTypes = useQuery({ queryKey: ['column-types'], queryFn: () => api.columnTypes() });
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => {
+    const flagged = sessionStorage.getItem(CREATE_OBJECT_FLAG) === '1';
+    if (flagged) sessionStorage.removeItem(CREATE_OBJECT_FLAG);
+    return flagged;
+  });
 
   const userObjects = (objects.data ?? []).filter((o) => !o.isSystem);
 
@@ -40,17 +56,28 @@ export function ObjectsList() {
             Define tables, fields, and relationships at runtime.
           </p>
         </div>
-        <Button onClick={() => setOpen(true)}>
+        <Button onClick={() => setOpen(true)} className="gap-1.5">
           <Plus className="h-4 w-4" /> New Object
         </Button>
       </div>
 
       {objects.isLoading ? (
-        <Spinner />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-hidden>
+          {Array.from({ length: 6 }).map((_, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static placeholder
+            <Skeleton key={i} className="h-28 w-full" />
+          ))}
+        </div>
       ) : userObjects.length === 0 ? (
         <EmptyState
+          icon={<Database className="h-8 w-8" />}
           title="No data objects yet"
           hint="Create your first object to expose REST, GraphQL, and MCP endpoints."
+          action={
+            <Button size="sm" onClick={() => setOpen(true)}>
+              New Object
+            </Button>
+          }
         />
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -64,7 +91,9 @@ export function ObjectsList() {
                   </div>
                   <p className="mt-1 font-mono text-xs text-muted-foreground">{o.name}</p>
                   {o.description && (
-                    <p className="mt-2 text-sm text-muted-foreground">{o.description}</p>
+                    <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">
+                      {o.description}
+                    </p>
                   )}
                 </CardContent>
               </Card>
@@ -79,13 +108,17 @@ export function ObjectsList() {
           onClose={() => setOpen(false)}
           onCreated={() => {
             setOpen(false);
-            queryClient.invalidateQueries({ queryKey: ['objects'] });
+            toast.success('Object created — REST, GraphQL, and MCP endpoints are live');
+            void queryClient.invalidateQueries({ queryKey: ['objects'] });
           }}
         />
       )}
     </div>
   );
 }
+ObjectsList.displayName = 'ObjectsList';
+
+// --- Create dialog -----------------------------------------------------------
 
 function CreateObjectDialog({
   columnTypes,
@@ -121,10 +154,14 @@ function CreateObjectDialog({
       });
     },
     onSuccess: onCreated,
+    onError: (error) =>
+      toast.error(
+        `Failed to create: ${error instanceof ApiError ? error.message : 'unexpected error'}`,
+      ),
   });
 
-  const updateField = (i: number, patch: Partial<DraftField>) =>
-    setFields((prev) => prev.map((f, idx) => (idx === i ? { ...f, ...patch } : f)));
+  const updateField = (index: number, patch: Partial<DraftField>) =>
+    setFields((prev) => prev.map((f, i) => (i === index ? { ...f, ...patch } : f)));
 
   return (
     <Dialog
@@ -145,16 +182,18 @@ function CreateObjectDialog({
       <div className="flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1.5">
-            <Label>Name (identifier)</Label>
+            <Label htmlFor="obj-name">Name (identifier)</Label>
             <Input
+              id="obj-name"
               value={name}
               onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
               placeholder="contacts"
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Display name</Label>
+            <Label htmlFor="obj-display">Display name</Label>
             <Input
+              id="obj-display"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Contacts"
@@ -162,8 +201,9 @@ function CreateObjectDialog({
           </div>
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label>Description</Label>
+          <Label htmlFor="obj-description">Description</Label>
           <Input
+            id="obj-description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Optional"
@@ -176,31 +216,34 @@ function CreateObjectDialog({
             <Button
               variant="ghost"
               size="sm"
+              className="gap-1.5"
               onClick={() =>
-                setFields((p) => [...p, { name: '', columnType: 'text', isRequired: false }])
+                setFields((prev) => [...prev, { name: '', columnType: 'text', isRequired: false }])
               }
             >
               <Plus className="h-3.5 w-3.5" /> Add field
             </Button>
           </div>
           <div className="flex flex-col gap-2">
-            {fields.map((f, i) => (
+            {fields.map((field, index) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: draft rows have no stable id
-              <div key={i} className="flex items-center gap-2">
+              <div key={index} className="flex items-center gap-2">
                 <Input
                   className="flex-1"
-                  value={f.name}
+                  value={field.name}
                   placeholder="field_name"
+                  aria-label="Field name"
                   onChange={(e) =>
-                    updateField(i, {
+                    updateField(index, {
                       name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
                     })
                   }
                 />
                 <Select
                   className="w-40"
-                  value={f.columnType}
-                  onChange={(e) => updateField(i, { columnType: e.target.value })}
+                  value={field.columnType}
+                  aria-label="Field type"
+                  onChange={(e) => updateField(index, { columnType: e.target.value })}
                 >
                   {columnTypes.map((t) => (
                     <option key={t} value={t}>
@@ -208,18 +251,19 @@ function CreateObjectDialog({
                     </option>
                   ))}
                 </Select>
-                <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={f.isRequired}
-                    onChange={(e) => updateField(i, { isRequired: e.target.checked })}
+                {/* biome-ignore lint/a11y/noLabelWithoutControl: wraps a Radix Checkbox (renders a button role=checkbox) */}
+                <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+                  <Checkbox
+                    checked={field.isRequired}
+                    onCheckedChange={(v) => updateField(index, { isRequired: v === true })}
+                    aria-label="Required"
                   />
                   req
                 </label>
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => setFields((p) => p.filter((_, idx) => idx !== i))}
+                  onClick={() => setFields((prev) => prev.filter((_, i) => i !== index))}
                   aria-label="Remove field"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -228,13 +272,8 @@ function CreateObjectDialog({
             ))}
           </div>
         </div>
-
-        {create.error && (
-          <p className="text-sm text-destructive">
-            {create.error instanceof ApiError ? create.error.message : 'Failed to create object'}
-          </p>
-        )}
       </div>
     </Dialog>
   );
 }
+CreateObjectDialog.displayName = 'CreateObjectDialog';

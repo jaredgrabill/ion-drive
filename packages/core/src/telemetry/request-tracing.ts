@@ -22,6 +22,7 @@ import {
   ION_ATTR,
   surfaceForPath,
 } from './span-attributes.js';
+import { trafficStats } from './traffic-stats.js';
 
 const TRACER_NAME = '@ionshift/ion-drive-core';
 
@@ -93,6 +94,14 @@ export function installRequestTracing(fastify: FastifyInstance): void {
       [ATTR_HTTP_ROUTE]: route,
       [ATTR_HTTP_RESPONSE_STATUS_CODE]: status,
       [ION_ATTR.SURFACE]: surface,
+    });
+    // Feed the in-process traffic aggregation (dashboard charts, /stats/*).
+    trafficStats.record({
+      durationMs,
+      statusCode: status,
+      surface,
+      method: request.method,
+      path,
     });
     hookDone();
   });

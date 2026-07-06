@@ -55,6 +55,9 @@ const fieldSchema = z
     defaultValue: z.string().nullish(),
     constraints: fieldConstraintsSchema.optional(),
     sortOrder: z.number().int().optional(),
+    description: z.string().max(2000).optional(),
+    /** Presentation-only UI metadata (control hint, enum colors, …). */
+    uiOptions: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -221,13 +224,21 @@ export interface BlockInstallReport {
 // Structural bridges to the schema/task engines
 // ---------------------------------------------------------------------------
 
-/** Converts a manifest object into the schema engine's DataObjectDefinition. */
-export function toDataObjectDefinition(obj: BlockObject): DataObjectDefinition {
+/**
+ * Converts a manifest object into the schema engine's DataObjectDefinition.
+ * When `blockName` is given, the object and every field it declares are
+ * stamped `block:<name>` — the provenance that powers contract protection
+ * (ADR-017). Pre-existing/skipped objects keep their original owner because
+ * the installer never re-creates them.
+ */
+export function toDataObjectDefinition(obj: BlockObject, blockName?: string): DataObjectDefinition {
+  const managedBy = blockName ? (`block:${blockName}` as const) : undefined;
   return {
     name: obj.name,
     displayName: obj.displayName,
     description: obj.description,
     tableName: obj.name,
+    managedBy,
     fields: obj.fields.map(
       (f): FieldDefinition => ({
         name: f.name,
@@ -240,13 +251,19 @@ export function toDataObjectDefinition(obj: BlockObject): DataObjectDefinition {
         defaultValue: f.defaultValue ?? undefined,
         constraints: f.constraints,
         sortOrder: f.sortOrder,
+        description: f.description,
+        uiOptions: f.uiOptions,
+        managedBy,
       }),
     ),
   };
 }
 
 /** Converts a manifest relationship into the schema engine's definition. */
-export function toRelationshipDefinition(rel: BlockRelationship): RelationshipDefinition {
+export function toRelationshipDefinition(
+  rel: BlockRelationship,
+  blockName?: string,
+): RelationshipDefinition {
   return {
     name: rel.name,
     displayName: rel.displayName,
@@ -254,6 +271,7 @@ export function toRelationshipDefinition(rel: BlockRelationship): RelationshipDe
     sourceObjectName: rel.sourceObjectName,
     targetObjectName: rel.targetObjectName,
     cascadeDelete: rel.cascadeDelete,
+    managedBy: blockName ? `block:${blockName}` : undefined,
   };
 }
 

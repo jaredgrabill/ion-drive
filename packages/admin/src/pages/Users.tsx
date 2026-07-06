@@ -1,24 +1,59 @@
+/**
+ * Users — account list with role assignment.
+ *
+ * Accounts are managed by the auth provider; this page assigns/unassigns
+ * roles. Removing a role goes through an AlertDialog; all mutations toast
+ * their outcome.
+ */
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Card, CardContent, Select, Spinner } from '../components/ui';
-import { api } from '../lib/api';
+import { X } from 'lucide-react';
+import { useState } from 'react';
+import {
+  AlertDialog,
+  Avatar,
+  Badge,
+  Card,
+  CardContent,
+  EmptyState,
+  Select,
+  Skeleton,
+  toast,
+} from '../components/ui';
+import { ApiError, api } from '../lib/api';
 
 export function Users() {
   const queryClient = useQueryClient();
   const users = useQuery({ queryKey: ['users'], queryFn: () => api.listUsers() });
   const roles = useQuery({ queryKey: ['roles'], queryFn: () => api.listRoles() });
+  const [removing, setRemoving] = useState<{ role: string; userId: string; email: string } | null>(
+    null,
+  );
 
   const assign = useMutation({
     mutationFn: ({ roleId, userId }: { roleId: string; userId: string }) =>
       api.assignRole(roleId, userId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => {
+      toast.success('Role assigned');
+      void queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (error) =>
+      toast.error(
+        `Failed to assign: ${error instanceof ApiError ? error.message : 'unexpected error'}`,
+      ),
   });
   const unassign = useMutation({
     mutationFn: ({ roleId, userId }: { roleId: string; userId: string }) =>
       api.unassignRole(roleId, userId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => {
+      toast.success('Role removed');
+      void queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (error) =>
+      toast.error(
+        `Failed to remove: ${error instanceof ApiError ? error.message : 'unexpected error'}`,
+      ),
   });
-
-  if (users.isLoading) return <Spinner />;
 
   const roleByName = new Map((roles.data ?? []).map((r) => [r.name, r.id]));
 
@@ -31,77 +66,102 @@ export function Users() {
         </p>
       </div>
 
-      <Card>
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead className="border-b border-border text-left text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2 font-medium">User</th>
-                <th className="px-4 py-2 font-medium">Roles</th>
-                <th className="px-4 py-2 font-medium">Add role</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(users.data ?? []).map((u) => (
-                <tr key={u.id} className="border-b border-border/60">
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{u.name || u.email}</div>
-                    <div className="text-xs text-muted-foreground">{u.email}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {u.roles.length === 0 && (
-                        <span className="text-xs text-muted-foreground">none</span>
-                      )}
-                      {u.roles.map((r) => (
-                        <button
-                          key={r}
-                          type="button"
-                          title="Click to remove"
-                          onClick={() => {
-                            const roleId = roleByName.get(r);
-                            if (roleId && confirm(`Remove role "${r}" from ${u.email}?`)) {
-                              unassign.mutate({ roleId, userId: u.id });
-                            }
-                          }}
-                        >
-                          <Badge
-                            variant="secondary"
-                            className="cursor-pointer hover:bg-destructive/15"
-                          >
-                            {r} ✕
-                          </Badge>
-                        </button>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Select
-                      className="w-40"
-                      value=""
-                      onChange={(e) => {
-                        if (e.target.value) assign.mutate({ roleId: e.target.value, userId: u.id });
-                      }}
-                    >
-                      <option value="">Add role…</option>
-                      {(roles.data ?? [])
-                        .filter((r) => !u.roles.includes(r.name))
-                        .map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.name}
-                          </option>
-                        ))}
-                    </Select>
-                  </td>
+      {users.isLoading ? (
+        <Skeleton className="h-48 w-full" aria-hidden />
+      ) : (users.data ?? []).length === 0 ? (
+        <EmptyState title="No users yet" hint="The first account to sign up becomes an admin." />
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <table className="w-full text-sm">
+              <thead className="border-b border-border text-left text-xs text-muted-foreground">
+                <tr>
+                  <th scope="col" className="px-4 py-2 font-medium">
+                    User
+                  </th>
+                  <th scope="col" className="px-4 py-2 font-medium">
+                    Roles
+                  </th>
+                  <th scope="col" className="px-4 py-2 font-medium">
+                    Add role
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
-      {(users.data ?? []).length === 0 && (
-        <p className="mt-4 text-sm text-muted-foreground">No users yet.</p>
+              </thead>
+              <tbody>
+                {(users.data ?? []).map((user) => (
+                  <tr key={user.id} className="border-b border-border/60 last:border-0">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <Avatar name={user.name || user.email} />
+                        <div>
+                          <div className="font-medium">{user.name || user.email}</div>
+                          <div className="text-xs text-muted-foreground">{user.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {user.roles.length === 0 && (
+                          <span className="text-xs text-muted-foreground">none</span>
+                        )}
+                        {user.roles.map((role) => (
+                          <Badge key={role} variant="secondary" className="gap-1 pr-1">
+                            {role}
+                            <button
+                              type="button"
+                              aria-label={`Remove role ${role} from ${user.email}`}
+                              className="rounded-full p-0.5 hover:bg-destructive/20 hover:text-destructive"
+                              onClick={() =>
+                                setRemoving({ role, userId: user.id, email: user.email })
+                              }
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Select
+                        className="w-40"
+                        value=""
+                        aria-label={`Add role to ${user.email}`}
+                        onChange={(e) => {
+                          if (e.target.value)
+                            assign.mutate({ roleId: e.target.value, userId: user.id });
+                        }}
+                      >
+                        <option value="">Add role…</option>
+                        {(roles.data ?? [])
+                          .filter((r) => !user.roles.includes(r.name))
+                          .map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.name}
+                            </option>
+                          ))}
+                      </Select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
       )}
+
+      <AlertDialog
+        open={removing !== null}
+        onClose={() => setRemoving(null)}
+        title="Remove role"
+        description={`Remove role "${removing?.role ?? ''}" from ${removing?.email ?? ''}?`}
+        confirmLabel="Remove"
+        confirmVariant="destructive"
+        onConfirm={() => {
+          const roleId = removing ? roleByName.get(removing.role) : undefined;
+          if (removing && roleId) unassign.mutate({ roleId, userId: removing.userId });
+        }}
+      />
     </div>
   );
 }
+Users.displayName = 'Users';

@@ -52,6 +52,7 @@ export class MetadataStore {
         description: definition.description ?? null,
         table_name: definition.tableName,
         is_system: definition.isSystem ?? false,
+        managed_by: definition.managedBy ?? 'user',
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -104,21 +105,7 @@ export class MetadataStore {
   async createField(objectId: string, field: FieldDefinition): Promise<IonField> {
     return this.db
       .insertInto('_ion_fields')
-      .values({
-        object_id: objectId,
-        name: field.name,
-        display_name: field.displayName,
-        column_name: field.columnName,
-        column_type: field.columnType,
-        is_required: field.isRequired ?? false,
-        is_unique: field.isUnique ?? false,
-        is_indexed: field.isIndexed ?? false,
-        is_primary: field.isPrimary ?? false,
-        is_system: field.isSystem ?? false,
-        default_value: field.defaultValue ?? null,
-        constraints: field.constraints ? JSON.stringify(field.constraints) : null,
-        sort_order: field.sortOrder ?? 0,
-      })
+      .values(this.fieldInsertValues(objectId, field))
       .returningAll()
       .executeTakeFirstOrThrow();
   }
@@ -128,29 +115,43 @@ export class MetadataStore {
 
     return this.db
       .insertInto('_ion_fields')
-      .values(
-        fields.map((field) => ({
-          object_id: objectId,
-          name: field.name,
-          display_name: field.displayName,
-          column_name: field.columnName,
-          column_type: field.columnType,
-          is_required: field.isRequired ?? false,
-          is_unique: field.isUnique ?? false,
-          is_indexed: field.isIndexed ?? false,
-          is_primary: field.isPrimary ?? false,
-          is_system: field.isSystem ?? false,
-          default_value: field.defaultValue ?? null,
-          constraints: field.constraints ? JSON.stringify(field.constraints) : null,
-          sort_order: field.sortOrder ?? 0,
-        })),
-      )
+      .values(fields.map((field) => this.fieldInsertValues(objectId, field)))
       .returningAll()
       .execute();
   }
 
-  async updateField(fieldId: string, updates: Partial<FieldDefinition>): Promise<IonField> {
+  private fieldInsertValues(objectId: string, field: FieldDefinition) {
+    return {
+      object_id: objectId,
+      name: field.name,
+      display_name: field.displayName,
+      column_name: field.columnName,
+      column_type: field.columnType,
+      is_required: field.isRequired ?? false,
+      is_unique: field.isUnique ?? false,
+      is_indexed: field.isIndexed ?? false,
+      is_primary: field.isPrimary ?? false,
+      is_system: field.isSystem ?? false,
+      default_value: field.defaultValue ?? null,
+      constraints: field.constraints ? JSON.stringify(field.constraints) : null,
+      sort_order: field.sortOrder ?? 0,
+      description: field.description ?? null,
+      ui_options: field.uiOptions ? JSON.stringify(field.uiOptions) : null,
+      managed_by: field.managedBy ?? 'user',
+    };
+  }
+
+  async updateField(
+    fieldId: string,
+    updates: Omit<Partial<FieldDefinition>, 'constraints'> & {
+      /** Pass null to clear stored constraints. */
+      constraints?: FieldDefinition['constraints'] | null;
+    },
+  ): Promise<IonField> {
     const values: Record<string, unknown> = { updated_at: new Date() };
+    if (updates.name !== undefined) values.name = updates.name;
+    if (updates.columnName !== undefined) values.column_name = updates.columnName;
+    if (updates.columnType !== undefined) values.column_type = updates.columnType;
     if (updates.displayName !== undefined) values.display_name = updates.displayName;
     if (updates.isRequired !== undefined) values.is_required = updates.isRequired;
     if (updates.isUnique !== undefined) values.is_unique = updates.isUnique;
@@ -160,6 +161,11 @@ export class MetadataStore {
       values.constraints = updates.constraints ? JSON.stringify(updates.constraints) : null;
     }
     if (updates.sortOrder !== undefined) values.sort_order = updates.sortOrder;
+    if (updates.description !== undefined) values.description = updates.description;
+    if (updates.uiOptions !== undefined) {
+      values.ui_options = updates.uiOptions ? JSON.stringify(updates.uiOptions) : null;
+    }
+    if (updates.managedBy !== undefined) values.managed_by = updates.managedBy;
 
     return this.db
       .updateTable('_ion_fields')
@@ -197,6 +203,7 @@ export class MetadataStore {
     targetObjectId: string,
     sourceFieldId?: string,
     targetFieldId?: string,
+    junction?: { table: string; sourceColumn: string; targetColumn: string },
   ): Promise<IonRelationship> {
     return this.db
       .insertInto('_ion_relationships')
@@ -208,9 +215,9 @@ export class MetadataStore {
         target_object_id: targetObjectId,
         source_field_id: sourceFieldId ?? null,
         target_field_id: targetFieldId ?? null,
-        junction_table: null,
-        junction_source_column: null,
-        junction_target_column: null,
+        junction_table: junction?.table ?? null,
+        junction_source_column: junction?.sourceColumn ?? null,
+        junction_target_column: junction?.targetColumn ?? null,
         cascade_delete: rel.cascadeDelete ?? false,
       })
       .returningAll()
@@ -330,6 +337,7 @@ export class MetadataStore {
       description: obj.description ?? undefined,
       tableName: obj.table_name,
       isSystem: obj.is_system,
+      managedBy: obj.managed_by as DataObjectDefinition['managedBy'],
       fields: fields.map((f) => ({
         id: f.id,
         name: f.name,
@@ -344,6 +352,9 @@ export class MetadataStore {
         defaultValue: f.default_value,
         constraints: f.constraints as FieldDefinition['constraints'],
         sortOrder: f.sort_order,
+        description: f.description,
+        uiOptions: f.ui_options,
+        managedBy: f.managed_by as FieldDefinition['managedBy'],
       })),
       relationships: relationships.map((r) => ({
         id: r.id,
@@ -352,7 +363,13 @@ export class MetadataStore {
         type: r.type as RelationshipDefinition['type'],
         sourceObjectName: objectMap.get(r.source_object_id)?.name ?? '',
         targetObjectName: objectMap.get(r.target_object_id)?.name ?? '',
+        sourceFieldName: r.source_field_id
+          ? fields.find((f) => f.id === r.source_field_id)?.name
+          : undefined,
         cascadeDelete: r.cascade_delete,
+        junctionTable: r.junction_table ?? undefined,
+        junctionSourceColumn: r.junction_source_column ?? undefined,
+        junctionTargetColumn: r.junction_target_column ?? undefined,
       })),
     };
   }

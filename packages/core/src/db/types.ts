@@ -52,6 +52,8 @@ export interface IonObjectsTable {
   description: string | null;
   table_name: string;
   is_system: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Provenance: 'user' | 'system' | 'block:<name>' (Phase 10 / ADR-017). */
+  managed_by: ColumnType<string, string | undefined, string>;
   created_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
@@ -79,6 +81,12 @@ export interface IonFieldsTable {
   default_value: string | null;
   constraints: ColumnType<Record<string, unknown> | null, string | null, string | null>;
   sort_order: ColumnType<number, number | undefined, number>;
+  /** Human/agent-facing field description (Phase 10). */
+  description: string | null;
+  /** Presentation-only UI metadata bag (Phase 10; rule 2 of ADR-017). */
+  ui_options: ColumnType<Record<string, unknown> | null, string | null, string | null>;
+  /** Provenance: 'user' | 'system' | 'block:<name>' (Phase 10 / ADR-017). */
+  managed_by: ColumnType<string, string | undefined, string>;
   created_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }

@@ -19,11 +19,22 @@ export { COLUMN_TYPES, SYSTEM_FIELDS } from './schema/index.js';
 export type {
   DataObjectDefinition,
   FieldDefinition,
+  FieldConstraints,
+  FieldModification,
+  ManagedBy,
   RelationshipDefinition,
   ColumnTypeName,
   SchemaState,
   ChangePreview,
   ChangeSet,
+} from './schema/index.js';
+export { assessTypeChange, managedByBlock } from './schema/index.js';
+export { diffSnapshot, exportSnapshot, applySnapshot, SchemaDoctor } from './schema/index.js';
+export type {
+  SchemaSnapshot,
+  SnapshotDiffEntry,
+  DoctorFinding,
+  DoctorReport,
 } from './schema/index.js';
 
 // Data access
@@ -71,8 +82,21 @@ export {
   createOtelLogStream,
   recordSchemaChange,
   recordTaskRun,
+  LogBuffer,
+  createLogBufferStream,
+  TrafficStats,
 } from './telemetry/index.js';
-export type { TelemetryHandle } from './telemetry/index.js';
+export type {
+  TelemetryHandle,
+  LogEntry,
+  LogLevel,
+  LogQuery,
+  TrafficPeriod,
+  TrafficSummary,
+  ErrorEntry,
+} from './telemetry/index.js';
+export { registerStatsRoutes } from './api/stats-routes.js';
+export { registerLogRoutes } from './api/log-routes.js';
 
 // Scheduled tasks
 export {

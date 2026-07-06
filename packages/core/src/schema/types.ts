@@ -75,6 +75,25 @@ export interface ColumnTypeInfo {
 export type RelationshipType = 'one_to_one' | 'one_to_many' | 'many_to_one' | 'many_to_many';
 
 // ---------------------------------------------------------------------------
+// Provenance — who owns a schema element (Phase 10 / ADR-017)
+// ---------------------------------------------------------------------------
+
+/**
+ * Records where an object/field came from: created by a `user`, materialised
+ * by a building block (`block:<name>`), or `system` (platform-managed columns
+ * like id/created_at). Distinct from `isSystem`, which marks platform-internal
+ * elements; provenance drives contract protection (block-owned fields resist
+ * structural change via the API) and drift-doctor severity.
+ */
+export type ManagedBy = 'user' | 'system' | `block:${string}`;
+
+/** True when the provenance denotes a building block; returns the block name. */
+export function managedByBlock(managedBy: string | undefined): string | null {
+  if (managedBy?.startsWith('block:')) return managedBy.slice('block:'.length);
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Data Object Definition (domain model)
 // ---------------------------------------------------------------------------
 
@@ -85,6 +104,8 @@ export interface DataObjectDefinition {
   description?: string;
   tableName: string;
   isSystem?: boolean;
+  /** Provenance: 'user' (default), 'system', or 'block:<name>'. */
+  managedBy?: ManagedBy;
   fields: FieldDefinition[];
   relationships?: RelationshipDefinition[];
 }
@@ -103,7 +124,55 @@ export interface FieldDefinition {
   defaultValue?: string | null;
   constraints?: FieldConstraints;
   sortOrder?: number;
+  /** Human/agent-facing description, surfaced on OpenAPI/GraphQL/MCP. */
+  description?: string | null;
+  /**
+   * Presentation-only metadata (rule 2 of ADR-017): UI control hint, enum
+   * choice colors, rating scale, currency code, textarea rows, displayField
+   * for relation chips. The database never enforces anything in here.
+   */
+  uiOptions?: Record<string, unknown> | null;
+  /** Provenance: 'user' (default), 'system', or 'block:<name>'. */
+  managedBy?: ManagedBy;
 }
+
+/**
+ * A partial update to an existing field, applied by `SchemaManager.modifyField`.
+ * Structural keys (name/columnType/isRequired/isUnique/defaultValue/constraints)
+ * trigger DDL with safety pre-checks; presentation keys only touch metadata.
+ */
+export interface FieldModification {
+  /** Renames the field AND its column — changes the public API name. */
+  name?: string;
+  displayName?: string;
+  description?: string | null;
+  uiOptions?: Record<string, unknown> | null;
+  columnType?: ColumnTypeName;
+  isRequired?: boolean;
+  isUnique?: boolean;
+  isIndexed?: boolean;
+  defaultValue?: string | null;
+  constraints?: FieldConstraints | null;
+  sortOrder?: number;
+  /**
+   * Value written into existing NULL rows when setting `isRequired: true` on a
+   * column that has NULLs (rendered like a default value expression).
+   */
+  backfillValue?: string;
+}
+
+/**
+ * FieldModification keys that are presentation-only (rule 2 of ADR-017):
+ * always allowed, even on block-managed fields. Everything else is a
+ * structural change that contract protection guards.
+ */
+export const PRESENTATION_ONLY_KEYS: ReadonlySet<keyof FieldModification> = new Set([
+  'displayName',
+  'description',
+  'uiOptions',
+  'isIndexed',
+  'sortOrder',
+] as (keyof FieldModification)[]);
 
 export interface FieldConstraints {
   /** Minimum value (for numbers) or minimum length (for text) */
@@ -128,6 +197,12 @@ export interface RelationshipDefinition {
   sourceFieldName?: string;
   targetFieldName?: string;
   cascadeDelete?: boolean;
+  /** Provenance stamped onto the FK field this relationship creates. */
+  managedBy?: ManagedBy;
+  /** Junction table for many_to_many relationships. */
+  junctionTable?: string;
+  junctionSourceColumn?: string;
+  junctionTargetColumn?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +280,7 @@ export const SYSTEM_FIELDS: FieldDefinition[] = [
     isPrimary: true,
     isRequired: true,
     isSystem: true,
+    managedBy: 'system',
     defaultValue: 'gen_random_uuid()',
     sortOrder: -100,
   },
@@ -214,6 +290,7 @@ export const SYSTEM_FIELDS: FieldDefinition[] = [
     columnName: 'created_at',
     columnType: 'datetime',
     isSystem: true,
+    managedBy: 'system',
     defaultValue: 'NOW()',
     sortOrder: -2,
   },
@@ -223,6 +300,7 @@ export const SYSTEM_FIELDS: FieldDefinition[] = [
     columnName: 'updated_at',
     columnType: 'datetime',
     isSystem: true,
+    managedBy: 'system',
     defaultValue: 'NOW()',
     sortOrder: -1,
   },

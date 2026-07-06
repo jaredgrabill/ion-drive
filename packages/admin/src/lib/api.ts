@@ -9,17 +9,33 @@
 import type {
   AdminUser,
   ApiKeyMetadata,
+  ChangePreview,
   ColumnType,
   ConfigEntry,
   CreatedApiKey,
   CurrentUser,
   DataObjectDefinition,
+  DoctorReport,
+  ErrorEntry,
   FieldDefinition,
+  FieldModification,
+  InstalledBlock,
+  LogEntry,
+  LogQueryParams,
   ObjectSummary,
   PermissionGrant,
   RecordListResult,
   Role,
   SecretMetadata,
+  StatsSnapshot,
+  TaskDef,
+  TaskHandlerInfo,
+  TaskInput,
+  TaskRun,
+  TaskWithRuns,
+  TrafficPeriod,
+  TrafficSummary,
+  VersionInfo,
 } from './types';
 
 export class ApiError extends Error {
@@ -35,7 +51,12 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api/v1${path}`, {
     credentials: 'include',
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    // Only declare a JSON body when there is one — Fastify rejects an empty
+    // body sent with content-type: application/json (e.g. POST /tasks/:id/run).
+    headers: {
+      ...(init?.body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...(init?.headers ?? {}),
+    },
     ...init,
   });
   if (res.status === 204) return undefined as T;
@@ -45,6 +66,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(message, res.status);
   }
   return body as T;
+}
+
+/** Serializes defined params into a query string (empty string when none). */
+function toSearchParams(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') search.set(key, String(value));
+  }
+  const s = search.toString();
+  return s ? `?${s}` : '';
 }
 
 export const api = {
@@ -68,12 +99,51 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(field),
     }),
-  removeField: (objectName: string, fieldName: string) =>
-    request(`/schema/objects/${objectName}/fields/${fieldName}`, { method: 'DELETE' }),
+  removeField: (objectName: string, fieldName: string, force = false) =>
+    request(`/schema/objects/${objectName}/fields/${fieldName}${force ? '?force=true' : ''}`, {
+      method: 'DELETE',
+    }),
+  /** Preview a field modification without applying (Phase 10). */
+  previewFieldChange: (objectName: string, fieldName: string, updates: FieldModification) =>
+    request<{ data: ChangePreview }>(
+      `/schema/objects/${objectName}/fields/${fieldName}?dryRun=true`,
+      { method: 'PATCH', body: JSON.stringify(updates) },
+    ).then((r) => r.data),
+  /** Apply a field modification (Phase 10). */
+  modifyField: (
+    objectName: string,
+    fieldName: string,
+    updates: FieldModification,
+    opts: { force?: boolean } = {},
+  ) =>
+    request<{ success: boolean; preview: ChangePreview; field?: FieldDefinition }>(
+      `/schema/objects/${objectName}/fields/${fieldName}${opts.force ? '?force=true' : ''}`,
+      { method: 'PATCH', body: JSON.stringify(updates) },
+    ),
+  /** Schema drift doctor (Phase 10). */
+  schemaDoctor: () => request<{ data: DoctorReport }>('/schema/doctor').then((r) => r.data),
+  doctorAdopt: (table: string, column?: string) =>
+    request('/schema/doctor/adopt', { method: 'POST', body: JSON.stringify({ table, column }) }),
+  doctorIgnore: (key: string) =>
+    request('/schema/doctor/ignore', { method: 'POST', body: JSON.stringify({ key }) }),
+  doctorUnignore: (key: string) =>
+    request('/schema/doctor/unignore', { method: 'POST', body: JSON.stringify({ key }) }),
+  addRelationship: (input: {
+    name: string;
+    displayName: string;
+    type: 'one_to_one' | 'one_to_many' | 'many_to_one' | 'many_to_many';
+    sourceObjectName: string;
+    targetObjectName: string;
+    cascadeDelete?: boolean;
+  }) => request('/schema/relationships', { method: 'POST', body: JSON.stringify(input) }),
 
   // --- Data records ---
   listRecords: (objectName: string, query = '') =>
     request<RecordListResult>(`/data/${objectName}${query}`),
+  getRecord: (objectName: string, id: string, expand?: string) =>
+    request<{ data: Record<string, unknown> }>(
+      `/data/${objectName}/${id}${expand ? `?expand=${encodeURIComponent(expand)}` : ''}`,
+    ).then((r) => r.data),
   createRecord: (objectName: string, data: Record<string, unknown>) =>
     request<{ data: Record<string, unknown> }>(`/data/${objectName}`, {
       method: 'POST',
@@ -86,6 +156,11 @@ export const api = {
     }),
   deleteRecord: (objectName: string, id: string) =>
     request(`/data/${objectName}/${id}`, { method: 'DELETE' }),
+  bulkDeleteRecords: (objectName: string, ids: string[]) =>
+    request<{ count: number; ids: string[] }>(`/data/${objectName}/bulk`, {
+      method: 'DELETE',
+      body: JSON.stringify({ ids }),
+    }),
 
   // --- Roles ---
   listRoles: () => request<{ data: Role[] }>('/roles').then((r) => r.data),
@@ -115,6 +190,42 @@ export const api = {
   setConfig: (key: string, value: unknown, description?: string) =>
     request(`/config/${key}`, { method: 'PUT', body: JSON.stringify({ value, description }) }),
   deleteConfig: (key: string) => request(`/config/${key}`, { method: 'DELETE' }),
+
+  // --- Stats & version (Phase 8) ---
+  stats: () => request<{ data: StatsSnapshot }>('/stats').then((r) => r.data),
+  traffic: (period: TrafficPeriod = '24h') =>
+    request<{ data: TrafficSummary }>(`/stats/traffic?period=${period}`).then((r) => r.data),
+  recentErrors: (limit = 10) =>
+    request<{ data: ErrorEntry[] }>(`/stats/errors?limit=${limit}`).then((r) => r.data),
+  version: () => request<{ data: VersionInfo }>('/version').then((r) => r.data),
+
+  // --- Logs (Phase 8; the SSE stream is consumed via EventSource in the page) ---
+  queryLogs: (params: LogQueryParams = {}) =>
+    request<{ data: LogEntry[]; total: number }>(
+      `/logs${toSearchParams(params as Record<string, string | number | undefined>)}`,
+    ),
+  logSources: () => request<{ data: string[] }>('/logs/sources').then((r) => r.data),
+
+  // --- Tasks ---
+  listTasks: () => request<{ data: TaskDef[] }>('/tasks').then((r) => r.data),
+  listTaskHandlers: () =>
+    request<{ data: TaskHandlerInfo[] }>('/tasks/handlers').then((r) => r.data),
+  getTask: (id: string) => request<{ data: TaskWithRuns }>(`/tasks/${id}`).then((r) => r.data),
+  createTask: (input: TaskInput) =>
+    request<{ data: TaskDef }>('/tasks', { method: 'POST', body: JSON.stringify(input) }),
+  updateTask: (id: string, patch: Partial<TaskInput>) =>
+    request<{ data: TaskDef }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteTask: (id: string) => request(`/tasks/${id}`, { method: 'DELETE' }),
+  runTask: (id: string) => request<{ data: TaskRun }>(`/tasks/${id}/run`, { method: 'POST' }),
+  taskRuns: (id: string, limit = 50) =>
+    request<{ data: TaskRun[] }>(`/tasks/${id}/runs?limit=${limit}`).then((r) => r.data),
+
+  // --- Building blocks ---
+  listBlocks: () => request<{ data: InstalledBlock[] }>('/blocks').then((r) => r.data),
+  getBlock: (name: string) =>
+    request<{ data: InstalledBlock }>(`/blocks/${name}`).then((r) => r.data),
+  uninstallBlock: (name: string, dropData = false) =>
+    request(`/blocks/${name}?dropData=${dropData}`, { method: 'DELETE' }),
 
   // --- API keys ---
   listApiKeys: () => request<{ data: ApiKeyMetadata[] }>('/api-keys').then((r) => r.data),

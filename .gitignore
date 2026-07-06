@@ -39,3 +39,6 @@ docker/volumes/
 # Temporary
 tmp/
 temp/
+
+# Claude Code personal/local settings (shared settings in .claude/ stay tracked)
+.claude/settings.local.json

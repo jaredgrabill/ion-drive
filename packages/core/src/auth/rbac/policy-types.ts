@@ -31,6 +31,8 @@ export const PLATFORM_RESOURCES = {
   apiKeys: 'api_keys',
   tasks: 'tasks',
   blocks: 'blocks',
+  logs: 'logs',
+  stats: 'stats',
 } as const;
 
 /**

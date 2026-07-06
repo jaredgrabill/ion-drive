@@ -337,9 +337,17 @@ function fieldToJsonSchema(field: FieldDefinition): Record<string, unknown> {
       schema.type = 'string';
   }
 
-  if (field.constraints?.min !== undefined) schema.minimum = field.constraints.min;
-  if (field.constraints?.max !== undefined) schema.maximum = field.constraints.max;
+  // Constraint keywords mirror the generated CHECK constraints (Phase 10):
+  // numbers bound the value, text-like types bound the character length.
+  const isNumeric = typeInfo.category === 'number' || field.columnType === 'rating';
+  if (field.constraints?.min !== undefined) {
+    schema[isNumeric ? 'minimum' : 'minLength'] = field.constraints.min;
+  }
+  if (field.constraints?.max !== undefined) {
+    schema[isNumeric ? 'maximum' : 'maxLength'] = field.constraints.max;
+  }
   if (field.constraints?.pattern) schema.pattern = field.constraints.pattern;
+  if (field.description) schema.description = field.description;
 
   return schema;
 }

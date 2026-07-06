@@ -85,6 +85,9 @@ const configSchema = z.object({
   /** Also push metrics over OTLP/HTTP (in addition to the Prometheus endpoint). Requires otelEnabled. */
   otelMetricsEnabled: z.coerce.boolean().default(false),
 
+  /** Max entries held by the in-memory log buffer backing `/api/v1/logs`. */
+  logBufferSize: z.coerce.number().int().positive().default(2000),
+
   // --- Phase 5: Scheduled tasks ---
 
   /** Enable the background task scheduler (cron-driven task execution). */
@@ -154,6 +157,7 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     otelLogsEnabled: process.env.ION_OTEL_LOGS_ENABLED,
     metricsEnabled: process.env.ION_METRICS_ENABLED,
     otelMetricsEnabled: process.env.ION_OTEL_METRICS_ENABLED,
+    logBufferSize: process.env.ION_LOG_BUFFER_SIZE,
     tasksEnabled: process.env.ION_TASKS_ENABLED,
     blocksEnabled: process.env.ION_BLOCKS_ENABLED,
     plugins: process.env.ION_PLUGINS,

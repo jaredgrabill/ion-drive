@@ -21,7 +21,7 @@ import type {
 import type { MessageBus } from '../messaging/message-bus.js';
 import { NoopBus } from '../messaging/noop-bus.js';
 import type { SchemaRegistry } from '../schema/schema-registry.js';
-import { COLUMN_TYPES } from '../schema/types.js';
+import { COLUMN_TYPES, type FieldConstraints } from '../schema/types.js';
 import type {
   BulkResult,
   FilterCondition,
@@ -76,8 +76,12 @@ export class DataService {
         query = query.orderBy(sort.field, sort.direction) as typeof query;
       }
     } else {
-      // Default sort by created_at desc
-      query = query.orderBy('created_at', 'desc') as typeof query;
+      // Default sort: created_at desc when the object has it; adopted tables
+      // (drift doctor) may not, so fall back to the primary key.
+      const fallback = objDef.fields.some((f) => f.columnName === 'created_at')
+        ? 'created_at'
+        : objDef.fields.find((f) => f.isPrimary)?.columnName;
+      if (fallback) query = query.orderBy(fallback, 'desc') as typeof query;
     }
 
     // Get total count (before pagination) under the same filter + search conditions.
@@ -98,7 +102,12 @@ export class DataService {
     query = query.limit(limit).offset(offset) as typeof query;
 
     // Execute
-    const rows = await query.execute();
+    const rows = (await query.execute()) as Record<string, unknown>[];
+
+    // Attach related records for requested expansions (Phase 10 / Tier 3B).
+    if (options.expand?.length) {
+      await this.applyExpansions(objectName, rows, options.expand);
+    }
 
     // Build pagination metadata
     const totalPages = Math.max(1, Math.ceil(totalCount / limit));
@@ -115,9 +124,14 @@ export class DataService {
   }
 
   /**
-   * Gets a single record by ID.
+   * Gets a single record by ID. `expand` attaches related records under their
+   * relationship names, like the list endpoint.
    */
-  async getById(objectName: string, id: string): Promise<SingleResult | null> {
+  async getById(
+    objectName: string,
+    id: string,
+    options: { expand?: string[] } = {},
+  ): Promise<SingleResult | null> {
     const tableName = this.resolveTable(objectName);
 
     const row = await this.db
@@ -127,7 +141,11 @@ export class DataService {
       .executeTakeFirst();
 
     if (!row) return null;
-    return { data: row as Record<string, unknown> };
+    const record = row as Record<string, unknown>;
+    if (options.expand?.length) {
+      await this.applyExpansions(objectName, [record], options.expand);
+    }
+    return { data: record };
   }
 
   // =========================================================================
@@ -142,6 +160,7 @@ export class DataService {
   async create(objectName: string, data: Record<string, unknown>): Promise<SingleResult> {
     const tableName = this.resolveTable(objectName);
     const cleanData = this.sanitizeInput(objectName, data);
+    this.validateConstraints(objectName, cleanData);
 
     const row = await this.db.transaction().execute(async (trx) => {
       const inserted = await trx
@@ -175,6 +194,7 @@ export class DataService {
   ): Promise<SingleResult | null> {
     const tableName = this.resolveTable(objectName);
     const cleanData = this.sanitizeInput(objectName, data);
+    this.validateConstraints(objectName, cleanData);
 
     const row = await this.db.transaction().execute(async (trx) => {
       const before = this.eventsEnabled
@@ -249,6 +269,7 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     if (records.length === 0) return { count: 0, ids: [] };
     const cleanRecords = records.map((r) => this.sanitizeInput(objectName, r));
+    for (const record of cleanRecords) this.validateConstraints(objectName, record);
 
     const rows = await this.db.transaction().execute(async (trx) => {
       const inserted = await trx
@@ -414,6 +435,150 @@ export class DataService {
   }
 
   /**
+   * Attaches related records to rows for each requested relationship name
+   * (Phase 10 / Tier 3B — powers linked-record chips and peeks).
+   *
+   * Supported shapes:
+   * - FK on **this** object (many_to_one/one_to_one from here, or one_to_many
+   *   *to* here): one batched `WHERE id IN (…)` fetch of the other side, each
+   *   row gains `row[relName] = relatedRecord | null`.
+   * - many_to_many: one junction-table fetch + one target fetch, each row
+   *   gains `row[relName] = relatedRecord[]`.
+   *
+   * Unknown expansion names are ignored (lenient, like unknown select fields).
+   */
+  private async applyExpansions(
+    objectName: string,
+    rows: Record<string, unknown>[],
+    expand: string[],
+  ): Promise<void> {
+    if (rows.length === 0) return;
+    const obj = this.registry.getObject(objectName);
+    if (!obj) return;
+
+    for (const relName of expand) {
+      const rel = (obj.relationships ?? []).find((r) => r.name === relName);
+      if (!rel) continue;
+
+      if (rel.type === 'many_to_many') {
+        await this.expandManyToMany(objectName, rows, rel);
+        continue;
+      }
+
+      // The FK lives on this object when it points outward (many_to_one /
+      // one_to_one from here) or when a one_to_many names it as the target.
+      const fkOnThisObject =
+        rel.type === 'one_to_many'
+          ? rel.targetObjectName === objectName
+          : rel.sourceObjectName === objectName;
+      if (!fkOnThisObject) continue;
+
+      const otherObject = rel.type === 'one_to_many' ? rel.sourceObjectName : rel.targetObjectName;
+      const otherTable = this.registry.getTableName(otherObject);
+      if (!otherTable) continue;
+
+      const fkColumn = `${rel.name}_id`;
+      const ids = [...new Set(rows.map((r) => r[fkColumn]).filter((v) => v != null))];
+      if (ids.length === 0) {
+        for (const row of rows) row[rel.name] = null;
+        continue;
+      }
+      const related = await this.db
+        .selectFrom(otherTable)
+        .selectAll()
+        .where('id', 'in', ids)
+        .execute();
+      const byId = new Map((related as Record<string, unknown>[]).map((r) => [String(r.id), r]));
+      for (const row of rows) {
+        const fk = row[fkColumn];
+        row[rel.name] = fk == null ? null : (byId.get(String(fk)) ?? null);
+      }
+    }
+  }
+
+  /** Expands a many_to_many relationship via its junction table. */
+  private async expandManyToMany(
+    objectName: string,
+    rows: Record<string, unknown>[],
+    rel: NonNullable<NonNullable<ReturnType<SchemaRegistry['getObject']>>['relationships']>[number],
+  ): Promise<void> {
+    const isSource = rel.sourceObjectName === objectName;
+    const otherObject = isSource ? rel.targetObjectName : rel.sourceObjectName;
+    const thisTable = this.registry.getTableName(objectName);
+    const otherTable = this.registry.getTableName(otherObject);
+    if (!thisTable || !otherTable) return;
+
+    // Junction info is recorded since Phase 10; fall back to the naming
+    // convention for relationships created before that.
+    const sourceTable = this.registry.getTableName(rel.sourceObjectName) ?? '';
+    const targetTable = this.registry.getTableName(rel.targetObjectName) ?? '';
+    const junction = rel.junctionTable ?? `${sourceTable}_${targetTable}`;
+    const sourceCol = rel.junctionSourceColumn ?? `${sourceTable}_id`;
+    const targetCol = rel.junctionTargetColumn ?? `${targetTable}_id`;
+    const thisCol = isSource ? sourceCol : targetCol;
+    const otherCol = isSource ? targetCol : sourceCol;
+
+    const ids = rows.map((r) => r.id).filter((v) => v != null);
+    const links = (await this.db
+      .selectFrom(junction)
+      .select([thisCol, otherCol])
+      .where(thisCol, 'in', ids)
+      .execute()) as Record<string, unknown>[];
+
+    const otherIds = [...new Set(links.map((l) => l[otherCol]).filter((v) => v != null))];
+    const related =
+      otherIds.length === 0
+        ? []
+        : ((await this.db
+            .selectFrom(otherTable)
+            .selectAll()
+            .where('id', 'in', otherIds)
+            .execute()) as Record<string, unknown>[]);
+    const byId = new Map(related.map((r) => [String(r.id), r]));
+
+    const grouped = new Map<string, Record<string, unknown>[]>();
+    for (const link of links) {
+      const key = String(link[thisCol]);
+      const other = byId.get(String(link[otherCol]));
+      if (!other) continue;
+      const list = grouped.get(key) ?? [];
+      list.push(other);
+      grouped.set(key, list);
+    }
+    for (const row of rows) {
+      row[rel.name] = grouped.get(String(row.id)) ?? [];
+    }
+  }
+
+  /**
+   * Validates written values against their field constraints (Phase 10 / 1B).
+   *
+   * The real enforcement is the generated CHECK constraints in Postgres; this
+   * pre-check exists so API callers get a friendly 400 naming the field and
+   * rule (or the constraint's custom `message`) instead of a raw PG check
+   * violation. NULL/undefined values pass — matching CHECK semantics, where
+   * required-ness is NOT NULL's job.
+   */
+  private validateConstraints(objectName: string, cleanData: Record<string, unknown>): void {
+    const fields = this.registry.getFields(objectName);
+    for (const field of fields) {
+      const constraints = field.constraints;
+      if (!constraints) continue;
+      const value = cleanData[field.columnName];
+      if (value === undefined || value === null) continue;
+
+      const problem = constraintViolation(value, field.columnType, constraints);
+      if (problem) {
+        throw new DataServiceError(
+          constraints.message ?? `Field "${field.name}" ${problem}`,
+          'CONSTRAINT_VIOLATION',
+          400,
+        );
+      }
+    }
+  }
+
+  /**
    * Resolves the effective query window from the pagination options. When
    * `limit`/`offset` are supplied they win and the page/pageSize returned in the
    * metadata are derived from them; otherwise the page-based interface is used.
@@ -523,6 +688,66 @@ export class DataService {
  */
 function escapeLikePattern(term: string): string {
   return term.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/** Numeric column types where min/max bound the value (not the length). */
+const NUMERIC_CATEGORIES = new Set(['number']);
+
+/**
+ * Checks one value against a field's constraints. Returns a human-readable
+ * description of the violated rule, or null when the value passes. Mirrors the
+ * CHECK constraint semantics of `schema/check-constraints.ts`.
+ */
+function constraintViolation(
+  value: unknown,
+  columnType: string,
+  constraints: FieldConstraints,
+): string | null {
+  const category = COLUMN_TYPES[columnType as keyof typeof COLUMN_TYPES]?.category;
+  const isNumeric = NUMERIC_CATEGORIES.has(category) || columnType === 'rating';
+
+  if (isNumeric && typeof value === 'number') {
+    if (constraints.min !== undefined && value < constraints.min) {
+      return `must be at least ${constraints.min}`;
+    }
+    if (constraints.max !== undefined && value > constraints.max) {
+      return `must be at most ${constraints.max}`;
+    }
+  }
+
+  if (typeof value === 'string') {
+    if (constraints.min !== undefined && !isNumeric && value.length < constraints.min) {
+      return `must be at least ${constraints.min} characters`;
+    }
+    if (constraints.max !== undefined && !isNumeric && value.length > constraints.max) {
+      return `must be at most ${constraints.max} characters`;
+    }
+    if (constraints.pattern) {
+      try {
+        if (!new RegExp(constraints.pattern).test(value)) {
+          return `must match the pattern ${constraints.pattern}`;
+        }
+      } catch {
+        // Invalid JS regex (POSIX-only syntax) — let Postgres be the judge.
+      }
+    }
+    if (constraints.enumValues?.length && columnType !== 'multi_enum') {
+      if (!constraints.enumValues.includes(value)) {
+        return `must be one of: ${constraints.enumValues.join(', ')}`;
+      }
+    }
+  }
+
+  if (columnType === 'multi_enum' && Array.isArray(value) && constraints.enumValues?.length) {
+    const invalid = value.filter(
+      (v) => typeof v === 'string' && !constraints.enumValues?.includes(v),
+    );
+    if (invalid.length > 0) {
+      return `contains invalid value(s): ${invalid.join(', ')} (allowed: ${constraints.enumValues.join(', ')})`;
+    }
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------

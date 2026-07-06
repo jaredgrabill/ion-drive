@@ -1,15 +1,19 @@
+import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import Fastify from 'fastify';
 import pg from 'pg';
 import pino from 'pino';
+import pretty from 'pino-pretty';
 import { registerAdminRoutes } from './api/admin-routes.js';
 import { registerBlockRoutes } from './api/block-routes.js';
 import { registerDataRoutes } from './api/data-routes.js';
 import { registerGraphQLRoutes } from './api/graphql/plugin.js';
+import { registerLogRoutes } from './api/log-routes.js';
 import { registerOpenApiRoutes } from './api/openapi-routes.js';
 import { registerSchemaRoutes } from './api/schema-routes.js';
+import { registerStatsRoutes } from './api/stats-routes.js';
 import { registerTaskRoutes } from './api/task-routes.js';
 import {
   ApiKeyManager,
@@ -46,13 +50,25 @@ import {
 } from './messaging/index.js';
 import { ServiceRegistry, loadPlugins } from './runtime/index.js';
 import type { IonPlugin, PluginContext } from './runtime/index.js';
+import { SchemaDoctor } from './schema/doctor.js';
 import { SchemaManager } from './schema/index.js';
 import { TaskEngine } from './tasks/index.js';
 import type { TaskLogger } from './tasks/index.js';
-import { createOtelLogStream, installRequestTracing, startTelemetry } from './telemetry/index.js';
+import {
+  LogBuffer,
+  createLogBufferStream,
+  createOtelLogStream,
+  installRequestTracing,
+  startTelemetry,
+} from './telemetry/index.js';
 
 /** A fixed dev-only key so secrets/auth work out of the box; never for production. */
 const DEV_FALLBACK_KEY = 'a'.repeat(64);
+
+/** The core package version, read once at boot (works from src and dist). */
+const PACKAGE_VERSION: string = (
+  createRequire(import.meta.url)('../package.json') as { version: string }
+).version;
 
 /**
  * Resolves the master secret for encryption and auth signing. Prefers an
@@ -71,24 +87,24 @@ function resolveMasterSecret(config: IonDriveConfig, log: { warn: (msg: string) 
 }
 
 /**
- * Builds the Fastify logger options. When OTLP log export is enabled, logs are
- * fanned out to both stdout and the OpenTelemetry logs bridge via a pino
- * multistream; otherwise the standard (pretty-in-dev) single stream is used.
+ * Builds the Fastify logger options. Logs always fan out via a pino
+ * multistream to (a) the console (pretty in development, raw JSON otherwise)
+ * and (b) the in-memory {@link LogBuffer} that backs the admin console's
+ * `/api/v1/logs` view; when OTLP log export is enabled, the OpenTelemetry
+ * logs bridge is added as a third arm.
  */
-function buildLoggerOptions(config: IonDriveConfig) {
+function buildLoggerOptions(config: IonDriveConfig, logBuffer: LogBuffer) {
+  const level = config.logLevel;
+  const streams: pino.StreamEntry[] = [
+    config.nodeEnv === 'development'
+      ? { level, stream: pretty({ colorize: true }) }
+      : { level, stream: process.stdout },
+    { level, stream: createLogBufferStream(logBuffer) },
+  ];
   if (config.otelEnabled && config.otelLogsEnabled) {
-    return {
-      level: config.logLevel,
-      stream: pino.multistream([{ stream: process.stdout }, { stream: createOtelLogStream() }]),
-    };
+    streams.push({ level, stream: createOtelLogStream() });
   }
-  return {
-    level: config.logLevel,
-    transport:
-      config.nodeEnv === 'development'
-        ? { target: 'pino-pretty', options: { colorize: true } }
-        : undefined,
-  };
+  return { level, stream: pino.multistream(streams) };
 }
 
 /**
@@ -104,7 +120,11 @@ export async function createServer(
 ) {
   const config = loadConfig(configOverrides);
 
-  const server = Fastify({ logger: buildLoggerOptions(config) });
+  // In-memory log buffer for the admin console's instant-logs view. Created
+  // before Fastify so the logger can fan out into it from the first line.
+  const logBuffer = new LogBuffer(config.logBufferSize);
+
+  const server = Fastify({ logger: buildLoggerOptions(config, logBuffer) });
 
   // --- Observability (Phase 5): start the OTel SDK and per-request tracing ---
   const telemetry = startTelemetry(config, server.log);
@@ -263,7 +283,7 @@ export async function createServer(
   // --- Health check ---
   server.get('/health', async () => ({
     status: 'ok',
-    version: '0.1.0',
+    version: PACKAGE_VERSION,
     timestamp: new Date().toISOString(),
     schemaVersion: schemaManager.registry.getVersion(),
     objectCount: schemaManager.listObjects().length,
@@ -272,7 +292,7 @@ export async function createServer(
   // --- API info ---
   server.get('/api/v1', async () => ({
     name: 'Ion Drive',
-    version: '0.1.0',
+    version: PACKAGE_VERSION,
     description: 'Dynamic data platform API',
     endpoints: {
       health: '/health',
@@ -290,12 +310,22 @@ export async function createServer(
       apiKeys: '/api/v1/api-keys',
       tasks: '/api/v1/tasks',
       blocks: '/api/v1/blocks',
+      stats: '/api/v1/stats',
+      logs: '/api/v1/logs',
+      version: '/api/v1/version',
       metrics: '/metrics',
     },
   }));
 
-  // --- Schema management routes ---
-  await server.register(registerSchemaRoutes(schemaManager), { prefix: '/api/v1/schema' });
+  // --- Schema management routes (incl. snapshot + drift doctor, Phase 10) ---
+  const schemaDoctor = new SchemaDoctor({
+    tenantDb,
+    registry: schemaManager.registry,
+    configStore,
+  });
+  await server.register(registerSchemaRoutes(schemaManager, { doctor: schemaDoctor }), {
+    prefix: '/api/v1/schema',
+  });
 
   // --- Dynamic REST data routes (auto-generated CRUD per object) ---
   await server.register(registerDataRoutes({ dataService, registry: schemaManager.registry }), {
@@ -332,6 +362,25 @@ export async function createServer(
       enforce: config.requireAuth,
     }),
     { prefix: '/api/v1' },
+  );
+
+  // --- Stats + version routes (dashboard snapshot, traffic, recent errors) ---
+  await server.register(
+    registerStatsRoutes({
+      schemaManager,
+      systemDb,
+      permissionEngine,
+      config,
+      version: PACKAGE_VERSION,
+      enforce: config.requireAuth,
+    }),
+    { prefix: '/api/v1' },
+  );
+
+  // --- Logs routes (in-memory buffer query + SSE live tail) ---
+  await server.register(
+    registerLogRoutes({ logBuffer, permissionEngine, enforce: config.requireAuth }),
+    { prefix: '/api/v1/logs' },
   );
 
   // --- Task management routes (scheduled/background tasks) ---
@@ -405,6 +454,7 @@ export async function createServer(
     taskEngine,
     blockEngine,
     telemetry,
+    logBuffer,
   };
 }
 

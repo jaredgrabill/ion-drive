@@ -8,8 +8,17 @@
  *
  * CSS custom properties (HSL triplets) mapped into Tailwind's theme below, so
  * utilities like `bg-background`, `bg-primary`, `border-input` resolve to these
- * and follow light/dark automatically. Values follow shadcn/ui conventions so
- * shadcn components can be dropped in later.
+ * and follow light/dark automatically. Values follow shadcn/ui conventions
+ * (black/white Radix aesthetic) with a space-themed accent palette layered on
+ * top — `--ion-blue` is the primary accent ("ion engine glow"), used sparingly
+ * for active states, focus glows, and data-flow highlights.
+ *
+ * Sections:
+ *  1. Neutral base (light + dark) — shadcn-compatible
+ *  2. Space-themed accent palette + semantic status tokens
+ *  3. Surface layers (elevated popovers, sunken code/grid backgrounds)
+ *  4. Typography (sans + mono stacks)
+ *  5. Motion (shared easings/durations, keyframes, reduced-motion escape hatch)
  */
 :root {
   --background: 0 0% 100%;
@@ -33,8 +42,40 @@
   --ring: 240 5.9% 10%;
   --radius: 0.5rem;
 
-  --ion-accent: 215 100% 50%;
+  /* --- Space-themed accent palette --- */
+  --ion-blue: 215 100% 50%; /* Primary accent — ion engine glow */
+  --ion-purple: 265 70% 55%; /* Secondary accent — nebula purple */
+  --ion-cyan: 185 80% 40%; /* Tertiary — data flow cyan */
+  --ion-green: 155 75% 35%; /* Success — orbit green */
+  --ion-amber: 35 95% 45%; /* Warning — solar amber */
+  --ion-red: 0 72% 51%; /* Error — supernova red */
+
+  /* Back-compat alias (pre-Phase-8 components referenced --ion-accent). */
+  --ion-accent: var(--ion-blue);
   --ion-accent-foreground: 0 0% 100%;
+
+  /* --- Semantic status tokens (resolve to the palette above) --- */
+  --status-healthy: var(--ion-green);
+  --status-warning: var(--ion-amber);
+  --status-error: var(--ion-red);
+  --status-idle: var(--muted-foreground);
+
+  /* --- Surface layers --- */
+  --surface-elevated: 0 0% 100%; /* Popover, dropdown bg */
+  --surface-sunken: 240 4.8% 97%; /* Code blocks, grid bg */
+
+  /*
+   * Chart series palette (categorical, fixed order — never cycled).
+   * Validated per mode with the dataviz six-checks validator (lightness band,
+   * chroma floor, adjacent-pair CVD separation, surface contrast). These are
+   * ion-hue derived but tuned per mode, so they are separate from the UI
+   * accent tokens above. Order: blue, cyan, purple, amber, green.
+   */
+  --chart-1: #006aff;
+  --chart-2: #14aab8;
+  --chart-3: #7f3cdd;
+  --chart-4: #e08506;
+  --chart-5: #169c64;
 }
 
 .dark {
@@ -42,7 +83,7 @@
   --foreground: 0 0% 98%;
   --card: 240 10% 5.5%;
   --card-foreground: 0 0% 98%;
-  --popover: 240 10% 3.9%;
+  --popover: 240 6% 8%;
   --popover-foreground: 0 0% 98%;
   --primary: 0 0% 98%;
   --primary-foreground: 240 5.9% 10%;
@@ -58,8 +99,26 @@
   --input: 240 3.7% 18%;
   --ring: 240 4.9% 83.9%;
 
-  --ion-accent: 215 100% 60%;
+  /* Accents brighten in dark mode so they glow against the near-black base. */
+  --ion-blue: 215 100% 60%;
+  --ion-purple: 265 70% 60%;
+  --ion-cyan: 185 80% 55%;
+  --ion-green: 155 75% 45%;
+  --ion-amber: 35 95% 55%;
+  --ion-red: 0 72% 55%;
+
+  --ion-accent: var(--ion-blue);
   --ion-accent-foreground: 0 0% 100%;
+
+  --surface-elevated: 240 6% 8%;
+  --surface-sunken: 240 6% 3%;
+
+  /* Chart series — dark-mode steps, validated against the sunken surface. */
+  --chart-1: #1476ff;
+  --chart-2: #05a4b3;
+  --chart-3: #935ae2;
+  --chart-4: #b86d05;
+  --chart-5: #0da063;
 }
 
 @theme inline {
@@ -82,12 +141,93 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
+
+  /* Space palette → `text-ion-blue`, `bg-ion-purple/10`, etc. */
   --color-ion: hsl(var(--ion-accent));
   --color-ion-foreground: hsl(var(--ion-accent-foreground));
+  --color-ion-blue: hsl(var(--ion-blue));
+  --color-ion-purple: hsl(var(--ion-purple));
+  --color-ion-cyan: hsl(var(--ion-cyan));
+  --color-ion-green: hsl(var(--ion-green));
+  --color-ion-amber: hsl(var(--ion-amber));
+  --color-ion-red: hsl(var(--ion-red));
+
+  /* Status tokens → `bg-status-healthy`, `text-status-error`, etc. */
+  --color-status-healthy: hsl(var(--status-healthy));
+  --color-status-warning: hsl(var(--status-warning));
+  --color-status-error: hsl(var(--status-error));
+  --color-status-idle: hsl(var(--status-idle));
+
+  /* Surfaces → `bg-surface-elevated`, `bg-surface-sunken`. */
+  --color-surface-elevated: hsl(var(--surface-elevated));
+  --color-surface-sunken: hsl(var(--surface-sunken));
+
+  /* Chart series → `fill-chart-1`, `text-chart-2`, etc. */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
 
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
+
+  /* Typography → `font-sans`, `font-mono`. */
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+
+  /* Motion → `ease-out-expo`, `duration-fast|normal|slow`. */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
+
+  /* Keyframe-backed utilities → `animate-fade-in`, `animate-slide-up`, etc. */
+  --animate-fade-in: fade-in var(--duration-normal) var(--ease-out-expo);
+  --animate-slide-up: slide-up var(--duration-normal) var(--ease-out-expo);
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-pulse-glow: pulse-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes slide-up {
+  from {
+    transform: translateY(4px);
+    opacity: 0;
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 hsl(var(--ion-blue) / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 8px 2px hsl(var(--ion-blue) / 0.2);
+  }
+}
+
+/* Motion sensitivity: collapse all animation/transition to imperceptible. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 body {
@@ -96,4 +236,23 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
+}
+
+/*
+ * Star-field backdrop for the login screen — pure CSS (layered radial-gradient
+ * "stars" at three parallax densities), no canvas or JS. Kept here rather than
+ * in the component because Tailwind arbitrary values can't express multi-layer
+ * gradients readably.
+ */
+.starfield {
+  background-color: hsl(240 10% 3.9%);
+  background-image: radial-gradient(1px 1px at 20px 30px, hsl(0 0% 100% / 0.8), transparent),
+    radial-gradient(1px 1px at 130px 80px, hsl(0 0% 100% / 0.6), transparent),
+    radial-gradient(1.5px 1.5px at 220px 150px, hsl(215 100% 80% / 0.7), transparent),
+    radial-gradient(1px 1px at 300px 60px, hsl(0 0% 100% / 0.5), transparent),
+    radial-gradient(1px 1px at 380px 200px, hsl(265 70% 80% / 0.6), transparent),
+    radial-gradient(1.5px 1.5px at 90px 240px, hsl(0 0% 100% / 0.7), transparent),
+    radial-gradient(1px 1px at 170px 310px, hsl(0 0% 100% / 0.4), transparent),
+    radial-gradient(1px 1px at 340px 340px, hsl(185 80% 75% / 0.6), transparent);
+  background-size: 420px 380px;
 }

@@ -17,18 +17,29 @@ import { nanoid } from 'nanoid';
 import type { SystemDatabase } from '../db/types.js';
 import { ChangeValidator } from './change-validator.js';
 import { DdlExecutor } from './ddl-executor.js';
+import { inferColumnType } from './doctor.js';
 import { MetadataStore } from './metadata-store.js';
 import { SchemaRegistry } from './schema-registry.js';
 import { bootstrapSystemTables } from './system-tables.js';
-import { SYSTEM_FIELDS } from './types.js';
+import { assessTypeChange } from './type-compat.js';
+import { COLUMN_TYPES, SYSTEM_FIELDS } from './types.js';
 import type {
   ChangePreview,
   ChangeSet,
   DataObjectDefinition,
   FieldDefinition,
+  FieldModification,
   RelationshipDefinition,
   SchemaChange,
 } from './types.js';
+
+/** Options accepted by the destructive/structural field operations. */
+export interface FieldChangeOptions {
+  /** Validate + preview only; never touch the database. */
+  dryRun?: boolean;
+  /** Override block contract protection (ADR-017). */
+  force?: boolean;
+}
 
 export interface SchemaManagerOptions {
   systemDb: Kysely<SystemDatabase>;
@@ -269,11 +280,215 @@ export class SchemaManager {
   }
 
   /**
+   * Modifies an existing field: rename, type change, flag toggles, default,
+   * constraints, and/or presentation metadata — validated and previewed as one
+   * ChangeSet, then executed step-wise (type → default → required → unique →
+   * index → rename last, so earlier steps address the original column name).
+   *
+   * With `options.dryRun` the preview is returned without touching anything —
+   * this is the contract the admin designer builds its confirm step on.
+   */
+  async modifyField(
+    objectName: string,
+    fieldName: string,
+    updates: FieldModification,
+    options: FieldChangeOptions = {},
+  ): Promise<{
+    preview: ChangePreview;
+    success: boolean;
+    field?: FieldDefinition;
+  }> {
+    const changeSet = this.buildChangeSet(`Modify field "${fieldName}" on "${objectName}"`, [
+      {
+        type: 'modify_field',
+        objectName,
+        details: { fieldName, updates: updates as Record<string, unknown>, force: options.force },
+      },
+    ]);
+
+    const preview = await this.validator.validateChangeSet(changeSet);
+    if (options.dryRun) return { preview, success: preview.isValid };
+    if (!preview.isValid) return { preview, success: false };
+
+    const obj = this.registry.getObject(objectName);
+    const field = obj?.fields.find((f) => f.name === fieldName);
+    const metaObj = await this.metadataStore.getObject(objectName);
+    if (!obj || !field?.id || !metaObj) {
+      return { preview, success: false };
+    }
+
+    const executed = await this.executeFieldModification(obj, field, updates);
+
+    // Persist metadata (a rename also renames the column to match the new name).
+    const { backfillValue: _backfill, name: newName, ...metaUpdates } = updates;
+    await this.metadataStore.updateField(field.id, {
+      ...metaUpdates,
+      ...(newName !== undefined ? { name: newName, columnName: newName } : {}),
+    });
+    await this.syncIndexMetadata(metaObj.id, obj.tableName, field, updates);
+
+    // Record migration + refresh the cache from the store.
+    const version = (await this.metadataStore.getLatestMigrationVersion()) + 1;
+    await this.metadataStore.recordMigration({
+      version,
+      description: `Modify field "${fieldName}" on "${objectName}"`,
+      changes: { type: 'modify_field', objectName, field: fieldName, updates },
+      sqlUp: executed.join(';\n') || '-- metadata-only change',
+    });
+
+    const fullDef = await this.metadataStore.getFullObjectDefinition(objectName);
+    if (fullDef) this.registry.registerObject(fullDef);
+
+    const updatedField = fullDef?.fields.find((f) => f.name === (updates.name ?? fieldName));
+    return { preview, success: true, field: updatedField };
+  }
+
+  /**
+   * Renames a field (and its column). Sugar over {@link modifyField} — the
+   * preview carries the API-surface-change warning.
+   */
+  async renameField(
+    objectName: string,
+    oldName: string,
+    newName: string,
+    options: FieldChangeOptions = {},
+  ): Promise<{
+    preview: ChangePreview;
+    success: boolean;
+    field?: FieldDefinition;
+  }> {
+    return this.modifyField(objectName, oldName, { name: newName }, options);
+  }
+
+  /** Executes the DDL steps of a field modification, returning the SQL run. */
+  private async executeFieldModification(
+    obj: DataObjectDefinition,
+    field: FieldDefinition,
+    updates: FieldModification,
+  ): Promise<string[]> {
+    const executed: string[] = [];
+    const { ddlExecutor } = this;
+    const table = obj.tableName;
+    const column = field.columnName;
+
+    // CHECK constraints are dropped up front whenever the type, name, or the
+    // constraints themselves change (a length check would block an ALTER TYPE
+    // to a number; names embed the column), and re-created at the end against
+    // the field's final shape.
+    const typeChanging =
+      updates.columnType !== undefined && updates.columnType !== field.columnType;
+    const renaming = updates.name !== undefined && updates.name !== field.name;
+    const constraintsChanging = updates.constraints !== undefined;
+    const needsConstraintSync =
+      constraintsChanging || ((typeChanging || renaming) && field.constraints !== undefined);
+    if (needsConstraintSync) {
+      executed.push(...(await ddlExecutor.dropCheckConstraints(table, column)));
+    }
+
+    if (updates.columnType !== undefined && updates.columnType !== field.columnType) {
+      const assessment = assessTypeChange(field.columnType, updates.columnType);
+      const usingCast =
+        assessment.compatible && assessment.usingCast ? assessment.usingCast : undefined;
+      executed.push(
+        ...(await ddlExecutor.alterColumnType(
+          table,
+          column,
+          COLUMN_TYPES[updates.columnType].pg,
+          usingCast,
+        )),
+      );
+    }
+
+    if (updates.defaultValue !== undefined) {
+      executed.push(
+        ...(updates.defaultValue === null || updates.defaultValue === ''
+          ? await ddlExecutor.dropColumnDefault(table, column)
+          : await ddlExecutor.setColumnDefault(table, column, updates.defaultValue)),
+      );
+    }
+
+    if (updates.isRequired !== undefined && updates.isRequired !== (field.isRequired ?? false)) {
+      executed.push(
+        ...(updates.isRequired
+          ? await ddlExecutor.setNotNull(table, column, updates.backfillValue)
+          : await ddlExecutor.dropNotNull(table, column)),
+      );
+    }
+
+    if (updates.isUnique !== undefined && updates.isUnique !== (field.isUnique ?? false)) {
+      executed.push(
+        ...(updates.isUnique
+          ? await ddlExecutor.addUniqueConstraint(table, column)
+          : await ddlExecutor.dropUniqueConstraint(table, column)),
+      );
+    }
+
+    if (updates.isIndexed !== undefined && updates.isIndexed !== (field.isIndexed ?? false)) {
+      const indexName = `idx_${table}_${column}`;
+      executed.push(
+        ...(updates.isIndexed
+          ? await ddlExecutor.createIndex(indexName, table, [column])
+          : await ddlExecutor.dropIndex(indexName)),
+      );
+    }
+
+    // Rename last so every step above operated on the original column name.
+    if (updates.name !== undefined && updates.name !== field.name) {
+      executed.push(...(await ddlExecutor.renameColumn(table, column, updates.name)));
+    }
+
+    // Re-create CHECK constraints against the final column name/type/rules.
+    if (needsConstraintSync) {
+      const effectiveConstraints =
+        updates.constraints === null ? undefined : (updates.constraints ?? field.constraints);
+      if (effectiveConstraints) {
+        executed.push(
+          ...(await ddlExecutor.addCheckConstraints(table, {
+            ...field,
+            columnName: updates.name ?? column,
+            columnType: updates.columnType ?? field.columnType,
+            constraints: effectiveConstraints,
+          })),
+        );
+      }
+    }
+
+    return executed;
+  }
+
+  /** Keeps the `_ion_indexes` ledger in step with an isIndexed toggle. */
+  private async syncIndexMetadata(
+    objectId: string,
+    tableName: string,
+    field: FieldDefinition,
+    updates: FieldModification,
+  ): Promise<void> {
+    if (updates.isIndexed === undefined || updates.isIndexed === (field.isIndexed ?? false)) {
+      return;
+    }
+    const indexName = `idx_${tableName}_${field.columnName}`;
+    if (updates.isIndexed) {
+      await this.metadataStore.createIndex(objectId, {
+        name: `${field.name}_index`,
+        indexName,
+        columns: [field.columnName],
+        isAuto: true,
+      });
+      return;
+    }
+    const existing = (await this.metadataStore.getIndexes(objectId)).find(
+      (idx) => idx.index_name === indexName,
+    );
+    if (existing) await this.metadataStore.deleteIndex(existing.id);
+  }
+
+  /**
    * Removes a field (column) from a data object.
    */
   async removeField(
     objectName: string,
     fieldName: string,
+    options: FieldChangeOptions = {},
   ): Promise<{
     preview: ChangePreview;
     success: boolean;
@@ -282,11 +497,12 @@ export class SchemaManager {
       {
         type: 'remove_field',
         objectName,
-        details: { fieldName },
+        details: { fieldName, force: options.force },
       },
     ]);
 
     const preview = await this.validator.validateChangeSet(changeSet);
+    if (options.dryRun) return { preview, success: preview.isValid };
     if (!preview.isValid) {
       return { preview, success: false };
     }
@@ -387,6 +603,7 @@ export class SchemaManager {
         columnName: fkColumnName,
         columnType: 'uuid',
         isIndexed: true,
+        managedBy: relationship.managedBy,
       };
 
       // Add the FK column
@@ -421,6 +638,9 @@ export class SchemaManager {
         sourceCol,
         targetCol,
       );
+      relationship.junctionTable = junctionTable;
+      relationship.junctionSourceColumn = sourceCol;
+      relationship.junctionTargetColumn = targetCol;
     }
 
     // Record relationship metadata
@@ -429,6 +649,14 @@ export class SchemaManager {
       sourceMetaObj.id,
       targetMetaObj.id,
       sourceFieldId,
+      undefined,
+      relationship.junctionTable
+        ? {
+            table: relationship.junctionTable,
+            sourceColumn: relationship.junctionSourceColumn ?? '',
+            targetColumn: relationship.junctionTargetColumn ?? '',
+          }
+        : undefined,
     );
 
     // Record migration
@@ -440,10 +668,112 @@ export class SchemaManager {
       sqlUp: `-- Relationship: ${relationship.name}`,
     });
 
-    // Update cache
-    this.registry.addRelationship(relationship);
+    // Update cache: re-hydrate both endpoints so their relationship lists and
+    // the FK field on the holding side are live immediately (expand, snapshot
+    // export, and the admin designer all read them from the object defs).
+    await this.refreshObject(relationship.sourceObjectName);
+    await this.refreshObject(relationship.targetObjectName);
 
     return { preview, success: true };
+  }
+
+  // =========================================================================
+  // Drift adoption (Phase 10 — the doctor's "adopt" action)
+  // =========================================================================
+
+  /**
+   * Imports an unmanaged database column into metadata (no DDL — the column
+   * already exists). The field becomes a normal user-managed field, so it
+   * immediately appears on REST/GraphQL/MCP.
+   */
+  async adoptColumn(
+    objectName: string,
+    columnName: string,
+  ): Promise<{ success: boolean; error?: string; field?: FieldDefinition }> {
+    const obj = this.registry.getObject(objectName);
+    const metaObj = await this.metadataStore.getObject(objectName);
+    if (!obj || !metaObj) return { success: false, error: `Unknown object "${objectName}"` };
+    if (obj.fields.some((f) => f.columnName === columnName)) {
+      return { success: false, error: `Column "${columnName}" is already managed` };
+    }
+
+    const catalog = await this.ddlExecutor.describeTable(obj.tableName);
+    const col = catalog.find((c) => c.column_name === columnName);
+    if (!col) {
+      return { success: false, error: `Column "${columnName}" not found on "${obj.tableName}"` };
+    }
+
+    const field: FieldDefinition = {
+      name: columnName,
+      displayName: titleCase(columnName),
+      columnName,
+      columnType: inferColumnType(col),
+      isRequired: col.is_nullable === 'NO',
+      defaultValue: col.column_default ?? undefined,
+      managedBy: 'user',
+    };
+    await this.metadataStore.createField(metaObj.id, field);
+    await this.recordAdoptionMigration(`Adopt column "${objectName}.${columnName}"`);
+    await this.refreshObject(objectName);
+    return { success: true, field: this.registry.getField(objectName, columnName) };
+  }
+
+  /**
+   * Imports an entire unmanaged table into metadata as a new data object.
+   * Columns named like the platform's system fields (id/created_at/updated_at)
+   * are marked system so the API treats them normally.
+   */
+  async adoptTable(
+    tableName: string,
+  ): Promise<{ success: boolean; error?: string; object?: DataObjectDefinition }> {
+    if (this.listObjects().some((o) => o.tableName === tableName)) {
+      return { success: false, error: `Table "${tableName}" is already managed` };
+    }
+    const catalog = await this.ddlExecutor.describeTable(tableName);
+    if (catalog.length === 0) {
+      return { success: false, error: `Table "${tableName}" not found` };
+    }
+
+    const systemNames = new Set(SYSTEM_FIELDS.map((f) => f.name));
+    const objRecord = await this.metadataStore.createObject({
+      name: tableName,
+      displayName: titleCase(tableName),
+      tableName,
+      managedBy: 'user',
+      fields: [],
+    });
+    const fields: FieldDefinition[] = catalog.map((col) => ({
+      name: col.column_name,
+      displayName: titleCase(col.column_name),
+      columnName: col.column_name,
+      columnType: inferColumnType(col),
+      isRequired: col.is_nullable === 'NO',
+      isPrimary: col.column_name === 'id',
+      isSystem: systemNames.has(col.column_name),
+      defaultValue: col.column_default ?? undefined,
+      managedBy: systemNames.has(col.column_name) ? 'system' : 'user',
+    }));
+    await this.metadataStore.createFields(objRecord.id, fields);
+    await this.recordAdoptionMigration(`Adopt table "${tableName}" as a data object`);
+    await this.refreshObject(tableName);
+    return { success: true, object: this.registry.getObject(tableName) };
+  }
+
+  /** Records an adoption in the migration history (metadata-only change). */
+  private async recordAdoptionMigration(description: string): Promise<void> {
+    const version = (await this.metadataStore.getLatestMigrationVersion()) + 1;
+    await this.metadataStore.recordMigration({
+      version,
+      description,
+      changes: { type: 'adopt' },
+      sqlUp: '-- metadata-only: adopted existing database structure',
+    });
+  }
+
+  /** Re-hydrates one object from the store into the registry. */
+  private async refreshObject(objectName: string): Promise<void> {
+    const fullDef = await this.metadataStore.getFullObjectDefinition(objectName);
+    if (fullDef) this.registry.registerObject(fullDef);
   }
 
   // =========================================================================
@@ -485,4 +815,13 @@ export class SchemaManager {
       createdAt: new Date(),
     };
   }
+}
+
+/** `contact_email` → `Contact Email` (display names for adopted structure). */
+function titleCase(identifier: string): string {
+  return identifier
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
