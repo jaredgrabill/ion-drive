@@ -23,11 +23,14 @@ import { requirePermission } from '../auth/rbac/middleware.js';
 import type { PermissionEngine } from '../auth/rbac/permission-engine.js';
 import type { Action } from '../auth/rbac/policy-types.js';
 import { PLATFORM_RESOURCES } from '../auth/rbac/policy-types.js';
+import { ActionError, type ActionExecutor } from '../blocks/action-executor.js';
 import { type BlockEngine, BlockEngineError } from '../blocks/index.js';
 
 export interface BlockRoutesServices {
   blockEngine: BlockEngine;
   permissionEngine: PermissionEngine;
+  /** Runs registered block actions (Phase 14); actions 404 when absent. */
+  actionExecutor?: ActionExecutor;
   /** When true, endpoints are protected by RBAC permissions. */
   enforce: boolean;
 }
@@ -47,6 +50,23 @@ const ERROR_RESPONSES: Record<BlockEngineError['code'], { status: number; label:
 function sendEngineError(reply: FastifyReply, err: BlockEngineError) {
   const { status, label } = ERROR_RESPONSES[err.code];
   return reply.code(status).send({ error: label, message: err.message, warnings: err.warnings });
+}
+
+/** Maps an ActionError code to an HTTP status + label (shared with hook-routes). */
+export const ACTION_ERROR_RESPONSES: Record<
+  ActionError['code'],
+  { status: number; label: string }
+> = {
+  not_found: { status: 404, label: 'Not Found' },
+  validation: { status: 400, label: 'Validation Error' },
+  timeout: { status: 504, label: 'Handler Timeout' },
+  failed: { status: 500, label: 'Action Failed' },
+};
+
+/** Maps an ActionError to an HTTP status + envelope (shared with hook-routes). */
+export function sendActionError(reply: FastifyReply, err: ActionError) {
+  const { status, label } = ACTION_ERROR_RESPONSES[err.code];
+  return reply.code(status).send({ error: label, message: err.message, issues: err.issues });
 }
 
 export function registerBlockRoutes(services: BlockRoutesServices): FastifyPluginCallback {
@@ -107,6 +127,92 @@ export function registerBlockRoutes(services: BlockRoutesServices): FastifyPlugi
         return { data: block };
       },
     );
+
+    // --- List declared actions/hooks + registered handlers (Phase 14) ---
+    // Static path, so it resolves ahead of GET /:name. The CLI polls this after
+    // vendoring code to know when the dev server has reloaded the new handlers.
+    fastify.get('/actions', { preHandler: guard('read') }, async () => {
+      const executor = services.actionExecutor;
+      return {
+        data: {
+          declared: executor ? await executor.listDeclaredActions() : [],
+          registered: {
+            actions: (blockEngine.actionRegistry?.listActions() ?? []).map((a) => ({
+              block: a.block,
+              name: a.name,
+              description: a.description,
+            })),
+            hooks: (blockEngine.actionRegistry?.listHooks() ?? []).map((h) => ({
+              block: h.block,
+              name: h.name,
+              description: h.description,
+            })),
+          },
+        },
+      };
+    });
+
+    // --- Invoke a block action (Phase 14) ---
+    // Parameterized catch-all: new actions are live the moment their block is
+    // installed, no route re-registration (same trick as data-routes). RBAC is
+    // resolved per action (manifest override, default `update` on `blocks`).
+    fastify.post<{ Params: { block: string; action: string } }>(
+      '/:block/actions/:action',
+      async (request, reply) => {
+        const executor = services.actionExecutor;
+        if (!executor) {
+          return reply
+            .code(404)
+            .send({ error: 'Not Found', message: 'Block actions are not enabled on this server' });
+        }
+        try {
+          return await invokeAction(executor, request, reply);
+        } catch (err) {
+          if (err instanceof ActionError) return sendActionError(reply, err);
+          throw err;
+        }
+      },
+    );
+
+    /** Resolves, RBAC-checks (when enforcing), and executes one action invocation. */
+    async function invokeAction(
+      executor: ActionExecutor,
+      request: Parameters<preHandlerHookHandler>[0] & {
+        params: { block: string; action: string };
+      },
+      reply: FastifyReply,
+    ) {
+      const { definition, rbac } = await executor.resolveAction(
+        request.params.block,
+        request.params.action,
+      );
+      if (services.enforce && !(await passesActionRbac(request, reply, rbac))) {
+        return reply; // response already sent (401/403)
+      }
+      const result = await executor.executeAction(definition, request.body, request.auth ?? null);
+      return { data: result ?? null };
+    }
+
+    /** Enforces the action's resolved RBAC pair; sends 401/403 and returns false on failure. */
+    async function passesActionRbac(
+      request: Parameters<preHandlerHookHandler>[0],
+      reply: FastifyReply,
+      rbac: { resource: string; action: Action },
+    ): Promise<boolean> {
+      if (!request.auth) {
+        await reply.code(401).send({ error: 'Unauthorized', message: 'Authentication required' });
+        return false;
+      }
+      const allowed = await permissionEngine.can(request.auth, rbac.action, rbac.resource);
+      if (!allowed) {
+        await reply.code(403).send({
+          error: 'Forbidden',
+          message: `Missing permission: ${rbac.action} on "${rbac.resource}"`,
+        });
+        return false;
+      }
+      return true;
+    }
 
     // --- Uninstall a block ---
     fastify.delete<{ Params: { name: string }; Querystring: { dropData?: string } }>(

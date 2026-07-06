@@ -80,6 +80,37 @@ function checkConsistency(manifest: BlockManifest): string[] {
     issues.push('a block cannot depend on itself');
   }
 
+  // Actions, hooks, and code file paths must be unique within the block.
+  issues.push(
+    ...checkDuplicates(
+      'action',
+      manifest.actions.map((a) => a.name),
+    ),
+  );
+  issues.push(
+    ...checkDuplicates(
+      'hook',
+      manifest.hooks.map((h) => h.name),
+    ),
+  );
+  issues.push(
+    ...checkDuplicates(
+      'code file',
+      manifest.code.map((f) => f.path),
+    ),
+  );
+
+  return issues;
+}
+
+/** Flags repeated names in a manifest list (`duplicate action "x"`). */
+function checkDuplicates(kind: string, names: string[]): string[] {
+  const seen = new Set<string>();
+  const issues: string[] = [];
+  for (const name of names) {
+    if (seen.has(name)) issues.push(`duplicate ${kind} "${name}"`);
+    seen.add(name);
+  }
   return issues;
 }
 

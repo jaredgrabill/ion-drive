@@ -15,6 +15,8 @@ export { startTelemetry } from './otel-setup.js';
 export type { TelemetryHandle, TelemetryLogger } from './otel-setup.js';
 export { installRequestTracing } from './request-tracing.js';
 export {
+  recordActionRun,
+  recordHookDelivery,
   recordHttpRequest,
   recordSchemaChange,
   recordTaskRun,

@@ -20,6 +20,7 @@ import type { DataService } from '../data/data-service.js';
 import type { MessageBus } from '../messaging/message-bus.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
 import type { TaskEngine } from '../tasks/index.js';
+import type { ActionRegistry } from './action-registry.js';
 import {
   type BlockInstallReport,
   type BlockManifest,
@@ -49,6 +50,10 @@ export interface BlockInstallerServices {
   roleManager?: RoleManager;
   /** Optional — required only if a manifest declares subscriptions. */
   bus?: MessageBus;
+  /** Optional — required only if a manifest declares actions/hooks (Phase 14). */
+  actionRegistry?: ActionRegistry;
+  /** Names of plugins loaded through the plugin host, for `requires.plugins` validation. */
+  pluginNames?: string[];
 }
 
 export interface InstallOptions {
@@ -86,8 +91,14 @@ export class BlockInstaller {
       rolesCreated: [],
       rolesSkipped: [],
       subscriptionsRegistered: [],
+      actionsExposed: [],
+      hooksExposed: [],
       warnings: [],
     };
+
+    // Requirements first: a block whose vendored code is missing must fail
+    // (or, in preview, report) before any schema is touched.
+    this.checkRequirements(manifest, report, dryRun);
 
     await this.applyObjects(manifest, report, dryRun);
     await this.applyRelationships(manifest, report, dryRun);
@@ -97,6 +108,59 @@ export class BlockInstaller {
     this.applySubscriptions(manifest, report, dryRun);
 
     return report;
+  }
+
+  /**
+   * Validates the manifest's runtime requirements (Phase 14): every declared
+   * action/hook must have a handler registered by the block's vendored code,
+   * every `requires.handlers` entry must be a registered bus handler, and every
+   * `requires.plugins` entry must be a loaded plugin. On a real install a
+   * missing requirement throws with a "did you vendor its code?" pointer; in
+   * preview it becomes a warning so `dryRun` reports the same facts.
+   */
+  private checkRequirements(
+    manifest: BlockManifest,
+    report: BlockInstallReport,
+    dryRun: boolean,
+  ): void {
+    const missing = this.collectMissingRequirements(manifest);
+
+    for (const action of manifest.actions) report.actionsExposed.push(action.name);
+    for (const hook of manifest.hooks) report.hooksExposed.push(hook.name);
+
+    if (missing.length === 0) return;
+    if (dryRun) {
+      for (const item of missing) report.warnings.push(`Missing requirement: ${item}`);
+      return;
+    }
+    throw new BlockInstallError(
+      `Block "${manifest.name}" requires ${missing.join('; ')} — did you vendor its code? (expected in /blocks/${manifest.name})`,
+      report.warnings,
+    );
+  }
+
+  /** Human-readable descriptions of every unmet requirement. */
+  private collectMissingRequirements(manifest: BlockManifest): string[] {
+    const { actionRegistry, bus, pluginNames } = this.services;
+    const missing: string[] = [];
+    for (const action of manifest.actions) {
+      if (!actionRegistry?.hasAction(manifest.name, action.name)) {
+        missing.push(`action handler "${manifest.name}.${action.name}"`);
+      }
+    }
+    for (const hook of manifest.hooks) {
+      if (!actionRegistry?.hasHook(manifest.name, hook.name)) {
+        missing.push(`hook handler "${manifest.name}.${hook.name}"`);
+      }
+    }
+    for (const handler of manifest.requires.handlers) {
+      if (!bus?.hasHandler(handler)) missing.push(`bus handler "${handler}"`);
+    }
+    const loaded = new Set(pluginNames ?? []);
+    for (const plugin of manifest.requires.plugins) {
+      if (!loaded.has(plugin)) missing.push(`plugin "${plugin}"`);
+    }
+    return missing;
   }
 
   private async applyObjects(

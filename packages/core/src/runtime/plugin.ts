@@ -15,6 +15,7 @@
  * See ADR-015.
  */
 
+import type { ActionRegistry } from '../blocks/action-registry.js';
 import type { IonDriveConfig } from '../config/index.js';
 import type { LoggerProvider } from '../logging/logger-provider.js';
 import type { MessageBus } from '../messaging/message-bus.js';
@@ -30,6 +31,12 @@ export interface PluginContext {
   logger: LoggerProvider;
   /** The message bus — subscribe to events or register handlers. */
   bus: MessageBus;
+  /**
+   * Register block actions/hooks (Phase 14). Vendored block code lives in the
+   * user's project as a plugin whose `setup` calls
+   * `ctx.actions.registerAction(...)` / `ctx.actions.registerHook(...)`.
+   */
+  actions: ActionRegistry;
 }
 
 /** A pluggable extension to the Ion Drive runtime. */
@@ -95,7 +102,15 @@ export async function loadPlugins(options: LoadPluginsOptions): Promise<LoadedPl
       logger: context.logger.child({ plugin: plugin.name }),
     };
     context.logger.info(`Loading plugin "${plugin.name}"`);
-    await plugin.setup(pluginContext);
+    try {
+      await plugin.setup(pluginContext);
+    } catch (err) {
+      // Error isolation (Phase 14): a throwing plugin — typically a vendored
+      // block — fails boot with a message naming the plugin, never a bare stack.
+      throw new PluginLoadError(
+        `Plugin "${plugin.name}" failed to load: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   return {

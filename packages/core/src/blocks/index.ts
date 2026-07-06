@@ -8,10 +8,10 @@
  * install flows go through here so the ledger and the live schema never drift.
  *
  * Distribution note: the engine is **content-agnostic**. It installs whatever
- * validated manifest it is handed — bundled example (`@ionshift/ion-drive-blocks`), a
- * local `block.json`, or a remote registry item resolved by the CLI. Keeping the
- * catalog out of the engine avoids coupling the runtime to any example content
- * (and any package-dependency cycle). See ADR-013.
+ * validated manifest it is handed — a registry artifact resolved by the CLI
+ * (the official catalog lives in the separate `ionshift/blocks` repo, ADR-018),
+ * a local `block.json`, or a POSTed body. Keeping the catalog out of the engine
+ * avoids coupling the runtime to any example content. See ADR-013/ADR-018.
  */
 
 import type { Kysely } from 'kysely';
@@ -21,6 +21,7 @@ import type { SystemDatabase } from '../db/types.js';
 import type { MessageBus } from '../messaging/message-bus.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
 import type { TaskEngine } from '../tasks/index.js';
+import type { ActionRegistry } from './action-registry.js';
 import { BlockInstallError, BlockInstaller } from './block-installer.js';
 import { BlockManifestError, parseManifest } from './block-manifest.js';
 import { BlockStore, bootstrapBlockTables } from './block-store.js';
@@ -52,6 +53,10 @@ export interface BlockEngineServices {
   roleManager?: RoleManager;
   /** Message bus — required only for blocks that declare subscriptions. */
   bus?: MessageBus;
+  /** Action/hook registry — required only for blocks that declare actions/hooks (Phase 14). */
+  actionRegistry?: ActionRegistry;
+  /** Names of loaded plugins, for `requires.plugins` validation (Phase 14). */
+  pluginNames?: string[];
 }
 
 export interface InstallBlockOptions {
@@ -68,6 +73,8 @@ export interface UninstallBlockOptions {
 
 export class BlockEngine {
   readonly store: BlockStore;
+  /** The action/hook registry vendored block code registers into (Phase 14). */
+  readonly actionRegistry?: ActionRegistry;
   private readonly installer: BlockInstaller;
   private readonly bus?: MessageBus;
 
@@ -78,6 +85,7 @@ export class BlockEngine {
     this.store = new BlockStore(db);
     this.installer = new BlockInstaller(services);
     this.bus = services.bus;
+    this.actionRegistry = services.actionRegistry;
   }
 
   /**
@@ -251,6 +259,25 @@ export type {
   BlockRelationship,
   BlockRole,
   BlockStatus,
+  BlockActionDeclaration,
+  BlockHookDeclaration,
+  BlockCodeFile,
   InstalledBlock,
   BlockInstallReport,
 } from './block-types.js';
+export { ActionRegistry, ACTION_REGISTRY } from './action-registry.js';
+export type {
+  ActionContext,
+  ActionDefinition,
+  ActionRbac,
+  HookContext,
+  HookDefinition,
+  HookResult,
+} from './action-registry.js';
+export { ActionExecutor, ActionError, mcpShapeForAction } from './action-executor.js';
+export type {
+  ActionErrorCode,
+  ActionExecutorDeps,
+  DeclaredAction,
+  HookDelivery,
+} from './action-executor.js';

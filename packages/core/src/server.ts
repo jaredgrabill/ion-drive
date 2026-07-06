@@ -12,6 +12,7 @@ import { installAdminStatic } from './api/admin-static.js';
 import { registerBlockRoutes } from './api/block-routes.js';
 import { registerDataRoutes } from './api/data-routes.js';
 import { registerGraphQLRoutes } from './api/graphql/plugin.js';
+import { registerHookRoutes } from './api/hook-routes.js';
 import { registerLogRoutes } from './api/log-routes.js';
 import { registerOpenApiRoutes } from './api/openapi-routes.js';
 import { installRateLimit } from './api/rate-limit-options.js';
@@ -26,7 +27,7 @@ import {
   installRbacEnforcement,
   installSessionMiddleware,
 } from './auth/index.js';
-import { BlockEngine } from './blocks/index.js';
+import { ACTION_REGISTRY, ActionExecutor, ActionRegistry, BlockEngine } from './blocks/index.js';
 import { CACHE_SERVICE, MemoryCache } from './cache/index.js';
 import {
   ConfigStore,
@@ -176,16 +177,40 @@ function buildLoggerOptions(config: IonDriveConfig, logBuffer: LogBuffer) {
   return { level, stream: pino.multistream(streams) };
 }
 
+/** Options accepted by {@link createServer}. */
+export interface CreateServerOptions {
+  /**
+   * Plugins loaded during assembly, after core registers its default services
+   * and before dependents are built — so a plugin can replace a service (cache,
+   * email, bus, logger) or register block action/hook handlers. Runs *after*
+   * any `ION_PLUGINS` env specifiers, so programmatic plugins win ties.
+   */
+  plugins?: IonPlugin[];
+}
+
 /**
- * Creates and configures the Ion Drive Fastify server instance.
+ * Creates and configures a complete Ion Drive server (the **public framework
+ * API** — see docs/concepts/framework-mode.md).
  *
- * This is the main entry point for the platform runtime. The server
- * dynamically registers API routes based on the current schema state
- * and provides REST, GraphQL, and MCP endpoints.
+ * A scaffolded project's `server.ts` is a thin composition root around this
+ * call: it imports the vendored blocks barrel and passes it as `plugins`.
+ *
+ * Lifecycle:
+ *  1. config is loaded/validated (`ION_*` env + `configOverrides`);
+ *  2. core services and their defaults are registered;
+ *  3. plugins run `setup` (may swap services / register handlers+actions);
+ *  4. routes are registered; plugins' `onReady` runs;
+ *  5. the caller `listen()`s on `handle.server`;
+ *  6. `handle.close()` releases everything (plugins' `onShutdown`, schedulers,
+ *     pools, telemetry) — SIGINT/SIGTERM call it automatically.
+ *
+ * Semver promise: the shape of {@link CreateServerOptions}, the returned
+ * handle's documented members, and the `IonPlugin`/`PluginContext` contracts
+ * follow semantic versioning — breaking changes to them mean a major release.
  */
 export async function createServer(
   configOverrides?: Partial<IonDriveConfig>,
-  options?: { plugins?: IonPlugin[] },
+  options?: CreateServerOptions,
 ) {
   const config = loadConfig(configOverrides);
 
@@ -255,11 +280,16 @@ export async function createServer(
   );
 
   // --- Plugins: run their setup so they can override services / register handlers ---
+  // The action registry exists before plugins load so vendored block code can
+  // register its action/hook handlers during setup (Phase 14).
+  const actionRegistry = new ActionRegistry();
+  registry.set(ACTION_REGISTRY, actionRegistry);
   const pluginContext: PluginContext = {
     registry,
     config,
     logger,
     bus: registry.require(MESSAGE_BUS),
+    actions: actionRegistry,
   };
   const loadedPlugins = await loadPlugins({
     plugins: options?.plugins,
@@ -311,8 +341,21 @@ export async function createServer(
     taskEngine,
     roleManager,
     bus,
+    actionRegistry,
+    pluginNames: loadedPlugins.plugins.map((p) => p.name),
   });
   await blockEngine.initialize();
+
+  // --- Phase 14: action executor (shared by REST, MCP, and webhook hooks) ---
+  const actionExecutor = new ActionExecutor({
+    registry: actionRegistry,
+    getInstalledBlock: (name) => blockEngine.getInstalled(name),
+    listInstalledBlocks: () => blockEngine.listInstalled(),
+    dataService,
+    secrets: secretsManager,
+    config,
+    logger,
+  });
 
   const baseURL = config.publicUrl ?? `http://localhost:${config.port}`;
   const trustedOrigins = [...new Set([config.adminUrl ?? 'http://localhost:3001', baseURL])];
@@ -416,7 +459,15 @@ export async function createServer(
   });
 
   // --- OpenAPI spec (always current, generated from the live schema) ---
-  await server.register(registerOpenApiRoutes(schemaManager.registry), { prefix: '/api/v1' });
+  await server.register(
+    registerOpenApiRoutes(schemaManager.registry, {
+      actionSurface: async () => ({
+        actions: await actionExecutor.listDeclaredActions(),
+        hooks: await actionExecutor.listDeclaredHooks(),
+      }),
+    }),
+    { prefix: '/api/v1' },
+  );
 
   // --- GraphQL surface (graphql-yoga, schema reflected from the registry) ---
   await server.register(
@@ -429,7 +480,7 @@ export async function createServer(
   );
 
   // --- MCP server (Streamable HTTP, stateless) ---
-  await server.register(registerMcpRoutes({ schemaManager, dataService }), {
+  await server.register(registerMcpRoutes({ schemaManager, dataService, actionExecutor }), {
     prefix: '/api/v1/mcp',
   });
 
@@ -472,12 +523,20 @@ export async function createServer(
     { prefix: '/api/v1/tasks' },
   );
 
-  // --- Building-blocks routes (install/list/uninstall domain blocks) ---
+  // --- Building-blocks routes (install/list/uninstall + actions, Phase 14) ---
   if (config.blocksEnabled) {
     await server.register(
-      registerBlockRoutes({ blockEngine, permissionEngine, enforce: config.requireAuth }),
+      registerBlockRoutes({
+        blockEngine,
+        permissionEngine,
+        actionExecutor,
+        enforce: config.requireAuth,
+      }),
       { prefix: '/api/v1/blocks' },
     );
+    // Inbound webhooks for blocks with vendored logic. Session-auth exempt by
+    // design (handlers verify provider signatures over the raw body).
+    await server.register(registerHookRoutes({ actionExecutor }), { prefix: '/api/v1/hooks' });
   } else {
     server.log.warn('Building-blocks surface disabled (ION_BLOCKS_ENABLED=false)');
   }
@@ -547,11 +606,18 @@ export async function createServer(
     apiKeyManager,
     taskEngine,
     blockEngine,
+    actionRegistry,
     telemetry,
     logBuffer,
     close,
   };
 }
+
+/**
+ * The handle returned by {@link createServer}: the Fastify instance plus every
+ * assembled service, and `close()` for graceful programmatic shutdown.
+ */
+export type IonDriveServer = Awaited<ReturnType<typeof createServer>>;
 
 /**
  * Starts the Ion Drive server.

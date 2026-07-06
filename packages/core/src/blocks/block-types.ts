@@ -16,6 +16,7 @@
  */
 
 import { z } from 'zod';
+import { ACTIONS } from '../auth/rbac/policy-types.js';
 import type { Subscription } from '../messaging/event-types.js';
 import { COLUMN_TYPES } from '../schema/types.js';
 import type {
@@ -119,6 +120,75 @@ const subscriptionSchema = z
   .strict();
 
 /**
+ * A vendored code file distributed with the block (Phase 14, ADR-018). The CLI
+ * copies these into the user's project at `/blocks/<block>/<path>`; the server
+ * ignores them at install time (the ledger keeps the snapshot for future
+ * `diff` support). Paths are relative and must stay inside the block folder.
+ */
+const codeFileSchema = z
+  .object({
+    path: z
+      .string()
+      .min(1)
+      .max(255)
+      .refine((p) => !p.startsWith('/') && !p.includes('..'), 'must be a safe relative path'),
+    contents: z.string().max(512_000),
+  })
+  .strict();
+
+/**
+ * A callable action the block exposes (Phase 14). The *declaration* here is the
+ * public surface (route + OpenAPI + MCP tool); the *implementation* is a
+ * handler the block's vendored code registers via `ctx.actions.registerAction`.
+ * Install fails if a declared action has no registered handler.
+ */
+const actionDeclarationSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-z][a-z0-9_]*$/, 'must be lowercase snake case'),
+    description: z.string().max(2000).optional(),
+    /** JSON-Schema description of the input payload (documentation surfaces only). */
+    input: z.record(z.unknown()).optional(),
+    /** RBAC override; default requires `update` on the `blocks` resource. */
+    rbac: z
+      .object({
+        resource: z.string().min(1).max(64).optional(),
+        action: z.enum(ACTIONS).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+/** An inbound-webhook endpoint the block exposes at `/api/v1/hooks/<block>/<name>`. */
+const hookDeclarationSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-z][a-z0-9_]*$/, 'must be lowercase snake case'),
+    description: z.string().max(2000).optional(),
+  })
+  .strict();
+
+/**
+ * What must be present in the runtime for the block to work (Phase 14):
+ * `handlers` are message-bus handler names; `plugins` are plugin names loaded
+ * through the plugin host. Both are validated at install time with actionable
+ * errors ("did you vendor its code?").
+ */
+const requiresSchema = z
+  .object({
+    handlers: z.array(z.string().min(1).max(128)).default([]),
+    plugins: z.array(z.string().min(1).max(128)).default([]),
+  })
+  .strict();
+
+/**
  * The building-block manifest — the shadcn `registry-item.json` analog.
  *
  * `name`/`version`/`title`/`description`/`author`/`categories`/`meta` are pure
@@ -159,6 +229,14 @@ export const blockManifestSchema = z
     roles: z.array(roleSchema).default([]),
     /** Event subscriptions the block registers on the message bus (Phase 9). */
     subscriptions: z.array(subscriptionSchema).default([]),
+    /** Callable actions exposed at `/api/v1/blocks/<name>/actions/<action>` (Phase 14). */
+    actions: z.array(actionDeclarationSchema).default([]),
+    /** Inbound webhooks exposed at `/api/v1/hooks/<name>/<hook>` (Phase 14). */
+    hooks: z.array(hookDeclarationSchema).default([]),
+    /** Runtime requirements validated at install time (Phase 14). */
+    requires: requiresSchema.default({ handlers: [], plugins: [] }),
+    /** Vendored code files the CLI copies into the user's `/blocks/<name>/` (Phase 14). */
+    code: z.array(codeFileSchema).default([]),
     /** Arbitrary metadata (docs URL, icon, etc.). */
     meta: z.record(z.unknown()).default({}),
   })
@@ -178,6 +256,9 @@ export type BlockObject = z.infer<typeof objectSchema>;
 export type BlockRelationship = z.infer<typeof relationshipSchema>;
 export type BlockRole = z.infer<typeof roleSchema>;
 export type BlockSubscription = z.infer<typeof subscriptionSchema>;
+export type BlockActionDeclaration = z.infer<typeof actionDeclarationSchema>;
+export type BlockHookDeclaration = z.infer<typeof hookDeclarationSchema>;
+export type BlockCodeFile = z.infer<typeof codeFileSchema>;
 
 /**
  * Lifecycle status of an installed block, tracked in `_ion_blocks`.
@@ -217,6 +298,10 @@ export interface BlockInstallReport {
   rolesCreated: string[];
   rolesSkipped: string[];
   subscriptionsRegistered: string[];
+  /** Actions exposed at `/api/v1/blocks/<block>/actions/<name>` (Phase 14). */
+  actionsExposed: string[];
+  /** Hooks exposed at `/api/v1/hooks/<block>/<name>` (Phase 14). */
+  hooksExposed: string[];
   warnings: string[];
 }
 

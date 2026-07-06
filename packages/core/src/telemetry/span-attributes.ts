@@ -40,6 +40,12 @@ export const ION_ATTR = {
   EVENT_CONSUMER: 'ion.event.consumer',
   /** The bus handler a subscription routes to: `log_event` | `persist_event` | … */
   EVENT_HANDLER: 'ion.event.handler',
+  /** The building block an action/hook invocation belongs to. */
+  BLOCK: 'ion.block',
+  /** A block action's name, e.g. `create_payment_link`. */
+  ACTION: 'ion.action',
+  /** A block webhook hook's name, e.g. `stripe`. */
+  HOOK: 'ion.hook',
   /** Terminal status of an operation: `success` | `failed`. */
   OUTCOME: 'ion.outcome',
 } as const;

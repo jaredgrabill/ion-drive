@@ -13,6 +13,7 @@
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { FastifyPluginCallback } from 'fastify';
+import type { ActionExecutor } from '../blocks/action-executor.js';
 import type { DataService } from '../data/data-service.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
 import { createMcpServer } from './server.js';
@@ -20,6 +21,8 @@ import { createMcpServer } from './server.js';
 export interface McpRoutesOptions {
   schemaManager: SchemaManager;
   dataService: DataService;
+  /** When present, installed blocks' actions are exposed as `<block>_<action>` tools (Phase 14). */
+  actionExecutor?: ActionExecutor;
 }
 
 /** JSON-RPC error returned for unsupported methods in stateless mode. */
@@ -30,11 +33,16 @@ const METHOD_NOT_ALLOWED = {
 };
 
 export function registerMcpRoutes(options: McpRoutesOptions): FastifyPluginCallback {
-  const { schemaManager, dataService } = options;
+  const { schemaManager, dataService, actionExecutor } = options;
 
   return (fastify, _opts, done) => {
     fastify.post('/', async (request, reply) => {
-      const server = createMcpServer({ schemaManager, dataService });
+      // Declared actions are read per request (like the schema), so tools for
+      // newly installed blocks appear without a restart.
+      const actions = actionExecutor
+        ? { declared: await actionExecutor.listDeclaredActions(), executor: actionExecutor }
+        : undefined;
+      const server = createMcpServer({ schemaManager, dataService, actions });
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         // Stateless request/response: return a single JSON body rather than

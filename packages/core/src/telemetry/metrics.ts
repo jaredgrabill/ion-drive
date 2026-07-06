@@ -28,6 +28,10 @@ let taskDuration: ReturnType<Meter['createHistogram']> | undefined;
 let eventsPublished: ReturnType<Meter['createCounter']> | undefined;
 let eventDeliveries: ReturnType<Meter['createCounter']> | undefined;
 let eventDeliveryDuration: ReturnType<Meter['createHistogram']> | undefined;
+let actionRuns: ReturnType<Meter['createCounter']> | undefined;
+let actionDuration: ReturnType<Meter['createHistogram']> | undefined;
+let hookDeliveries: ReturnType<Meter['createCounter']> | undefined;
+let hookDuration: ReturnType<Meter['createHistogram']> | undefined;
 
 function getMeter(): Meter {
   if (!meter) meter = metrics.getMeter(METER_NAME);
@@ -48,6 +52,10 @@ export function resetMetrics(): void {
   eventsPublished = undefined;
   eventDeliveries = undefined;
   eventDeliveryDuration = undefined;
+  actionRuns = undefined;
+  actionDuration = undefined;
+  hookDeliveries = undefined;
+  hookDuration = undefined;
 }
 
 /** Records one completed HTTP request: latency histogram + a total counter. */
@@ -94,6 +102,40 @@ export function recordTaskRun(durationMs: number, attributes: Attributes): void 
   }
   taskRuns.add(1, attributes);
   taskDuration.record(durationMs, attributes);
+}
+
+/** Records one block-action invocation: a total counter and a duration histogram (Phase 14). */
+export function recordActionRun(durationMs: number, attributes: Attributes): void {
+  if (!actionRuns) {
+    actionRuns = getMeter().createCounter('ion.action.invocations', {
+      description: 'Total block action invocations',
+    });
+  }
+  if (!actionDuration) {
+    actionDuration = getMeter().createHistogram('ion.action.duration', {
+      description: 'Duration of block action handler invocations',
+      unit: 'ms',
+    });
+  }
+  actionRuns.add(1, attributes);
+  actionDuration.record(durationMs, attributes);
+}
+
+/** Records one inbound-webhook hook delivery: a total counter and a duration histogram (Phase 14). */
+export function recordHookDelivery(durationMs: number, attributes: Attributes): void {
+  if (!hookDeliveries) {
+    hookDeliveries = getMeter().createCounter('ion.hook.deliveries', {
+      description: 'Total inbound webhook deliveries to block hooks',
+    });
+  }
+  if (!hookDuration) {
+    hookDuration = getMeter().createHistogram('ion.hook.duration', {
+      description: 'Duration of block hook handler deliveries',
+      unit: 'ms',
+    });
+  }
+  hookDeliveries.add(1, attributes);
+  hookDuration.record(durationMs, attributes);
 }
 
 /** Increments the published-event counter (an event written to the outbox). */

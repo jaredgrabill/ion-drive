@@ -6,6 +6,7 @@
  */
 
 export { createServer } from './server.js';
+export type { CreateServerOptions, IonDriveServer } from './server.js';
 export { loadConfig } from './config/index.js';
 export type { IonDriveConfig } from './config/index.js';
 
@@ -135,10 +136,28 @@ export type {
   BlockRelationship,
   BlockRole,
   BlockStatus,
+  BlockActionDeclaration,
+  BlockHookDeclaration,
+  BlockCodeFile,
   InstalledBlock,
   BlockInstallReport,
 } from './blocks/index.js';
 export { registerBlockRoutes } from './api/block-routes.js';
+
+// Block actions + hooks — the vendored-logic seam (Phase 14)
+export { ActionRegistry, ACTION_REGISTRY, ActionExecutor, ActionError } from './blocks/index.js';
+export type {
+  ActionContext,
+  ActionDefinition,
+  ActionRbac,
+  ActionErrorCode,
+  DeclaredAction,
+  HookContext,
+  HookDefinition,
+  HookResult,
+  HookDelivery,
+} from './blocks/index.js';
+export { registerHookRoutes } from './api/hook-routes.js';
 
 // Extensibility runtime — service registry + plugin host (Phase 9)
 export {

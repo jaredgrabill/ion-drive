@@ -15,6 +15,12 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import {
+  ActionError,
+  type ActionExecutor,
+  type DeclaredAction,
+  mcpShapeForAction,
+} from '../blocks/action-executor.js';
 import type { DataService } from '../data/data-service.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
 import type { ColumnTypeName, FieldConstraints, FieldDefinition } from '../schema/types.js';
@@ -51,6 +57,15 @@ const constraintsShape = z
 export interface McpServerOptions {
   schemaManager: SchemaManager;
   dataService: DataService;
+  /**
+   * Block actions to expose as `<block>_<action>` tools (Phase 14). The list
+   * is fetched by the transport plugin per request, so newly installed blocks
+   * appear without restart — surface parity with REST and OpenAPI.
+   */
+  actions?: {
+    declared: DeclaredAction[];
+    executor: ActionExecutor;
+  };
 }
 
 /**
@@ -633,5 +648,61 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     }),
   );
 
+  // =========================================================================
+  // Tools — Block actions (Phase 14): one tool per declared action
+  // =========================================================================
+
+  if (options.actions) {
+    const { declared, executor } = options.actions;
+    for (const action of declared) {
+      registerActionTool(server, executor, action);
+    }
+  }
+
   return server;
+}
+
+/**
+ * Registers one `<block>_<action>` tool that invokes a block action through
+ * the shared {@link ActionExecutor} (same validation/timeout/metrics path as
+ * the REST route). Tool parameters mirror the handler's registered Zod object
+ * schema; without one, a single opaque `input` record is accepted.
+ */
+function registerActionTool(
+  server: McpServer,
+  executor: ActionExecutor,
+  action: DeclaredAction,
+): void {
+  const registered = executor.getRegisteredAction(action.block, action.name);
+  const shape = mcpShapeForAction(registered);
+  const usesFallbackShape = !(registered?.input instanceof z.ZodObject);
+
+  server.tool(
+    `${action.block}_${action.name}`,
+    action.description ??
+      `Invoke the "${action.name}" action of the "${action.block}" building block.`,
+    shape,
+    async (args: Record<string, unknown>) => {
+      try {
+        const { definition } = await executor.resolveAction(action.block, action.name);
+        // Fallback shape wraps the payload under `input` — unwrap before executing.
+        const payload =
+          usesFallbackShape && args && typeof args.input === 'object' && args.input !== null
+            ? (args.input as Record<string, unknown>)
+            : args;
+        const result = await executor.executeAction(definition, payload, null);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result ?? null, null, 2) }],
+        };
+      } catch (err) {
+        const message =
+          err instanceof ActionError
+            ? `${err.code}: ${err.message}`
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        return { content: [{ type: 'text' as const, text: `Error — ${message}` }], isError: true };
+      }
+    },
+  );
 }

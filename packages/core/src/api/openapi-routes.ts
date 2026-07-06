@@ -6,19 +6,98 @@
  */
 
 import type { FastifyInstance, FastifyPluginCallback } from 'fastify';
+import type { DeclaredAction } from '../blocks/action-executor.js';
+import type { BlockHookDeclaration } from '../blocks/block-types.js';
 import type { SchemaRegistry } from '../schema/schema-registry.js';
 import { COLUMN_TYPES } from '../schema/types.js';
 import type { ColumnTypeName, DataObjectDefinition, FieldDefinition } from '../schema/types.js';
 
-export function registerOpenApiRoutes(registry: SchemaRegistry): FastifyPluginCallback {
+export interface OpenApiRouteOptions {
+  /**
+   * Supplies the installed blocks' declared actions/hooks (Phase 14) so they
+   * appear as operations. Fetched per spec request — always current, like the
+   * schema itself.
+   */
+  actionSurface?: () => Promise<{
+    actions: DeclaredAction[];
+    hooks: { block: string; hook: BlockHookDeclaration }[];
+  }>;
+}
+
+export function registerOpenApiRoutes(
+  registry: SchemaRegistry,
+  options: OpenApiRouteOptions = {},
+): FastifyPluginCallback {
   return (fastify: FastifyInstance, _opts: unknown, done: () => void) => {
     fastify.get('/openapi.json', async (_request, reply) => {
       const spec = generateOpenApiSpec(registry);
+      if (options.actionSurface) {
+        addActionPaths(spec, await options.actionSurface());
+      }
       return reply.header('content-type', 'application/json').send(spec);
     });
 
     done();
   };
+}
+
+/** Adds one operation per declared block action/hook to a generated spec (Phase 14). */
+function addActionPaths(
+  spec: Record<string, unknown>,
+  surface: {
+    actions: DeclaredAction[];
+    hooks: { block: string; hook: BlockHookDeclaration }[];
+  },
+): void {
+  const paths = spec.paths as Record<string, unknown>;
+  const tags = spec.tags as { name: string; description?: string }[];
+  const blocks = new Set<string>();
+
+  for (const action of surface.actions) {
+    blocks.add(action.block);
+    paths[`/api/v1/blocks/${action.block}/actions/${action.name}`] = {
+      post: {
+        summary: action.description ?? `Invoke ${action.block}.${action.name}`,
+        operationId: `action_${action.block}_${action.name}`,
+        tags: [`Block: ${action.block}`],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: action.input ?? { type: 'object', additionalProperties: true },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Action result', content: { 'application/json': {} } },
+          '400': { description: 'Input validation failed' },
+          '404': { description: 'Block not installed or action not declared' },
+        },
+      },
+    };
+  }
+
+  for (const { block, hook } of surface.hooks) {
+    blocks.add(block);
+    paths[`/api/v1/hooks/${block}/${hook.name}`] = {
+      post: {
+        summary: hook.description ?? `Inbound webhook ${block}.${hook.name}`,
+        operationId: `hook_${block}_${hook.name}`,
+        tags: [`Block: ${block}`],
+        description:
+          'Webhook endpoint for third-party deliveries. Session-auth exempt; the handler verifies provider signatures over the raw body.',
+        requestBody: { required: false, content: { '*/*': {} } },
+        responses: { '200': { description: 'Delivery accepted' } },
+      },
+    };
+  }
+
+  for (const block of [...blocks].sort()) {
+    tags.push({
+      name: `Block: ${block}`,
+      description: `Actions and hooks of the "${block}" block`,
+    });
+  }
 }
 
 function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> {
