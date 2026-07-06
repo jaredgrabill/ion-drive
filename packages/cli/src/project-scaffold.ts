@@ -40,6 +40,9 @@ function packageJson(name: string): string {
         zod: '^3.24.0',
       },
       devDependencies: {
+        // The CLI as a local devDep so `npx ion-drive …` resolves to the
+        // project's pinned version (the bare npm name is not ours).
+        '@ion-drive/cli': `^${CLI_VERSION}`,
         '@types/node': '^22.10.0',
         typescript: '^5.7.0',
       },
