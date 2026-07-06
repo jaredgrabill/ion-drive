@@ -9,12 +9,16 @@
  * consumer group across instances**; a `perInstance` subscription forms a group
  * per instance, giving once-per-instance delivery instead. Handlers must be
  * idempotent on `event.id` since a crash mid-processing leads to redelivery.
+ * Each delivery emits an OpenTelemetry span and the `ion.event.*` metrics
+ * (delivery counter + duration histogram), mirroring the task runner.
  * See ADR-015.
  */
 
 import { randomUUID } from 'node:crypto';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import type { LoggerProvider } from '../logging/logger-provider.js';
+import { recordEventDelivery } from '../telemetry/metrics.js';
+import { ION_ATTR } from '../telemetry/span-attributes.js';
 import type { EventRow, EventStore } from './event-store.js';
 import type { IonEvent, Subscription } from './event-types.js';
 import type { OutboxBus } from './outbox-bus.js';
@@ -162,20 +166,25 @@ export class EventDispatcher {
       occurredAt: row.occurredAt,
     };
 
+    const metricAttributes = {
+      [ION_ATTR.EVENT_TOPIC]: row.topic,
+      [ION_ATTR.EVENT_CONSUMER]: consumer,
+      [ION_ATTR.EVENT_HANDLER]: subscription.handler,
+    };
+
     if (!handler) {
       const message = `No handler "${subscription.handler}" registered for consumer "${subscription.consumer}"`;
       this.logger.warn(message, { topic: row.topic });
       await this.store.markFailed(row.id, consumer, message);
+      recordEventDelivery(0, { ...metricAttributes, [ION_ATTR.OUTCOME]: 'failed' });
       return;
     }
 
     const span = trace.getTracer(TRACER_NAME).startSpan(`event ${row.topic}`, {
-      attributes: {
-        'ion.event.topic': row.topic,
-        'ion.event.consumer': consumer,
-        'ion.event.handler': subscription.handler,
-      },
+      attributes: metricAttributes,
     });
+    const startNs = process.hrtime.bigint();
+    let outcome: 'success' | 'failed' = 'success';
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new Error('Event handler timed out')),
@@ -189,6 +198,7 @@ export class EventDispatcher {
       );
       await this.store.markDone(row.id, consumer);
     } catch (err) {
+      outcome = 'failed';
       const message = err instanceof Error ? err.message : String(err);
       span.recordException(err instanceof Error ? err : new Error(message));
       span.setStatus({ code: SpanStatusCode.ERROR, message });
@@ -200,7 +210,10 @@ export class EventDispatcher {
       await this.store.markFailed(row.id, consumer, message);
     } finally {
       clearTimeout(timer);
+      const durationMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+      span.setAttribute(ION_ATTR.OUTCOME, outcome);
       span.end();
+      recordEventDelivery(durationMs, { ...metricAttributes, [ION_ATTR.OUTCOME]: outcome });
     }
   }
 

@@ -135,6 +135,16 @@ Token vocabulary for `persist_event`'s `map`: `event.id`, `event.topic`,
 `payload.before`, `payload.after`, `payload.diff`, and `payload.record`
 (after-image, falling back to the before-image on deletes).
 
+## Observability
+
+Every delivery runs inside an OpenTelemetry span (`event <topic>`), and the bus
+records custom metrics alongside the platform's `ion.task.*` instruments:
+`ion.event.published` counts events written to the outbox (by `ion.event.topic`),
+while `ion.event.deliveries` and the `ion.event.delivery.duration` histogram (ms)
+track each delivery attempt, dimensioned by topic, consumer group, handler, and
+outcome (`success` | `failed`). All of it is exposed at `GET /metrics` (or over
+OTLP) when telemetry is enabled, and is a no-op otherwise.
+
 ## Configuration
 
 | Env var | Default | Meaning |

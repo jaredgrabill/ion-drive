@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { recordHttpRequest, recordSchemaChange, recordTaskRun } from './metrics.js';
+import {
+  recordEventDelivery,
+  recordEventPublished,
+  recordHttpRequest,
+  recordSchemaChange,
+  recordTaskRun,
+} from './metrics.js';
 import { ION_ATTR, surfaceForPath } from './span-attributes.js';
 
 describe('surfaceForPath', () => {
@@ -21,5 +27,14 @@ describe('metric helpers', () => {
     expect(() => recordHttpRequest(12.3, { [ION_ATTR.SURFACE]: 'rest' })).not.toThrow();
     expect(() => recordSchemaChange('create_object', 'contacts')).not.toThrow();
     expect(() => recordTaskRun(5, { [ION_ATTR.OUTCOME]: 'success' })).not.toThrow();
+    expect(() => recordEventPublished('data.contacts.create')).not.toThrow();
+    expect(() =>
+      recordEventDelivery(5, {
+        [ION_ATTR.EVENT_TOPIC]: 'data.contacts.create',
+        [ION_ATTR.EVENT_CONSUMER]: 'audit',
+        [ION_ATTR.EVENT_HANDLER]: 'persist_event',
+        [ION_ATTR.OUTCOME]: 'success',
+      }),
+    ).not.toThrow();
   });
 });

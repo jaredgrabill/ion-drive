@@ -7,8 +7,8 @@
  * is a cheap no-op — callers never need to guard.
  *
  * These cover the platform's own signals (HTTP traffic per surface, schema
- * mutations, scheduled-task runs) on top of whatever auto-instrumentation an
- * operator layers in via a preload.
+ * mutations, scheduled-task runs, message-bus publishes/deliveries) on top of
+ * whatever auto-instrumentation an operator layers in via a preload.
  */
 
 import { type Attributes, type Meter, metrics } from '@opentelemetry/api';
@@ -25,6 +25,9 @@ let httpTotal: ReturnType<Meter['createCounter']> | undefined;
 let schemaChanges: ReturnType<Meter['createCounter']> | undefined;
 let taskRuns: ReturnType<Meter['createCounter']> | undefined;
 let taskDuration: ReturnType<Meter['createHistogram']> | undefined;
+let eventsPublished: ReturnType<Meter['createCounter']> | undefined;
+let eventDeliveries: ReturnType<Meter['createCounter']> | undefined;
+let eventDeliveryDuration: ReturnType<Meter['createHistogram']> | undefined;
 
 function getMeter(): Meter {
   if (!meter) meter = metrics.getMeter(METER_NAME);
@@ -42,6 +45,9 @@ export function resetMetrics(): void {
   schemaChanges = undefined;
   taskRuns = undefined;
   taskDuration = undefined;
+  eventsPublished = undefined;
+  eventDeliveries = undefined;
+  eventDeliveryDuration = undefined;
 }
 
 /** Records one completed HTTP request: latency histogram + a total counter. */
@@ -88,4 +94,31 @@ export function recordTaskRun(durationMs: number, attributes: Attributes): void 
   }
   taskRuns.add(1, attributes);
   taskDuration.record(durationMs, attributes);
+}
+
+/** Increments the published-event counter (an event written to the outbox). */
+export function recordEventPublished(topic: string): void {
+  if (!eventsPublished) {
+    eventsPublished = getMeter().createCounter('ion.event.published', {
+      description: 'Total events published to the message bus outbox',
+    });
+  }
+  eventsPublished.add(1, { [ION_ATTR.EVENT_TOPIC]: topic });
+}
+
+/** Records one event delivery attempt: a total counter and a duration histogram. */
+export function recordEventDelivery(durationMs: number, attributes: Attributes): void {
+  if (!eventDeliveries) {
+    eventDeliveries = getMeter().createCounter('ion.event.deliveries', {
+      description: 'Total message-bus event deliveries to consumer groups',
+    });
+  }
+  if (!eventDeliveryDuration) {
+    eventDeliveryDuration = getMeter().createHistogram('ion.event.delivery.duration', {
+      description: 'Duration of message-bus event handler deliveries',
+      unit: 'ms',
+    });
+  }
+  eventDeliveries.add(1, attributes);
+  eventDeliveryDuration.record(durationMs, attributes);
 }

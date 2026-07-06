@@ -10,6 +10,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { recordEventPublished } from '../telemetry/metrics.js';
 import type { EventStore } from './event-store.js';
 import type {
   BusHandler,
@@ -39,6 +40,7 @@ export class OutboxBus implements MessageBus {
       occurredAt: event.occurredAt ?? new Date(),
     };
     await this.store.insert(envelope, trx);
+    recordEventPublished(envelope.topic);
     // When published standalone (no caller transaction) the row is already
     // committed, so nudge the dispatcher; inside a transaction the caller wakes
     // us after it commits.

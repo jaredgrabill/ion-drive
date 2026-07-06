@@ -34,6 +34,12 @@ export const ION_ATTR = {
   TASK_TRIGGER: 'ion.task.trigger',
   /** A task handler's type: `log` | `http_request` | `noop` | … */
   TASK_TYPE: 'ion.task.type',
+  /** A bus event's topic, e.g. `data.contacts.create`. */
+  EVENT_TOPIC: 'ion.event.topic',
+  /** The consumer group an event delivery was claimed for. */
+  EVENT_CONSUMER: 'ion.event.consumer',
+  /** The bus handler a subscription routes to: `log_event` | `persist_event` | … */
+  EVENT_HANDLER: 'ion.event.handler',
   /** Terminal status of an operation: `success` | `failed`. */
   OUTCOME: 'ion.outcome',
 } as const;
