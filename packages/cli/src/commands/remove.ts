@@ -10,6 +10,7 @@ import ora from 'ora';
 import prompts from 'prompts';
 import { ApiError, IonApiClient } from '../api-client.js';
 import { readConfig, recordRemoved, writeConfig } from '../config.js';
+import { hasVendoredCode, removeFromBarrel } from '../project.js';
 import { c, log, orbitSpinner, sym } from '../ui.js';
 import { warnOnVersionSkew } from '../version-check.js';
 
@@ -58,6 +59,16 @@ export async function removeCommand(name: string, options: RemoveOptions): Promi
       log.dim(`    ${sym.dot} dropped ${removedObjects.join(', ')}`);
     }
     writeConfig(recordRemoved(config, name));
+
+    // Vendored code is the user's — unwire it from the barrel (so boot stays
+    // clean) but never delete their files.
+    if (removeFromBarrel(name)) {
+      log.dim(`    ${sym.dot} unwired from blocks/index.ts`);
+    }
+    if (hasVendoredCode(name)) {
+      log.info(`blocks/${name} is your code now — delete the folder if you no longer want it.`);
+    }
+
     log.raw();
     log.success(`${name} has left orbit. ${sym.satellite}`);
   } catch (err) {

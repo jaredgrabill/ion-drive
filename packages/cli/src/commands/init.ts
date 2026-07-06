@@ -1,9 +1,11 @@
 /**
- * `ion-drive init` — scaffolds a project's `ion.config.json`.
+ * `ion-drive init [directory]` — scaffolds a user-owned framework project
+ * (Phase 14, ADR-018): `server.ts` composition root, `/blocks` barrel, env
+ * files with generated secrets, Postgres compose file, the `ion/` client
+ * starter, and agent instructions. Never clobbers existing files.
  *
- * Prompts for the target server URL and an optional API key, verifies
- * connectivity, and writes the config the other commands read. Idempotent-ish:
- * re-running offers to overwrite an existing config.
+ * `--config-only` keeps the older behavior — just write `ion.config.json`
+ * pointing at an existing server (useful when the backend runs elsewhere).
  */
 
 import prompts from 'prompts';
@@ -15,6 +17,7 @@ import {
   readConfig,
   writeConfig,
 } from '../config.js';
+import { scaffoldProject } from '../project-scaffold.js';
 import { reportStarter, writeStarter } from '../scaffold.js';
 import { banner, box, c, log, sym } from '../ui.js';
 import { warnOnVersionSkew } from '../version-check.js';
@@ -23,13 +26,65 @@ export interface InitOptions {
   serverUrl?: string;
   apiKey?: string;
   yes?: boolean;
-  /** Scaffold a TypeScript starter using @ionshift/ion-drive-client (default: prompt). */
+  /** Scaffold a TypeScript starter using @ionshift/ion-drive-client (default: yes). */
   starter?: boolean;
+  /** Only write ion.config.json (pre-Phase-14 behavior). */
+  configOnly?: boolean;
 }
 
-export async function initCommand(options: InitOptions): Promise<void> {
+export async function initCommand(
+  directory: string | undefined,
+  options: InitOptions,
+): Promise<void> {
   console.log(banner());
 
+  if (options.configOnly) {
+    await configOnlyInit(options);
+    return;
+  }
+
+  const dir = directory ?? '.';
+  log.step(
+    `Scaffolding an Ion Drive project in ${c.cyan(dir === '.' ? 'the current directory' : dir)}…`,
+  );
+  log.raw();
+
+  const result = scaffoldProject(dir);
+  for (const path of result.created) log.raw(`  ${sym.check} ${c.cyan(path)}`);
+  if (result.skipped.length > 0) {
+    log.dim(`  ${sym.dot} kept existing: ${result.skipped.join(', ')}`);
+  }
+
+  // The CLI's own config: add/remove/list target the local dev server.
+  const config: IonProjectConfig = {
+    ...readConfig(dir),
+    serverUrl: options.serverUrl ?? 'http://localhost:3000',
+    apiKey: options.apiKey,
+  };
+  writeConfig(config, dir);
+
+  // Client starter under ion/ (skip-if-exists, same as everything else).
+  if (options.starter !== false) {
+    reportStarter(writeStarter(dir).map((p) => p));
+  }
+
+  log.raw();
+  console.log(
+    box('Ready for launch', [
+      `${sym.rocket} ${c.bold('Next steps')}`,
+      '',
+      ...(dir !== '.' ? [`${sym.dot} cd ${dir}`] : []),
+      `${sym.dot} docker compose up -d     ${c.meteor('# PostgreSQL')}`,
+      `${sym.dot} npm install`,
+      `${sym.dot} npm run dev              ${c.meteor('# API :3000 · admin at /admin')}`,
+      '',
+      `${c.meteor('Then:')} ${c.star('ion-drive add crm')}  ${c.meteor('to install your first block')}`,
+    ]),
+  );
+}
+
+/** The pre-Phase-14 flow: prompt for a server URL/API key, write ion.config.json. */
+async function configOnlyInit(options: InitOptions): Promise<void> {
   if (configExists() && !options.yes) {
     const { overwrite } = await prompts({
       type: 'confirm',
@@ -68,9 +123,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   const config: IonProjectConfig = {
+    ...existing,
     serverUrl: String(answers.serverUrl).replace(/\/$/, ''),
     apiKey: answers.apiKey ? String(answers.apiKey) : undefined,
-    blocks: existing.blocks,
   };
 
   // Probe connectivity (non-fatal — the server may not be up yet).
@@ -89,42 +144,5 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   writeConfig(config);
-
-  const wantStarter = await maybeScaffoldStarter(options);
-
-  log.raw();
-  console.log(
-    box('Ready for launch', [
-      `${sym.check} Wrote ${c.cyan('ion.config.json')}`,
-      `${sym.planet} Server  ${c.bold(config.serverUrl)}`,
-      `${sym.satellite} Auth    ${config.apiKey ? c.success('API key set') : c.meteor('none')}`,
-      `${sym.star} Starter ${wantStarter ? c.success('ion/') : c.meteor('skipped')}`,
-      '',
-      `${c.meteor('Next:')} ${c.star('ion-drive list')}  then  ${c.star('ion-drive add crm')}`,
-    ]),
-  );
-}
-
-/**
- * Scaffolds the client starter when requested. Honours the explicit
- * `--starter`/`--skip-starter` flags; otherwise prompts (unless `--yes`).
- * Returns whether the starter was written.
- */
-async function maybeScaffoldStarter(options: InitOptions): Promise<boolean> {
-  let wantStarter = options.starter;
-  if (wantStarter === undefined && !options.yes) {
-    const answer = await prompts({
-      type: 'confirm',
-      name: 'starter',
-      message: 'Scaffold a TypeScript starter using @ionshift/ion-drive-client?',
-      initial: true,
-    });
-    wantStarter = answer.starter !== false;
-  }
-  if (!wantStarter) return false;
-
-  log.raw();
-  log.step('Scaffolding client starter…');
-  reportStarter(writeStarter());
-  return true;
+  log.success(`Wrote ${c.cyan('ion.config.json')}`);
 }

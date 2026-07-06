@@ -43,14 +43,6 @@
     }
   },
   "files": {
-    "ignore": [
-      "node_modules",
-      "dist",
-      ".turbo",
-      "coverage",
-      "*.min.js",
-      "*.generated.*",
-      "packages/blocks/blocks"
-    ]
+    "ignore": ["node_modules", "dist", ".turbo", "coverage", "*.min.js", "*.generated.*"]
   }
 }

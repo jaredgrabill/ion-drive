@@ -8,15 +8,18 @@
  * throughout (see `ui.ts`).
  *
  * Commands:
- *   init             Scaffold ion.config.json (server URL + API key)
- *   list             List available building blocks
- *   add <block>      Resolve dependencies and install a block into the server
- *   remove <block>   Uninstall a block
- *   dev              Start the development server
+ *   init [dir]       Scaffold a user-owned framework project (Phase 14)
+ *   list             List blocks available in the registry
+ *   add <block>      Vendor a block's code + install it (deps resolved)
+ *   remove <block>   Uninstall a block (your vendored code stays yours)
+ *   dev              Run the project's server.ts (or core's, in the monorepo)
+ *   schema …         Snapshot pull/diff/push + drift doctor
+ *   block …          Block-authoring toolchain (new/validate/pack)
  */
 
 import { Command } from 'commander';
 import { addCommand } from './commands/add.js';
+import { blockNewCommand, blockPackCommand, blockValidateCommand } from './commands/block.js';
 import { devCommand } from './commands/dev.js';
 import { initCommand } from './commands/init.js';
 import { listCommand } from './commands/list.js';
@@ -42,18 +45,20 @@ program
 
 program
   .command('init')
-  .description('Scaffold ion.config.json (and an optional client starter) for this project')
+  .argument('[directory]', 'Directory to scaffold into (default: current directory)')
+  .description('Scaffold a user-owned Ion Drive project (server.ts, /blocks, env, compose)')
   .option('-s, --server-url <url>', 'Ion Drive server URL')
   .option('-k, --api-key <key>', 'API key (iond_…)')
   .option('-y, --yes', 'Skip prompts and accept defaults')
-  .option('--starter', 'Scaffold a @ionshift/ion-drive-client TypeScript starter under ion/')
-  .option('--skip-starter', 'Do not scaffold the client starter')
-  .action((options) =>
-    initCommand({
+  .option('--config-only', 'Only write ion.config.json pointing at an existing server')
+  .option('--skip-starter', 'Do not scaffold the ion/ client starter')
+  .action((directory, options) =>
+    initCommand(directory, {
       serverUrl: options.serverUrl,
       apiKey: options.apiKey,
       yes: options.yes,
-      starter: options.skipStarter ? false : options.starter,
+      configOnly: options.configOnly,
+      starter: options.skipStarter ? false : undefined,
     }),
   );
 
@@ -65,7 +70,7 @@ program
 
 program
   .command('add')
-  .argument('<block>', 'Block name (e.g. crm) or a registry URL')
+  .argument('<block>', 'Block name (crm, crm@0.2.0), a block.json URL, or a local block path')
   .description('Install a building block and its dependencies')
   .option('-y, --yes', 'Skip the confirmation prompt')
   .option('-d, --dry-run', 'Preview the changes without applying them')
@@ -116,6 +121,28 @@ schema
   .option('--adopt <key>', 'Adopt an unmanaged table or table.column into metadata')
   .option('--ignore <key>', 'Silence a finding (persisted allowlist)')
   .action((options) => schemaDoctorCommand(options));
+
+const block = program
+  .command('block')
+  .description('Block-authoring toolchain (repo scaffold, validate, pack)');
+
+block
+  .command('new')
+  .argument('<name>', 'Block name (scaffolds ./block-<name>)')
+  .description('Scaffold a new block repo (block.json + code/ + CI)')
+  .action((name) => blockNewCommand(name));
+
+block
+  .command('validate')
+  .argument('[dir]', 'Block repo directory (default: current)')
+  .description('Validate block.json (platform Zod schema + code checks)')
+  .action((dir) => blockValidateCommand(dir));
+
+block
+  .command('pack')
+  .argument('[dir]', 'Block repo directory (default: current)')
+  .description('Emit dist/block.json with code/ embedded (the registry artifact)')
+  .action((dir) => blockPackCommand(dir));
 
 program.parseAsync().catch((err) => {
   log.error(err instanceof Error ? err.message : String(err));

@@ -23,6 +23,8 @@ export interface IonProjectConfig {
   serverUrl: string;
   /** API key (`iond_…`) used to authenticate management calls, if any. */
   apiKey?: string;
+  /** Block registry index URL override (default: the official ionshift registry). */
+  registryUrl?: string;
   /** Blocks installed into this project (local mirror of the server ledger). */
   blocks: InstalledBlockRecord[];
 }

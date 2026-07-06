@@ -32,7 +32,16 @@ export interface InstallReport {
   tasksCreated: string[];
   rolesCreated: string[];
   rolesSkipped: string[];
+  /** Actions/hooks exposed by the block (Phase 14; absent on older servers). */
+  actionsExposed?: string[];
+  hooksExposed?: string[];
   warnings: string[];
+}
+
+/** Registered action/hook handlers reported by `GET /api/v1/blocks/actions`. */
+export interface RegisteredHandlers {
+  actions: { block: string; name: string; description?: string }[];
+  hooks: { block: string; name: string; description?: string }[];
 }
 
 export interface InstalledBlock {
@@ -113,6 +122,15 @@ export class IonApiClient {
 
   listInstalled(): Promise<InstalledBlock[]> {
     return this.request('GET', '/api/v1/blocks');
+  }
+
+  /** The action/hook handlers currently registered in the running server (Phase 14). */
+  async listRegisteredHandlers(): Promise<RegisteredHandlers> {
+    const data = await this.request<{ registered: RegisteredHandlers }>(
+      'GET',
+      '/api/v1/blocks/actions',
+    );
+    return data.registered;
   }
 
   install(

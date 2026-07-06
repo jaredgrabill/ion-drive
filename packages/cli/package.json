@@ -35,7 +35,7 @@
     "fs-extra": "^11.2.0"
   },
   "devDependencies": {
-    "@ionshift/ion-drive-blocks": "workspace:*",
+    "@ionshift/ion-drive-core": "workspace:^",
     "@types/node": "^22.10.0",
     "@types/prompts": "^2.4.0",
     "@types/fs-extra": "^11.0.0",

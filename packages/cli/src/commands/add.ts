@@ -12,6 +12,7 @@ import ora from 'ora';
 import prompts from 'prompts';
 import { ApiError, type InstallReport, IonApiClient } from '../api-client.js';
 import { readConfig, recordInstalled, writeConfig } from '../config.js';
+import { BarrelError, addToBarrel, vendorBlockCode } from '../project.js';
 import { type Manifest, RegistryError } from '../registry/registry-client.js';
 import { ResolveError, resolvePlan } from '../registry/resolver.js';
 import { box, c, gradient, log, orbitSpinner, sym } from '../ui.js';
@@ -117,6 +118,10 @@ async function runInstalls(
   log.raw();
   let updatedConfig = config;
   for (const manifest of order) {
+    if (!options.dryRun && !(await vendorStep(client, manifest))) {
+      process.exitCode = 1;
+      return;
+    }
     const report = await installOne(client, manifest, options);
     if (!report) {
       process.exitCode = 1;
@@ -141,6 +146,73 @@ async function runInstalls(
         : `Liftoff! ${order.length} block(s) installed. ${sym.rocket}`,
     ),
   );
+}
+
+/**
+ * The vendoring half of the two-part install (Phase 14): copies the block's
+ * code into `blocks/<name>/`, wires the barrel, then waits for the dev server
+ * (tsx watch) to reload with the new handlers before the manifest install.
+ * Returns false when vendoring is required but cannot complete.
+ */
+async function vendorStep(client: IonApiClient, manifest: Manifest): Promise<boolean> {
+  const files = manifest.code ?? [];
+  if (files.length === 0) return true; // schema-only block — nothing to vendor
+
+  const name = String(manifest.name);
+  const result = vendorBlockCode(name, files);
+  for (const path of result.written) log.raw(`  ${sym.check} ${c.cyan(path)}`);
+  if (result.skipped.length > 0) {
+    log.dim(`  ${sym.dot} kept existing (never overwritten): ${result.skipped.join(', ')}`);
+  }
+
+  try {
+    if (addToBarrel(name)) log.raw(`  ${sym.check} wired into ${c.cyan('blocks/index.ts')}`);
+  } catch (err) {
+    if (err instanceof BarrelError) {
+      log.error(err.message);
+      return false;
+    }
+    throw err;
+  }
+
+  return waitForHandlers(client, manifest);
+}
+
+/** Polls the server until the block's handlers are registered (dev-server reload). */
+async function waitForHandlers(client: IonApiClient, manifest: Manifest): Promise<boolean> {
+  const name = String(manifest.name);
+  const wantedActions = ((manifest.actions ?? []) as { name: string }[]).map((a) => a.name);
+  const wantedHooks = ((manifest.hooks ?? []) as { name: string }[]).map((h) => h.name);
+  if (wantedActions.length === 0 && wantedHooks.length === 0) return true;
+
+  const spinner = ora({
+    text: `Waiting for the dev server to reload ${c.bold(name)}'s handlers…`,
+    spinner: orbitSpinner,
+  }).start();
+  const deadline = Date.now() + 60_000;
+
+  while (Date.now() < deadline) {
+    try {
+      const registered = await client.listRegisteredHandlers();
+      const actions = new Set(
+        registered.actions.filter((a) => a.block === name).map((a) => a.name),
+      );
+      const hooks = new Set(registered.hooks.filter((h) => h.block === name).map((h) => h.name));
+      if (wantedActions.every((a) => actions.has(a)) && wantedHooks.every((h) => hooks.has(h))) {
+        spinner.stopAndPersist({ symbol: sym.check, text: `${c.bold(name)} handlers loaded` });
+        return true;
+      }
+    } catch {
+      /* server restarting — keep polling */
+    }
+    await new Promise((r) => setTimeout(r, 750));
+  }
+
+  spinner.stopAndPersist({ symbol: sym.cross, text: c.danger(`${name} handlers not loaded`) });
+  log.error(
+    `The server never registered ${name}'s handlers. Is "npm run dev" (tsx watch) running in this project? Start it, then re-run: ion-drive add ${name}`,
+  );
+  return false;
 }
 
 /** Installs a single manifest with a spinner, printing its report. Returns null on failure. */
@@ -190,5 +262,7 @@ function printReport(report: InstallReport): void {
   }
   line('tasks', report.tasksCreated);
   line('roles', report.rolesCreated);
+  line('actions', report.actionsExposed ?? []);
+  line('hooks', report.hooksExposed ?? []);
   for (const w of report.warnings) console.log(`    ${sym.warn} ${c.warn(w)}`);
 }

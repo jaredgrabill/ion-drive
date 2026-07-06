@@ -154,27 +154,6 @@ importers:
         specifier: ^0.1.0
         version: 0.1.0(vitest@3.2.6(@types/node@22.20.0)(jiti@2.7.0)(jsdom@29.1.1(@noble/hashes@2.2.0))(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
 
-  packages/blocks:
-    devDependencies:
-      '@ionshift/ion-drive-core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.20.0
-      rimraf:
-        specifier: ^6.0.0
-        version: 6.1.3
-      tsx:
-        specifier: ^4.19.0
-        version: 4.23.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.6(@types/node@22.20.0)(jiti@2.7.0)(jsdom@29.1.1(@noble/hashes@2.2.0))(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
-
   packages/cli:
     dependencies:
       chalk:
@@ -193,9 +172,9 @@ importers:
         specifier: ^2.4.0
         version: 2.4.2
     devDependencies:
-      '@ionshift/ion-drive-blocks':
-        specifier: workspace:*
-        version: link:../blocks
+      '@ionshift/ion-drive-core':
+        specifier: workspace:^
+        version: link:../core
       '@types/fs-extra':
         specifier: ^11.0.0
         version: 11.0.4

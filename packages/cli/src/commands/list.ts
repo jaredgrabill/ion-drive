@@ -1,22 +1,36 @@
 /**
- * `ion-drive list` — shows the block catalog.
+ * `ion-drive list` — shows the block registry catalog.
  *
- * Renders the bundled catalog as a cosmic table, marking which blocks are
- * already installed on the configured server (when reachable). Dependencies and
- * object counts are shown so the pipeline is legible at a glance.
+ * Renders the registry index as a cosmic table, marking which blocks are
+ * already installed on the configured server (when reachable). The registry is
+ * a flat JSON index (Phase 14 Tier 4) — override it with `ION_DRIVE_REGISTRY`
+ * or `registryUrl` in `ion.config.json`.
  */
 
 import { IonApiClient } from '../api-client.js';
 import { readConfig } from '../config.js';
-import { listAvailable } from '../registry/registry-client.js';
+import { RegistryError, listAvailable, registryUrl } from '../registry/registry-client.js';
 import { c, log, sym, table } from '../ui.js';
 
 export async function listCommand(): Promise<void> {
   const config = readConfig();
-  const available = await listAvailable();
+
+  let available: Awaited<ReturnType<typeof listAvailable>>;
+  try {
+    available = await listAvailable();
+  } catch (err) {
+    if (err instanceof RegistryError) {
+      log.error(err.message);
+      log.dim(`  Registry: ${registryUrl()}`);
+      log.dim(`  Blocks can still be added by URL or local path: ${c.star('ion-drive add <ref>')}`);
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  }
   if (available.length === 0) {
-    log.warn('The bundled block catalog is not installed — blocks can still be added by URL.');
-    log.dim(`  Install with  ${c.star('ion-drive add <https://…/block.json>')}`);
+    log.warn('The registry lists no blocks yet — add by URL or local path instead.');
+    log.dim(`  Registry: ${registryUrl()}`);
     return;
   }
 
@@ -38,16 +52,16 @@ export async function listCommand(): Promise<void> {
       : c.meteor('available');
     const deps = b.dependencies.length ? c.plasma(b.dependencies.join(', ')) : c.meteor('—');
     return [
-      `${b.icon ?? sym.orbit} ${c.bold(b.name)}`,
+      `${sym.orbit} ${c.bold(b.name)}`,
       c.dim(b.description.length > 46 ? `${b.description.slice(0, 45)}…` : b.description),
-      String(b.objectCount),
+      c.cyan(b.version),
       deps,
       status,
     ];
   });
 
-  console.log(table(['Block', 'Description', 'Objects', 'Requires', 'Status'], rows));
+  console.log(table(['Block', 'Description', 'Latest', 'Requires', 'Status'], rows));
   log.raw();
-  log.dim(`  ${sym.star} ${available.length} blocks · target ${config.serverUrl}`);
+  log.dim(`  ${sym.star} ${available.length} blocks · registry ${registryUrl()}`);
   log.dim(`  Install with  ${c.star('ion-drive add <block>')}`);
 }
