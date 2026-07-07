@@ -1,8 +1,15 @@
 # Phase 13 — Relational Completeness (GraphQL parity + schema engine)
 
-**Status: IN PROGRESS 2026-07-06** · Roadmap items F6 (GraphQL half), F17, F9, admin m2m polish
+**Status: SHIPPED 2026-07-07** · Roadmap items F6 (GraphQL half), F17, F9, admin m2m polish
 (`docs/roadmap.md` Phase 13) + the two explicit deferrals parked here: GraphQL subscriptions
-(Phase 12 Tier 4) and GraphQL mutations for block actions (Phase 14 Tier 2).
+(Phase 12 Tier 4) and GraphQL mutations for block actions (Phase 14 Tier 2) · ADR-020.
+All tiers landed as planned; deltas: the m2m block-ownership check uses the
+both-endpoints heuristic (no `_ion_relationships.managed_by` column), the snapshot's
+name-only relationship matching was found and fixed while wiring prune (it dropped
+legitimately same-named rels), and the grid's m2m chip columns are read-only
+appended columns (editing lives in the RecordSheet) to keep the field-driven
+keyboard/editor machinery untouched. Verified by 6 new integration scenarios
+(suite now 21) against real Postgres, incl. a live GraphQL-SSE subscription.
 
 Phase 10 made relationships real (link fields, `expand=`, junction recording); Phase 12 pushed
 events to the edge. Phase 13 finishes the relational story: **GraphQL becomes a first-class
