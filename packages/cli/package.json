@@ -16,10 +16,7 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "NOTICE"
-  ],
+  "files": ["dist", "NOTICE"],
   "publishConfig": {
     "access": "public"
   },

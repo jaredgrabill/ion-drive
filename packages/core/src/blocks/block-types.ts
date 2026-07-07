@@ -176,6 +176,21 @@ const hookDeclarationSchema = z
   .strict();
 
 /**
+ * An *outbound* webhook the block provisions (Phase 12 / ADR-019): matching
+ * bus events are POSTed, HMAC-signed, to `url`. The signing secret is
+ * generated at install and surfaced once in the install report. Distinct from
+ * `hooks`, which are inbound endpoints this server exposes.
+ */
+const outboundWebhookSchema = z
+  .object({
+    name: z.string().min(1).max(255),
+    url: z.string().url().max(2000),
+    topics: z.array(z.string().min(1).max(255)).min(1).max(50),
+    headers: z.record(z.string().max(4000)).default({}),
+  })
+  .strict();
+
+/**
  * What must be present in the runtime for the block to work (Phase 14):
  * `handlers` are message-bus handler names; `plugins` are plugin names loaded
  * through the plugin host. Both are validated at install time with actionable
@@ -233,6 +248,8 @@ export const blockManifestSchema = z
     actions: z.array(actionDeclarationSchema).default([]),
     /** Inbound webhooks exposed at `/api/v1/hooks/<name>/<hook>` (Phase 14). */
     hooks: z.array(hookDeclarationSchema).default([]),
+    /** Outbound webhooks provisioned on install (Phase 12 / ADR-019). */
+    webhooks: z.array(outboundWebhookSchema).default([]),
     /** Runtime requirements validated at install time (Phase 14). */
     requires: requiresSchema.default({ handlers: [], plugins: [] }),
     /** Vendored code files the CLI copies into the user's `/blocks/<name>/` (Phase 14). */
@@ -258,6 +275,7 @@ export type BlockRole = z.infer<typeof roleSchema>;
 export type BlockSubscription = z.infer<typeof subscriptionSchema>;
 export type BlockActionDeclaration = z.infer<typeof actionDeclarationSchema>;
 export type BlockHookDeclaration = z.infer<typeof hookDeclarationSchema>;
+export type BlockOutboundWebhook = z.infer<typeof outboundWebhookSchema>;
 export type BlockCodeFile = z.infer<typeof codeFileSchema>;
 
 /**
@@ -302,6 +320,12 @@ export interface BlockInstallReport {
   actionsExposed: string[];
   /** Hooks exposed at `/api/v1/hooks/<block>/<name>` (Phase 14). */
   hooksExposed: string[];
+  /**
+   * Outbound webhooks provisioned, with their once-only signing secrets
+   * (`name: secret`) — surfaced here because they are never readable again.
+   */
+  webhooksCreated: Record<string, string>;
+  webhooksSkipped: string[];
   warnings: string[];
 }
 

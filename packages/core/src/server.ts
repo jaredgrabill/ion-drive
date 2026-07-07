@@ -11,6 +11,7 @@ import { registerAdminRoutes } from './api/admin-routes.js';
 import { installAdminStatic } from './api/admin-static.js';
 import { registerBlockRoutes } from './api/block-routes.js';
 import { registerDataRoutes } from './api/data-routes.js';
+import { registerEventRoutes } from './api/event-routes.js';
 import { registerGraphQLRoutes } from './api/graphql/plugin.js';
 import { registerHookRoutes } from './api/hook-routes.js';
 import { registerLogRoutes } from './api/log-routes.js';
@@ -19,6 +20,7 @@ import { installRateLimit } from './api/rate-limit-options.js';
 import { registerSchemaRoutes } from './api/schema-routes.js';
 import { registerStatsRoutes } from './api/stats-routes.js';
 import { registerTaskRoutes } from './api/task-routes.js';
+import { registerWebhookRoutes } from './api/webhook-admin-routes.js';
 import {
   ApiKeyManager,
   BetterAuthProvider,
@@ -43,12 +45,18 @@ import { EMAIL_SERVICE, LogEmailProvider } from './email/index.js';
 import { LOGGER_SERVICE, PinoLoggerProvider } from './logging/index.js';
 import { registerMcpRoutes } from './mcp/plugin.js';
 import {
+  DEFAULT_MAX_ATTEMPTS,
   EventDispatcher,
   EventStore,
   MESSAGE_BUS,
+  type MessageBus,
   NoopBus,
   OutboxBus,
+  RealtimeBridge,
+  WebhookManager,
+  WebhookStore,
   bootstrapEventTables,
+  bootstrapWebhookTable,
   createPersistEventHandler,
   logEventHandler,
 } from './messaging/index.js';
@@ -157,6 +165,67 @@ function buildSignupGuard(
 ): (() => Promise<boolean>) | undefined {
   if (!config.disableSignup) return undefined;
   return async () => (await roleManager.assignmentCount()) > 0;
+}
+
+/**
+ * Builds the webhook manager (Phase 12 / ADR-019) when the event system is on:
+ * bootstraps `_ion_webhooks`, registers the `webhook` bus handler, and
+ * re-registers every stored webhook's subscriptions. Returns undefined when
+ * events are disabled — webhooks are event consumers, so they share the gate.
+ */
+async function buildWebhookManager(
+  config: IonDriveConfig,
+  tenantDb: Parameters<typeof bootstrapWebhookTable>[0],
+  bus: MessageBus,
+  encryptor: Encryptor,
+  logger: PinoLoggerProvider,
+): Promise<WebhookManager | undefined> {
+  if (!config.eventsEnabled) return undefined;
+  await bootstrapWebhookTable(tenantDb);
+  const manager = new WebhookManager({ store: new WebhookStore(tenantDb), bus, encryptor, logger });
+  await manager.initialize();
+  return manager;
+}
+
+/**
+ * Registers the Phase 12 event-edge routes: `/api/v1/webhooks` (any bus) and,
+ * with the default outbox bus, `/api/v1/events` (ledger/DLQ + retry) plus the
+ * realtime SSE bridge — the same gate as the dispatcher, since both read the
+ * outbox directly. Returns the bridge so shutdown can stop it.
+ */
+async function registerEventEdge(
+  server: FastifyInstance,
+  deps: {
+    config: IonDriveConfig;
+    webhookManager: WebhookManager | undefined;
+    eventStore: EventStore | undefined;
+    bus: MessageBus;
+    permissionEngine: PermissionEngine;
+  },
+): Promise<RealtimeBridge | undefined> {
+  const { config, webhookManager, eventStore, bus, permissionEngine } = deps;
+  if (webhookManager) {
+    await server.register(
+      registerWebhookRoutes({ webhookManager, permissionEngine, enforce: config.requireAuth }),
+      { prefix: '/api/v1/webhooks' },
+    );
+  }
+  if (!config.eventsEnabled || !eventStore || !(bus instanceof OutboxBus)) return undefined;
+
+  const realtime = new RealtimeBridge(eventStore, { pollIntervalMs: config.eventsPollIntervalMs });
+  bus.setWakeHandler(() => realtime.trigger());
+  await server.register(
+    registerEventRoutes({
+      eventStore,
+      bus,
+      permissionEngine,
+      enforce: config.requireAuth,
+      maxAttempts: DEFAULT_MAX_ATTEMPTS,
+      realtime,
+    }),
+    { prefix: '/api/v1/events' },
+  );
+  return realtime;
 }
 
 /**
@@ -333,6 +402,12 @@ export async function createServer(
   await roleManager.seedDefaults();
   const permissionEngine = new PermissionEngine(roleManager);
 
+  // --- Phase 12: outbound webhooks (signed event push, riding the bus) ---
+  // Works with any bus implementation; secrets are stored AES-encrypted in
+  // the tenant DB. Built before the block engine so manifests declaring
+  // webhooks can be provisioned/validated at install time.
+  const webhookManager = await buildWebhookManager(config, tenantDb, bus, encryptor, logger);
+
   // --- Phase 5: task engine (scheduled/background tasks) ---
   const taskLogger: TaskLogger = {
     info: (msg, extra) => server.log.info(extra ?? {}, msg),
@@ -350,6 +425,7 @@ export async function createServer(
     roleManager,
     bus,
     actionRegistry,
+    webhookManager,
     pluginNames: loadedPlugins.plugins.map((p) => p.name),
   });
   await blockEngine.initialize();
@@ -441,6 +517,9 @@ export async function createServer(
       apiKeys: '/api/v1/api-keys',
       tasks: '/api/v1/tasks',
       blocks: '/api/v1/blocks',
+      events: '/api/v1/events',
+      eventStream: '/api/v1/events/stream',
+      webhooks: '/api/v1/webhooks',
       stats: '/api/v1/stats',
       logs: '/api/v1/logs',
       version: '/api/v1/version',
@@ -531,6 +610,15 @@ export async function createServer(
     { prefix: '/api/v1/tasks' },
   );
 
+  // --- Phase 12: webhook management + event operations/realtime routes ---
+  const realtime = await registerEventEdge(server, {
+    config,
+    webhookManager,
+    eventStore,
+    bus,
+    permissionEngine,
+  });
+
   // --- Building-blocks routes (install/list/uninstall + actions, Phase 14) ---
   if (config.blocksEnabled) {
     await server.register(
@@ -582,6 +670,7 @@ export async function createServer(
   // directly. The signal handlers wrap it with a process exit.
   const close = async () => {
     dispatcher?.stop();
+    realtime?.stop();
     taskEngine.stop();
     await loadedPlugins.runShutdown();
     await server.close();
@@ -626,6 +715,7 @@ export async function createServer(
     taskEngine,
     blockEngine,
     actionRegistry,
+    webhookManager,
     telemetry,
     logBuffer,
     close,

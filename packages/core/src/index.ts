@@ -201,6 +201,19 @@ export {
   topicMatches,
   logEventHandler,
   createPersistEventHandler,
+  // Phase 12: realtime bridge + outbound webhooks + retry/backoff
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_RETRY_BACKOFF,
+  RealtimeBridge,
+  WebhookManager,
+  WebhookStore,
+  WebhookError,
+  bootstrapWebhookTable,
+  signWebhookPayload,
+  generateWebhookSecret,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_CONSUMER_PREFIX,
+  WEBHOOK_HANDLER_NAME,
 } from './messaging/index.js';
 export type {
   MessageBus,
@@ -213,7 +226,17 @@ export type {
   BusHandler,
   EventContext,
   RecordWriter,
+  DeliveryRow,
+  RetryBackoff,
+  RealtimeBridgeOptions,
+  RealtimeListener,
+  WebhookInput,
+  WebhookView,
+  WebhookRow,
+  CreatedWebhook,
 } from './messaging/index.js';
+export { registerEventRoutes } from './api/event-routes.js';
+export { registerWebhookRoutes } from './api/webhook-admin-routes.js';
 
 // Database
 export { createSystemDb, createTenantDb } from './db/index.js';
