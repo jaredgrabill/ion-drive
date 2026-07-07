@@ -28,6 +28,7 @@
  * it uses the global `fetch`.
  */
 
+import { EventsApi } from './events.js';
 import { QueryBuilder } from './query-builder.js';
 import type {
   BulkResult,
@@ -38,6 +39,9 @@ import type {
 } from './types.js';
 
 export class IonDriveClient {
+  /** Realtime event streaming over SSE (Phase 12): `ion.events.stream(...)`. */
+  readonly events: EventsApi;
+
   private readonly baseUrl: string;
   private readonly apiKey?: string;
   private readonly fetchImpl: typeof fetch;
@@ -55,6 +59,14 @@ export class IonDriveClient {
       );
     }
     this.fetchImpl = f.bind(globalThis);
+    this.events = new EventsApi({
+      baseUrl: this.baseUrl,
+      fetchImpl: this.fetchImpl,
+      headers: () => ({
+        ...this.extraHeaders,
+        ...(this.apiKey ? { 'x-api-key': this.apiKey } : {}),
+      }),
+    });
   }
 
   /** Returns a typed accessor for one data object (e.g. `contacts`). */

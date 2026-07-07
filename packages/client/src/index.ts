@@ -16,6 +16,13 @@
  */
 
 export { IonDriveClient, Resource, ResourceQuery, IonDriveError } from './client.js';
+export { EventsApi } from './events.js';
+export type {
+  EventStreamHandle,
+  EventStreamOptions,
+  EventsTransport,
+  IonEventMessage,
+} from './events.js';
 export { QueryBuilder, QueryBuilderError, query } from './query-builder.js';
 export type {
   IonDriveClientOptions,
