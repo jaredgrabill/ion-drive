@@ -831,30 +831,114 @@ export class ChangeValidator {
     });
   }
 
-  private validateRemoveRelationship(change: SchemaChange): Promise<{
-    warnings: ChangeWarning[];
-    errors: ChangeError[];
-    sqlStatements: string[];
-  }> {
+  /**
+   * Validates a `remove_relationship` change (details: `{ relationshipName,
+   * force? }`; objectName is the relationship's **source** object — names are
+   * scoped per source). Produces the real DDL and data-loss warnings; block
+   * ownership (the FK field's provenance, or — for many_to_many, which stamps
+   * no field — both endpoint objects being block-managed) requires force.
+   */
+  private async validateRemoveRelationship(change: SchemaChange): Promise<ValidationResult> {
     const warnings: ChangeWarning[] = [];
     const errors: ChangeError[] = [];
+    const sqlStatements: string[] = [];
 
     const relName = change.details.relationshipName as string;
-    const allRels = this.registry.getAllRelationships();
-    const rel = allRels.find((r) => r.name === relName);
+    const force = change.details.force === true;
 
+    const rel = this.registry
+      .getAllRelationships()
+      .find((r) => r.name === relName && r.sourceObjectName === change.objectName);
     if (!rel) {
       errors.push({
         change,
-        message: `Relationship "${relName}" does not exist`,
+        message: `Relationship "${relName}" does not exist on "${change.objectName}"`,
         code: 'RELATIONSHIP_NOT_FOUND',
       });
+      return { warnings, errors, sqlStatements };
     }
 
-    return Promise.resolve({
-      warnings,
-      errors,
-      sqlStatements: ['ALTER TABLE ... DROP CONSTRAINT ...'],
+    const sourceObj = this.registry.getObject(rel.sourceObjectName);
+    const targetObj = this.registry.getObject(rel.targetObjectName);
+    if (!sourceObj || !targetObj) {
+      errors.push({
+        change,
+        message: `Relationship "${relName}" references a missing object`,
+        code: 'OBJECT_NOT_FOUND',
+      });
+      return { warnings, errors, sqlStatements };
+    }
+
+    if (rel.type === 'many_to_many') {
+      // No FK field carries provenance for m2m; a relationship whose both
+      // endpoints are block-managed is treated as block-owned (blocks only
+      // declare relationships among their own/dependency objects).
+      const sourceBlock = managedByBlock(sourceObj.managedBy);
+      const targetBlock = managedByBlock(targetObj.managedBy);
+      const owningBlock = sourceBlock && targetBlock ? sourceBlock : undefined;
+      this.pushRelationshipProtection(change, owningBlock, relName, force, errors, warnings);
+
+      const junction = rel.junctionTable ?? `${sourceObj.tableName}_${targetObj.tableName}`;
+      if (await this.ddlExecutor.tableExists(junction)) {
+        const links = await this.ddlExecutor.getRowCount(junction);
+        if (links > 0) {
+          warnings.push({
+            change,
+            message: `${links} link row(s) in "${junction}" will be permanently deleted.`,
+            severity: 'high',
+          });
+        }
+      }
+      sqlStatements.push(`DROP TABLE IF EXISTS "${junction}"`);
+    } else {
+      // The FK column lives on the "many" side (target for one_to_many).
+      const fkObj = rel.type === 'one_to_many' ? targetObj : sourceObj;
+      const fkColumn = `${rel.name}_id`;
+      const fkField = fkObj.fields.find((f) => f.columnName === fkColumn);
+      this.pushRelationshipProtection(
+        change,
+        managedByBlock(fkField?.managedBy),
+        relName,
+        force,
+        errors,
+        warnings,
+      );
+
+      if (fkField && (await this.ddlExecutor.columnHasData(fkObj.tableName, fkColumn))) {
+        warnings.push({
+          change,
+          message: `Column "${fkColumn}" on "${fkObj.tableName}" contains linked ids — dropping the relationship permanently removes those links.`,
+          severity: 'high',
+        });
+      }
+      sqlStatements.push(`ALTER TABLE "${fkObj.tableName}" DROP COLUMN "${fkColumn}"`);
+    }
+
+    return { warnings, errors, sqlStatements };
+  }
+
+  /** Contract protection for relationships (ADR-017 pattern, Phase 13). */
+  private pushRelationshipProtection(
+    change: SchemaChange,
+    owningBlock: string | null | undefined,
+    relName: string,
+    force: boolean,
+    errors: ChangeError[],
+    warnings: ChangeWarning[],
+  ): void {
+    if (!owningBlock) return;
+    if (force) {
+      warnings.push({
+        change,
+        message: `Relationship "${relName}" belongs to the "${owningBlock}" block; forcing its removal may break that block.`,
+        severity: 'high',
+      });
+      return;
+    }
+    errors.push({
+      change,
+      message: `Relationship "${relName}" belongs to the "${owningBlock}" block. Removing it would break the block's contract — pass force=true to override.`,
+      code: 'BLOCK_MANAGED_RELATIONSHIP',
     });
   }
 }

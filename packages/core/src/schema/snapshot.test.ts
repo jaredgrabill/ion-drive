@@ -137,4 +137,51 @@ describe('diffSnapshot', () => {
     expect(pruned).toHaveLength(1);
     expect(pruned[0]).toMatchObject({ kind: 'remove_field', fieldName: 'legacy' });
   });
+
+  it('prunes relationships absent from the snapshot (Phase 13)', () => {
+    const snapshot = snapshotOf({ ...contacts, relationships: [] });
+    // The FK field must also disappear from the snapshot's view of contacts.
+    snapshot.objects[0]!.fields = snapshot.objects[0]!.fields.filter(
+      (f) => f.name !== 'company_id',
+    );
+
+    expect(diffSnapshot(snapshot, [contacts]).map((e) => e.kind)).toEqual([]);
+    const pruned = diffSnapshot(snapshot, [contacts], { prune: true });
+    expect(pruned).toContainEqual(
+      expect.objectContaining({
+        kind: 'remove_relationship',
+        objectName: 'contacts',
+        relationshipName: 'company',
+      }),
+    );
+  });
+
+  it('matches relationships by their (source, name) pair, not name alone', () => {
+    // Two relationships legitimately named "company" from different sources.
+    const dealsRel = {
+      name: 'company',
+      displayName: 'Company',
+      type: 'many_to_one' as const,
+      sourceObjectName: 'deals',
+      targetObjectName: 'companies',
+    };
+    const deals: DataObjectDefinition = {
+      name: 'deals',
+      displayName: 'Deals',
+      tableName: 'deals',
+      fields: [
+        { name: 'id', displayName: 'ID', columnName: 'id', columnType: 'uuid', isSystem: true },
+      ],
+      relationships: [dealsRel],
+    };
+
+    const snapshot = exportSnapshot([contacts, deals]);
+    expect(snapshot.relationships).toHaveLength(2);
+
+    // Live state has only contacts' rel — deals' must still be added.
+    const entries = diffSnapshot(snapshot, [contacts, { ...deals, relationships: [] }]);
+    expect(entries).toContainEqual(
+      expect.objectContaining({ kind: 'add_relationship', objectName: 'deals' }),
+    );
+  });
 });

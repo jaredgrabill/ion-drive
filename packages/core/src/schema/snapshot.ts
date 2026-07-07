@@ -76,7 +76,8 @@ export interface SnapshotDiffEntry {
     | 'add_field'
     | 'modify_field'
     | 'remove_field'
-    | 'add_relationship';
+    | 'add_relationship'
+    | 'remove_relationship';
   objectName: string;
   fieldName?: string;
   relationshipName?: string;
@@ -104,12 +105,15 @@ export function exportSnapshot(objects: DataObjectDefinition[]): SchemaSnapshot 
     .filter((o) => !o.isSystem)
     .sort((a, b) => a.name.localeCompare(b.name));
 
+  // Relationship names are scoped per source object, so dedupe (each rel
+  // appears on both endpoints' lists) by the (source, name) pair.
   const seenRels = new Set<string>();
   const relationships: SnapshotRelationship[] = [];
   for (const obj of userObjects) {
     for (const rel of obj.relationships ?? []) {
-      if (seenRels.has(rel.name)) continue;
-      seenRels.add(rel.name);
+      const relKey = `${rel.sourceObjectName}:${rel.name}`;
+      if (seenRels.has(relKey)) continue;
+      seenRels.add(relKey);
       relationships.push({
         name: rel.name,
         displayName: rel.displayName,
@@ -121,7 +125,9 @@ export function exportSnapshot(objects: DataObjectDefinition[]): SchemaSnapshot 
       });
     }
   }
-  relationships.sort((a, b) => a.name.localeCompare(b.name));
+  relationships.sort(
+    (a, b) => a.sourceObjectName.localeCompare(b.sourceObjectName) || a.name.localeCompare(b.name),
+  );
 
   return {
     formatVersion: SNAPSHOT_FORMAT_VERSION,
@@ -211,12 +217,23 @@ export function diffSnapshot(
     }
   }
 
-  // Relationships: add missing (matched by name). Removal is not supported.
-  const currentRelNames = new Set(
-    current.flatMap((o) => (o.relationships ?? []).map((r) => r.name)),
+  // Relationships: matched by their (source object, name) pair — names are
+  // only scoped per source. Missing ones are added; with `prune`, live ones
+  // absent from the snapshot are removed (Phase 13 — through the validated
+  // removeRelationship pipeline, data-loss warnings included).
+  const relKey = (source: string, name: string) => `${source}:${name}`;
+  const currentRels = new Map(
+    current.flatMap((o) =>
+      (o.relationships ?? []).map(
+        (r) => [relKey(r.sourceObjectName, r.name), r] as const,
+      ),
+    ),
+  );
+  const snapshotRelKeys = new Set(
+    snapshot.relationships.map((r) => relKey(r.sourceObjectName, r.name)),
   );
   for (const rel of snapshot.relationships) {
-    if (!currentRelNames.has(rel.name)) {
+    if (!currentRels.has(relKey(rel.sourceObjectName, rel.name))) {
       entries.push({
         kind: 'add_relationship',
         objectName: rel.sourceObjectName,
@@ -224,6 +241,18 @@ export function diffSnapshot(
         summary: `Add ${rel.type} relationship "${rel.name}" (${rel.sourceObjectName} → ${rel.targetObjectName})`,
         definition: rel as unknown as Record<string, unknown>,
       });
+    }
+  }
+  if (options.prune) {
+    for (const [key, rel] of currentRels) {
+      if (!snapshotRelKeys.has(key)) {
+        entries.push({
+          kind: 'remove_relationship',
+          objectName: rel.sourceObjectName,
+          relationshipName: rel.name,
+          summary: `Remove ${rel.type} relationship "${rel.name}" (${rel.sourceObjectName} → ${rel.targetObjectName}; not in snapshot)`,
+        });
+      }
     }
   }
 
@@ -381,8 +410,11 @@ export async function applySnapshot(
     add_field: 1,
     modify_field: 2,
     add_relationship: 3,
-    remove_field: 4,
-    delete_object: 5,
+    // Prunes run last; relationships go before fields/objects so a dropped
+    // object's relationships are already gone.
+    remove_relationship: 4,
+    remove_field: 5,
+    delete_object: 6,
   };
   const sorted = [...entries].sort((a, b) => order[a.kind] - order[b.kind]);
 
@@ -449,6 +481,14 @@ async function applyEntry(
           }),
         );
       }
+      case 'remove_relationship':
+        return finish(
+          await schemaManager.removeRelationship(
+            entry.objectName,
+            entry.relationshipName ?? '',
+            { force: options.force },
+          ),
+        );
       case 'remove_field':
         return finish(
           await schemaManager.removeField(entry.objectName, entry.fieldName ?? '', {

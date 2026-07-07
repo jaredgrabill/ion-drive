@@ -104,15 +104,18 @@ schema
 schema
   .command('diff')
   .description('Show what applying the local snapshot would change')
-  .option('--prune', 'Also plan removal of fields/objects absent from the snapshot')
+  .option('--prune', 'Also plan removal of fields/relationships/objects absent from the snapshot')
   .action((options) => schemaDiffCommand(options));
 
 schema
   .command('push')
   .description('Apply the local snapshot to the server (preview + confirm)')
   .option('-y, --yes', 'Skip the confirmation prompt')
-  .option('--prune', 'Also remove fields/objects absent from the snapshot (destructive)')
-  .option('-f, --force', 'Override block contract protection on modified fields')
+  .option(
+    '--prune',
+    'Also remove fields/relationships/objects absent from the snapshot (destructive)',
+  )
+  .option('-f, --force', 'Override block contract protection on modified fields/relationships')
   .action((options) => schemaPushCommand(options));
 
 schema

@@ -744,6 +744,79 @@ export class SchemaManager {
   }
 
   /**
+   * Removes a relationship (Phase 13 / F17). Relationship names are scoped
+   * per source object, so the address is the (sourceObject, name) pair.
+   *
+   * Preview-first like modifyField: `dryRun` returns the ChangePreview (real
+   * SQL + data-loss warnings — the FK column's values or the junction table's
+   * link rows are permanently deleted) without touching anything; block-owned
+   * relationships require `force` (ADR-017). Execution: FK-backed → drop the
+   * FK column (constraint and index go with it) and its `_ion_fields` row;
+   * many_to_many → drop the junction table. Then the `_ion_relationships` row
+   * is deleted, the migration recorded, and both endpoints re-hydrated.
+   */
+  async removeRelationship(
+    sourceObjectName: string,
+    relationshipName: string,
+    options: FieldChangeOptions = {},
+  ): Promise<{ preview: ChangePreview; success: boolean }> {
+    const changeSet = this.buildChangeSet(
+      `Remove relationship "${relationshipName}" from "${sourceObjectName}"`,
+      [
+        {
+          type: 'remove_relationship',
+          objectName: sourceObjectName,
+          details: { relationshipName, force: options.force === true },
+        },
+      ],
+    );
+
+    const preview = await this.validator.validateChangeSet(changeSet);
+    if (options.dryRun) return { preview, success: preview.isValid };
+    if (!preview.isValid) return { preview, success: false };
+
+    const sourceObj = this.registry.getObject(sourceObjectName);
+    const rel = sourceObj?.relationships?.find((r) => r.name === relationshipName);
+    const targetObj = rel ? this.registry.getObject(rel.targetObjectName) : undefined;
+    if (!sourceObj || !rel?.id || !targetObj) {
+      return { preview, success: false };
+    }
+
+    if (rel.type === 'many_to_many') {
+      const junction = rel.junctionTable ?? `${sourceObj.tableName}_${targetObj.tableName}`;
+      await this.ddlExecutor.dropTable(junction);
+    } else {
+      // The FK column lives on the "many" side (target for one_to_many).
+      const fkObj = rel.type === 'one_to_many' ? targetObj : sourceObj;
+      const fkColumn = `${rel.name}_id`;
+      const fkField = fkObj.fields.find((f) => f.columnName === fkColumn);
+      await this.ddlExecutor.dropColumn(fkObj.tableName, fkColumn);
+      if (fkField?.id) await this.metadataStore.deleteField(fkField.id);
+    }
+
+    await this.metadataStore.deleteRelationship(rel.id);
+
+    const version = (await this.metadataStore.getLatestMigrationVersion()) + 1;
+    await this.metadataStore.recordMigration({
+      version,
+      description: `Remove ${rel.type} relationship "${relationshipName}" from "${sourceObjectName}"`,
+      changes: {
+        type: 'remove_relationship',
+        relationship: relationshipName,
+        sourceObject: sourceObjectName,
+      },
+      sqlUp: preview.sqlStatements.join(';\n'),
+    });
+
+    // Re-hydrate both endpoints so relationship lists and the dropped FK
+    // field disappear from expand/snapshot/designer immediately.
+    await this.refreshObject(rel.sourceObjectName);
+    await this.refreshObject(rel.targetObjectName);
+
+    return { preview, success: true };
+  }
+
+  /**
    * many_to_many relationship setup: creates the junction table and stamps its
    * name/columns onto the relationship (recorded in `_ion_relationships` so
    * expand can find it later).
