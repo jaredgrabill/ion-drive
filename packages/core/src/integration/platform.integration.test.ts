@@ -127,7 +127,19 @@ beforeAll(async () => {
 afterAll(async () => {
   await scratchClient?.end();
   await app?.close();
-  // FORCE terminates any straggler connections (e.g. pool keep-alives).
+  // pg-pool's end() resolves without awaiting each client's socket close (the
+  // Terminate packets are still in flight for a few ms), so wait until
+  // Postgres sees no sessions on the scratch DB before dropping it — the
+  // FORCE drop would otherwise terminate the stragglers and their 57P01
+  // error events fail the run as unhandled. A true connection leak still
+  // gets cleaned up by FORCE after the wait times out.
+  await eventually(async () => {
+    const res = await adminClient?.query(
+      'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1',
+      [SCRATCH_DB],
+    );
+    return res?.rows[0].n === 0;
+  }, 10_000).catch(() => undefined);
   await adminClient?.query(`DROP DATABASE IF EXISTS ${SCRATCH_DB} WITH (FORCE)`);
   await adminClient?.end();
 }, 60_000);

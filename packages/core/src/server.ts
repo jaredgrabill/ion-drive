@@ -674,7 +674,15 @@ export async function createServer(
   // scheduler, plugins, HTTP server, telemetry, connection pools) without
   // exiting the process — programmatic embedders and integration tests call it
   // directly. The signal handlers wrap it with a process exit.
-  const close = async () => {
+  //
+  // Idempotent: every call shares one teardown promise. This is load-bearing,
+  // not defensive — a signal can arrive after (or during) a programmatic close
+  // (vitest's fork pool SIGTERMs its worker right after a suite that already
+  // closed the server; tsx watch SIGTERMs on every file change). A second pass
+  // used to double-end the auth pool ("Called end on pool more than once"),
+  // abort before the system/tenant pools were destroyed, and leave the
+  // shutdown handler hanging until its watchdog force-exited.
+  const closeResources = async () => {
     dispatcher?.stop();
     realtime?.stop();
     taskEngine.stop();
@@ -684,6 +692,11 @@ export async function createServer(
     await authPool.end();
     await systemDb.destroy();
     await tenantDb.destroy();
+  };
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closing ??= closeResources();
+    return closing;
   };
 
   let shuttingDown = false;
@@ -699,8 +712,15 @@ export async function createServer(
       server.log.error(`Shutdown did not complete within ${SHUTDOWN_GRACE_MS}ms; forcing exit`);
       process.exit(1);
     }, SHUTDOWN_GRACE_MS).unref();
-    await close();
-    process.exit(0);
+    // Exit deterministically either way — a rejected close must not strand
+    // the process on the watchdog.
+    try {
+      await close();
+      process.exit(0);
+    } catch (err) {
+      server.log.error({ err }, 'Shutdown failed');
+      process.exit(1);
+    }
   };
 
   process.on('SIGINT', shutdown);
