@@ -45,6 +45,7 @@ import {
   Select,
   SimpleTooltip,
   Skeleton,
+  Switch,
   Tabs,
   TabsContent,
   TabsList,
@@ -535,6 +536,7 @@ function RelationshipsTab({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<RelationshipDefinition | null>(null);
 
   return (
     <>
@@ -573,15 +575,28 @@ function RelationshipsTab({
                         <Badge variant="info">{rel.type.replace(/_/g, ' ')}</Badge>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            void navigate({ to: '/objects/$name', params: { name: other } })
-                          }
-                        >
-                          Open {other}
-                        </Button>
+                        <span className="inline-flex items-center gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              void navigate({ to: '/objects/$name', params: { name: other } })
+                            }
+                          >
+                            Open {other}
+                          </Button>
+                          <SimpleTooltip label="Remove relationship">
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Remove relationship ${rel.displayName}`}
+                              className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => setRemoving(rel)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </SimpleTooltip>
+                        </span>
                       </td>
                     </tr>
                   );
@@ -603,10 +618,140 @@ function RelationshipsTab({
           }}
         />
       )}
+      {removing && (
+        <RemoveRelationshipDialog
+          rel={removing}
+          onClose={() => setRemoving(null)}
+          onRemoved={() => {
+            setRemoving(null);
+            toast.success('Relationship removed');
+            // Both endpoints changed shape (FK field / expand keys).
+            void queryClient.invalidateQueries({ queryKey: ['object'] });
+            void queryClient.invalidateQueries({ queryKey: ['objects'] });
+          }}
+        />
+      )}
     </>
   );
 }
 RelationshipsTab.displayName = 'RelationshipsTab';
+
+/**
+ * Preview-first destructive dialog for removing a relationship (Phase 13).
+ * A dry run fetches the exact SQL + data-loss warnings on open; block-owned
+ * relationships arm an "Override protection" switch (re-runs the preview
+ * with force); any high-severity warning demands type-to-confirm.
+ */
+function RemoveRelationshipDialog({
+  rel,
+  onClose,
+  onRemoved,
+}: {
+  rel: RelationshipDefinition;
+  onClose: () => void;
+  onRemoved: () => void;
+}) {
+  const [force, setForce] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const source = rel.sourceObjectName;
+
+  const preview = useQuery({
+    queryKey: ['remove-rel-preview', source, rel.name, force],
+    queryFn: () => api.previewRemoveRelationship(source, rel.name, force),
+  });
+
+  const blockProtected = (preview.data?.errors ?? []).some(
+    (e) => e.code === 'BLOCK_MANAGED_RELATIONSHIP',
+  );
+  const hasDataLoss = (preview.data?.warnings ?? []).some((w) => w.severity === 'high');
+  const canRemove =
+    preview.data?.isValid === true && (!hasDataLoss || confirmText === rel.name);
+
+  const remove = useMutation({
+    mutationFn: () => api.removeRelationship(source, rel.name, force),
+    onSuccess: onRemoved,
+    onError: (error) =>
+      toast.error(
+        `Failed to remove: ${error instanceof ApiError ? error.message : 'unexpected error'}`,
+      ),
+  });
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Remove relationship "${rel.displayName}"`}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={!canRemove || remove.isPending}
+            onClick={() => remove.mutate()}
+          >
+            {remove.isPending ? 'Removing…' : 'Remove relationship'}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3 text-sm">
+        <p className="text-muted-foreground">
+          <span className="font-mono text-xs">
+            {rel.sourceObjectName} → {rel.targetObjectName}
+          </span>{' '}
+          · <Badge variant="info">{rel.type.replace(/_/g, ' ')}</Badge>
+        </p>
+
+        {preview.isLoading && <Skeleton className="h-16 w-full" />}
+
+        {(preview.data?.errors ?? []).map((error) => (
+          <p key={error.message} className="rounded-md bg-destructive/10 p-2 text-destructive">
+            {error.message}
+          </p>
+        ))}
+        {(preview.data?.warnings ?? []).map((warning) => (
+          <p
+            key={warning.message}
+            className="rounded-md bg-[var(--ion-amber)]/10 p-2 text-[var(--ion-amber)]"
+          >
+            {warning.message}
+          </p>
+        ))}
+
+        {preview.data && preview.data.sqlStatements.length > 0 && (
+          <pre className="overflow-x-auto rounded-md border border-border bg-surface-sunken p-2 font-mono text-xs">
+            {preview.data.sqlStatements.join('\n')}
+          </pre>
+        )}
+
+        {blockProtected && (
+          <label className="flex items-center gap-2">
+            <Switch checked={force} onCheckedChange={setForce} aria-label="Override protection" />
+            <span>Override block protection (may break the owning block)</span>
+          </label>
+        )}
+
+        {hasDataLoss && preview.data?.isValid && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="confirm-rel-name">
+              Stored links will be permanently deleted. Type{' '}
+              <span className="font-mono">{rel.name}</span> to confirm:
+            </Label>
+            <Input
+              id="confirm-rel-name"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder={rel.name}
+            />
+          </div>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+RemoveRelationshipDialog.displayName = 'RemoveRelationshipDialog';
 
 // --- API tab ------------------------------------------------------------------
 

@@ -95,6 +95,20 @@ export function linkedRelationshipOf(
   return holdsFk ? rel : null;
 }
 
+/**
+ * The object's many_to_many relationships — the grid's chip columns and the
+ * RecordSheet's linked-record editors (Phase 13). De-duplicated by name (a
+ * self-referential rel would otherwise appear twice).
+ */
+export function m2mRelationshipsOf(object: DataObjectDefinition): RelationshipDefinition[] {
+  const seen = new Set<string>();
+  return (object.relationships ?? []).filter((rel) => {
+    if (rel.type !== 'many_to_many' || seen.has(rel.name)) return false;
+    seen.add(rel.name);
+    return true;
+  });
+}
+
 /** The object a link field points at (the "other side"). */
 export function linkTargetOf(object: DataObjectDefinition, rel: RelationshipDefinition): string {
   return rel.type === 'one_to_many'
@@ -168,6 +182,8 @@ export interface GridQuery {
   search: string;
   filters: FilterCondition[];
   sorts: SortRule[];
+  /** Relation keys to expand (the grid's m2m chip columns — Phase 13). */
+  expand?: string[];
 }
 
 /** Serializes the grid state into the Phase 7 REST query string. */
@@ -175,6 +191,7 @@ export function buildQueryString(query: GridQuery): string {
   const params = new URLSearchParams();
   params.set('page', String(query.page));
   params.set('pageSize', String(query.pageSize));
+  if (query.expand?.length) params.set('expand', query.expand.join(','));
   if (query.search) params.set('q', query.search);
   if (query.sorts.length > 0) {
     params.set(

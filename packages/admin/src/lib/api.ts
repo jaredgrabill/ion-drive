@@ -142,6 +142,18 @@ export const api = {
     targetObjectName: string;
     cascadeDelete?: boolean;
   }) => request('/schema/relationships', { method: 'POST', body: JSON.stringify(input) }),
+  /** Preview a relationship removal without applying (Phase 13). */
+  previewRemoveRelationship: (sourceObject: string, relName: string, force = false) =>
+    request<{ data: ChangePreview }>(
+      `/schema/objects/${sourceObject}/relationships/${relName}?dryRun=true${force ? '&force=true' : ''}`,
+      { method: 'DELETE' },
+    ).then((r) => r.data),
+  /** Remove a relationship — drops the FK column or junction table (Phase 13). */
+  removeRelationship: (sourceObject: string, relName: string, force = false) =>
+    request<{ success: boolean; preview: ChangePreview }>(
+      `/schema/objects/${sourceObject}/relationships/${relName}${force ? '?force=true' : ''}`,
+      { method: 'DELETE' },
+    ),
 
   // --- Data records ---
   listRecords: (objectName: string, query = '') =>
@@ -167,6 +179,18 @@ export const api = {
       method: 'DELETE',
       body: JSON.stringify({ ids }),
     }),
+  /** Add many_to_many links (Phase 13). Idempotent; returns the number added. */
+  addLinks: (objectName: string, id: string, relName: string, ids: string[]) =>
+    request<{ data: { added: number } }>(`/data/${objectName}/${id}/links/${relName}`, {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }).then((r) => r.data),
+  /** Remove many_to_many links (Phase 13). Returns the number removed. */
+  removeLinks: (objectName: string, id: string, relName: string, ids: string[]) =>
+    request<{ data: { removed: number } }>(`/data/${objectName}/${id}/links/${relName}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ ids }),
+    }).then((r) => r.data),
 
   // --- Roles ---
   listRoles: () => request<{ data: Role[] }>('/roles').then((r) => r.data),
