@@ -13,10 +13,14 @@ import type {
   ColumnType,
   ConfigEntry,
   CreatedApiKey,
+  CreatedWebhook,
   CurrentUser,
   DataObjectDefinition,
+  DeliveryQueryParams,
+  DeliveryRecord,
   DoctorReport,
   ErrorEntry,
+  EventRecord,
   FieldDefinition,
   FieldModification,
   InstalledBlock,
@@ -36,6 +40,8 @@ import type {
   TrafficPeriod,
   TrafficSummary,
   VersionInfo,
+  Webhook,
+  WebhookInput,
 } from './types';
 
 export class ApiError extends Error {
@@ -226,6 +232,37 @@ export const api = {
     request<{ data: InstalledBlock }>(`/blocks/${name}`).then((r) => r.data),
   uninstallBlock: (name: string, dropData = false) =>
     request(`/blocks/${name}?dropData=${dropData}`, { method: 'DELETE' }),
+
+  // --- Events & webhooks (Phase 12; the SSE stream is consumed via EventSource in the page) ---
+  listEvents: (params: { topic?: string; limit?: number; offset?: number } = {}) =>
+    request<{ data: EventRecord[]; totalCount: number }>(
+      `/events${toSearchParams(params as Record<string, string | number | undefined>)}`,
+    ),
+  listDeliveries: (params: DeliveryQueryParams = {}) =>
+    request<{ data: DeliveryRecord[]; totalCount: number }>(
+      `/events/deliveries${toSearchParams({
+        ...params,
+        dead: params.dead ? 'true' : undefined,
+      } as Record<string, string | number | undefined>)}`,
+    ),
+  retryDelivery: (eventId: string, consumer: string) =>
+    request('/events/deliveries/retry', {
+      method: 'POST',
+      body: JSON.stringify({ eventId, consumer }),
+    }),
+  listWebhooks: () => request<{ data: Webhook[] }>('/webhooks').then((r) => r.data),
+  createWebhook: (input: WebhookInput) =>
+    request<{ data: CreatedWebhook }>('/webhooks', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+  updateWebhook: (id: string, patch: Partial<WebhookInput>) =>
+    request<{ data: Webhook }>(`/webhooks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }).then((r) => r.data),
+  deleteWebhook: (id: string) => request(`/webhooks/${id}`, { method: 'DELETE' }),
+  testWebhook: (id: string) => request(`/webhooks/${id}/test`, { method: 'POST' }),
 
   // --- API keys ---
   listApiKeys: () => request<{ data: ApiKeyMetadata[] }>('/api-keys').then((r) => r.data),

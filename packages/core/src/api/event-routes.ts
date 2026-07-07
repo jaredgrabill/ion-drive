@@ -176,11 +176,13 @@ function installStreamRoute(
       return verdict;
     };
 
+    // Frames are unnamed (no `event:` line) so plain `EventSource.onmessage`
+    // works; the envelope's own `topic` field identifies the event.
     const unsubscribe = realtime.subscribe(topics, async (event) => {
       const segments = event.topic.split('.');
       const resource = segments[0] === 'data' && segments[1] ? segments[1] : RESOURCE;
       if (!(await allowed(resource))) return;
-      socket.write(`id: ${event.id}\nevent: ${event.topic}\ndata: ${JSON.stringify(event)}\n\n`);
+      socket.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
     });
     const heartbeat = setInterval(() => {
       socket.write(': heartbeat\n\n');
