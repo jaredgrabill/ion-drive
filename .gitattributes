@@ -1,0 +1,17 @@
+# Normalize line endings: text files are stored with LF in the repository;
+# working-tree endings follow each contributor's core.autocrlf/eol setting.
+# Added after CRLF blobs from mixed Windows/worktree development caused
+# phantom "modified" churn in git status (see ADR-021 session notes).
+* text=auto
+
+# Files that must keep LF even on Windows checkouts (executed in Linux
+# containers / CI).
+*.sh text eol=lf
+Dockerfile text eol=lf
+
+# Binary assets — never touch.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
