@@ -67,8 +67,11 @@ curl -X POST http://localhost:3000/api/v1/data/contacts \
 # 201 Created -> { "data": { "id": "…", … } }
 ```
 
-System fields (`id`, `created_at`, `updated_at`) are managed by the platform and
-ignored if supplied in the body.
+System fields (`id`, `created_at`, `updated_at`, `created_by`, `updated_by`)
+are managed by the platform and ignored if supplied in the body. The `*_by`
+columns record the authenticated actor (user id, else API-key id): creates
+stamp both, updates re-stamp `updated_by`, and anonymous writes leave them
+null.
 
 ### Get / Update / Delete
 

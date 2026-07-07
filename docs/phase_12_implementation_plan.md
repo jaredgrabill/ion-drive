@@ -1,6 +1,12 @@
 # Phase 12 — Events to the Edge (actor identity, webhooks, realtime, DLQ)
 
-**Status: in progress** · Roadmap items F11, F15, F14, F18 (`docs/roadmap.md` Phase 12) · ADR-019.
+**Status: SHIPPED 2026-07-06** · Roadmap items F11, F15, F14, F18 (`docs/roadmap.md` Phase 12) · ADR-019.
+All tiers landed as planned; deltas: the ambient-actor middleware had to use the
+callback-hook + `AsyncLocalStorage.run` pattern (`enterWith` in an async hook
+never reaches the handler — see ADR-019), SSE frames are unnamed so plain
+`EventSource.onmessage` works, and disabling a webhook also unsubscribes its
+consumer group (deliveries stop instantly; documented). Verified by 4 new
+integration scenarios (suite now 15) + a 5-check boot-migration live smoke.
 
 Phase 9 built the transactional outbox and dispatcher; Phase 12 takes those events to the
 edges of the platform: every change knows **who** made it, external systems can receive

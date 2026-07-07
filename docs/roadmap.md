@@ -48,14 +48,14 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 | # | Finding | Detail |
 |:--|:--|:--|
 | F10 | **Multi-tenancy is aspirational** | Positioning says "database-per-tenant by default"; the plan's verification scenarios (create tenant → isolated DB) are unmet. Today: `createTenantDb` exists but there is exactly one tenant DB from config — no tenant provisioning, routing, lifecycle, or per-tenant migrations. |
-| F11 | **Actor identity** (carried from Phase 9) | No `created_by`/`updated_by` system fields; event payloads carry no `actorId`; `audit_log.changed_by` is always null; `_ion_migrations.applied_by` never populated. Requires threading `request.auth` through `DataService` writes on all three surfaces. |
+| F11 | ✅ **Actor identity** (carried from Phase 9) | Fixed 2026-07-06 (Phase 12 / ADR-019): ambient `AsyncLocalStorage` request actor (no signature threading); `created_by`/`updated_by` system fields + boot migration; `actor` on event payloads; `persist_event` gains `payload.actorId`; `_ion_migrations.applied_by` populated. Remaining: point the audit block's `changed_by` map at `payload.actorId` in `ion-drive-blocks`. |
 | F12 | **Field-level RBAC** | `permission-engine.ts` says "field-level scoping is a future extension". Object-level only today. Row-level policies (owner-scoped reads) are also absent — relevant for the app-backend positioning. |
 | F13 | ✅ **No rate limiting / brute-force protection** | Fixed 2026-07-06: `@fastify/rate-limit`, config-gated `ION_RATE_LIMIT_*` (default on: 300/min global per IP, 20/min on `/api/auth/*` via an independent keyed bucket), `/health`+`/metrics` exempt. Live-smoked against Postgres. |
-| F14 | **No realtime** | No way for an app to subscribe to data changes (SSE/WebSocket). The outbox + dispatcher already produce ordered `data.<object>.<op>` events — a realtime bridge is mostly transport work. (Logs already stream over SSE, so the pattern exists in-repo.) |
-| F15 | **No outbound webhooks** | Composable today only by hand (subscription + `http_request` task handler). A first-class `webhook` event handler (signed payloads, retries, delivery log) is a natural near-term win on the same infrastructure. |
+| F14 | ✅ **No realtime** | Fixed 2026-07-06 (Phase 12): `GET /api/v1/events/stream` (SSE, per-event RBAC) via `RealtimeBridge` (ephemeral connect-time cursor — no ledger writes); client SDK `ion.events.stream()`; admin live feed. GraphQL subscriptions deferred to Phase 13. |
+| F15 | ✅ **No outbound webhooks** | Fixed 2026-07-06 (Phase 12): `_ion_webhooks` + `WebhookManager` projecting webhooks onto dispatcher consumer groups (`webhook:<id>`); HMAC-signed payloads (`x-ion-signature`), exponential retry backoff, ledger as delivery log; REST CRUD + test-fire, admin page, block-manifest `webhooks`. |
 | F16 | **No file/blob storage** | "Self-hosted Firebase" implies a storage story. Nothing exists — needs a `StorageProvider` port (Phase 9 pattern), a local-disk default, an S3-compatible plugin, and a `file` field type. |
 | F17 | **`removeRelationship` missing** | `SchemaManager` cannot delete relationships; snapshot push warns/skips relationship removals; the admin has no delete-relationship action. |
-| F18 | **Delivery DLQ has no surface** | Failed event deliveries (`maxAttempts` exhausted) sit in `_ion_event_deliveries` with no admin view, no retry button, no alerting. |
+| F18 | ✅ **Delivery DLQ has no surface** | Fixed 2026-07-06 (Phase 12): `GET /api/v1/events[,/deliveries]` (status/consumer/`dead=true`) + `POST /deliveries/retry`; admin Events page with retry. Alerting still open (a webhook on failure topics, or Prometheus rules over `ion.event.deliveries`). |
 | F19 | **External plugin packages don't exist yet** | The ports (cache/email/bus) are proven with in-core defaults; `@ion-drive/plugin-redis`, `plugin-sendgrid`/SMTP, `plugin-rabbitmq` are still to be built as separate repos/packages. |
 
 ### 1.4 CLI & end-user developer experience ✅ (Phase 14, 2026-07-06)
@@ -92,11 +92,20 @@ Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 6. Release pipeline: changesets (or similar), npm publish workflow for `core`/`cli`/`client`/`blocks`, Docker image publish. (F23) → **moved to Phase 14 Tier 0** — publishing is a hard prerequisite for framework mode (ADR-018).
 7. ~~Docs: `deployment/kubernetes.md`, backup/restore, security checklist~~ ✅ 2026-07-06 (cross-linked from README/getting-started/docker.md; manifests are reference-grade, not cluster-certified). (⚪)
 
-### Phase 12 — Events to the edge (realtime, webhooks, identity)
-1. Actor identity: `created_by`/`updated_by` system fields, actor threaded from `request.auth` through `DataService` on all surfaces, `actorId` in event payloads, `audit_log.changed_by` populated, `applied_by` on migrations. (F11)
-2. First-class **webhooks**: `webhook` handler (HMAC-signed payloads, retry/backoff, delivery log), admin CRUD page, block-manifest support. (F15)
-3. **Realtime subscriptions**: SSE endpoint (`/api/v1/events/stream?topics=data.contacts.*`) bridging the dispatcher, RBAC-filtered; GraphQL subscriptions over the same bridge if cheap. (F14)
-4. ~~`ion.event.*` metrics~~ (✅ 2026-07-06) + DLQ admin surface (failed-deliveries view, retry). (F7, F18)
+### Phase 12 — Events to the edge (realtime, webhooks, identity) ✅ SHIPPED 2026-07-06 (ADR-019, [plan](phase_12_implementation_plan.md))
+All four items landed (F11, F15, F14 minus GraphQL subscriptions, F18) plus the
+pre-phase shutdown/port-release fix. Verified by 4 new integration scenarios
+(15 total) against real Postgres + a 5-check boot-migration live smoke.
+Follow-ups:
+- **Audit block:** map `changed_by: payload.actorId` in the `ion-drive-blocks`
+  repo's audit manifest (one-line change; the core token exists).
+- **GraphQL subscriptions** over the same bridge → Phase 13 (with the other
+  GraphQL work).
+- **DLQ alerting** (notify on dead letters) — composable today via a webhook
+  or Prometheus rules on `ion.event.deliveries`; revisit if a first-class
+  notifier earns its keep.
+- Admin Events page could deep-link a webhook's delivery history
+  (`consumer=webhook:<id>` prefill).
 
 ### Phase 13 — Relational completeness (parity + schema engine)
 1. GraphQL relationship traversal: nested object types resolved through the same `DataService.expand` machinery (batched, depth-capped). (F6 — the MCP half shipped 2026-07-06.)
