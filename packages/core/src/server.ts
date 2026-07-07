@@ -69,6 +69,9 @@ import {
 /** A fixed dev-only key so secrets/auth work out of the box; never for production. */
 const DEV_FALLBACK_KEY = 'a'.repeat(64);
 
+/** How long a signal-triggered shutdown may take before the process force-exits. */
+const SHUTDOWN_GRACE_MS = 10_000;
+
 /** The core package version, read once at boot (works from src and dist). */
 const PACKAGE_VERSION: string = (
   createRequire(import.meta.url)('../package.json') as { version: string }
@@ -224,6 +227,11 @@ export async function createServer(
     // request.ip feeds the rate limiter, so trusting arbitrary clients' headers
     // would let them rotate buckets at will.
     trustProxy: config.trustProxy,
+    // Streaming endpoints (the admin's SSE log tail, the Phase 12 event
+    // stream) hold sockets open indefinitely; without force-close,
+    // `server.close()` waits for them forever and the process never releases
+    // the port. `'idle'` wouldn't help — an SSE response is never idle.
+    forceCloseConnections: true,
   });
 
   // --- Observability (Phase 5): start the OTel SDK and per-request tracing ---
@@ -583,8 +591,19 @@ export async function createServer(
     await tenantDb.destroy();
   };
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    // A second Ctrl+C while a shutdown is in flight means "just die".
+    if (shuttingDown) process.exit(1);
+    shuttingDown = true;
     server.log.info('Shutting down...');
+    // Watchdog: if any resource wedges during close (a stuck pool, a plugin
+    // that never resolves), still exit so the port is released. `unref()` so
+    // the timer itself can't keep a clean shutdown alive.
+    setTimeout(() => {
+      server.log.error(`Shutdown did not complete within ${SHUTDOWN_GRACE_MS}ms; forcing exit`);
+      process.exit(1);
+    }, SHUTDOWN_GRACE_MS).unref();
     await close();
     process.exit(0);
   };
