@@ -8,6 +8,7 @@
 import type { FastifyInstance, FastifyPluginCallback } from 'fastify';
 import type { DeclaredAction } from '../blocks/action-executor.js';
 import type { BlockHookDeclaration } from '../blocks/block-types.js';
+import { listRelationKeys } from '../data/relation-keys.js';
 import type { SchemaRegistry } from '../schema/schema-registry.js';
 import { COLUMN_TYPES } from '../schema/types.js';
 import type { ColumnTypeName, DataObjectDefinition, FieldDefinition } from '../schema/types.js';
@@ -266,6 +267,16 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
         },
       },
     };
+
+    // Link writes — one path per many_to_many relation key (Phase 13).
+    for (const relKey of listRelationKeys(obj).filter((k) => k.via === 'junction')) {
+      paths[`/api/v1/data/${obj.name}/{id}/links/${relKey.key}`] = generateLinkPath(
+        obj,
+        schemaName,
+        relKey.key,
+        relKey.otherObject,
+      );
+    }
   }
 
   // --- Shared schemas ---
@@ -492,7 +503,7 @@ function generateListParameters(obj: DataObjectDefinition): Record<string, unkno
       name: 'expand',
       in: 'query',
       schema: { type: 'string' },
-      description: 'Comma-separated relationship names',
+      description: expandDescription(obj),
     },
     {
       name: 'select',
@@ -515,6 +526,87 @@ function generateListParameters(obj: DataObjectDefinition): Record<string, unkno
   }
 
   return params;
+}
+
+/**
+ * Documents the `expand` parameter with the object's actual relation keys
+ * (FK, reverse `<obj>_by_<rel>`, and many_to_many — see data/relation-keys).
+ */
+function expandDescription(obj: DataObjectDefinition): string {
+  const keys = listRelationKeys(obj);
+  if (keys.length === 0) return 'Comma-separated relation keys (this object has none).';
+  const listing = keys
+    .map((k) => `${k.key} (${k.kind === 'single' ? 'one' : 'many'} ${k.otherObject})`)
+    .join(', ');
+  return `Comma-separated relation keys to attach related records. Available: ${listing}.`;
+}
+
+/** The POST/DELETE operations of one many_to_many link path (Phase 13). */
+function generateLinkPath(
+  obj: DataObjectDefinition,
+  schemaName: string,
+  relKey: string,
+  otherObject: string,
+): Record<string, unknown> {
+  const parameters = [
+    { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+  ];
+  const requestBody = {
+    required: true,
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['ids'],
+          properties: {
+            ids: {
+              type: 'array',
+              items: { type: 'string', format: 'uuid' },
+              description: `Ids of ${otherObject} records to (un)link`,
+            },
+          },
+        },
+      },
+    },
+  };
+  const resultResponse = (property: string) => ({
+    '200': {
+      description: `Links ${property}`,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: {
+              data: { type: 'object', properties: { [property]: { type: 'integer' } } },
+            },
+          },
+        },
+      },
+    },
+    '400': { description: 'Unknown relationship, not many_to_many, or invalid ids' },
+    '404': { description: 'Record not found' },
+  });
+
+  return {
+    post: {
+      summary: `Link ${otherObject} to ${obj.displayName} via "${relKey}"`,
+      operationId: `link${schemaName}${pascalCase(relKey)}`,
+      tags: [obj.displayName],
+      description: 'Adds many_to_many links. Idempotent — already-linked ids are skipped.',
+      parameters,
+      requestBody,
+      responses: resultResponse('added'),
+    },
+    delete: {
+      summary: `Unlink ${otherObject} from ${obj.displayName} via "${relKey}"`,
+      operationId: `unlink${schemaName}${pascalCase(relKey)}`,
+      tags: [obj.displayName],
+      description: 'Removes many_to_many links. Ids that were not linked are ignored.',
+      parameters,
+      requestBody,
+      responses: resultResponse('removed'),
+    },
+  };
 }
 
 function pascalCase(str: string): string {

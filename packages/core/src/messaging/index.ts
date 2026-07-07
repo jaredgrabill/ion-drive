@@ -10,6 +10,8 @@ export type {
   CrudOperation,
   CrudEventPayload,
   FieldDiff,
+  LinkOperation,
+  LinkEventPayload,
   Subscription,
   BusHandler,
   EventContext,

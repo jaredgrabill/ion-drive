@@ -56,6 +56,28 @@ export interface CrudEventPayload {
   actor: ActorRef | null;
 }
 
+/** The junction operation a link event describes (m2m link writes, Phase 13). */
+export type LinkOperation = 'linked' | 'unlinked';
+
+/**
+ * Payload of the `data.<object>.linked` / `data.<object>.unlinked` events
+ * emitted by {@link DataService.addLinks} / `removeLinks` when a
+ * many_to_many junction changes.
+ */
+export interface LinkEventPayload {
+  object: string;
+  /** The record whose links changed. */
+  id: string;
+  op: LinkOperation;
+  /** The relation key whose junction rows changed (see data/relation-keys). */
+  relationship: string;
+  targetObject: string;
+  /** Ids actually added/removed (already-linked / not-linked ids are excluded). */
+  targetIds: string[];
+  /** Who made the change; null for anonymous/system writes. */
+  actor: ActorRef | null;
+}
+
 /**
  * A subscription: a named consumer group reacting to a topic pattern via a
  * registered handler. Patterns match exact topics, a trailing `*`/`.*` prefix,

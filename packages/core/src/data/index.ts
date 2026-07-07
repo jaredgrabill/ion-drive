@@ -1,5 +1,7 @@
 export { DataService, DataServiceError } from './data-service.js';
 export { parseQueryParams } from './query-parser.js';
+export { listRelationKeys, findRelationKey } from './relation-keys.js';
+export type { RelationKey } from './relation-keys.js';
 export type {
   QueryOptions,
   QueryResult,

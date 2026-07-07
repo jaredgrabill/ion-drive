@@ -13,6 +13,8 @@
  *   GET    /api/v1/data/:object/:id       — Get by ID
  *   PATCH  /api/v1/data/:object/:id       — Update
  *   DELETE /api/v1/data/:object/:id       — Delete
+ *   POST   /api/v1/data/:object/:id/links/:rel — Add many_to_many links
+ *   DELETE /api/v1/data/:object/:id/links/:rel — Remove many_to_many links
  *
  * This means a newly created object's endpoints are live immediately — no
  * route re-registration, no restart. Fastify's router resolves the static
@@ -214,8 +216,69 @@ export function registerDataRoutes(options: DataRoutesOptions): FastifyPluginCal
       },
     );
 
+    // --- LINK / UNLINK (many_to_many junction writes — Phase 13) ---
+    // Body: { ids: [targetId, ...] }. Idempotent both ways; the response
+    // reports how many links actually changed.
+    fastify.post<{ Params: { object: string; id: string; rel: string } }>(
+      '/:object/:id/links/:rel',
+      async (request, reply) => {
+        const obj = resolveObject(request.params.object, reply);
+        if (!obj) return reply;
+        const ids = parseIdsBody(request.body, reply);
+        if (!ids) return reply;
+        try {
+          const result = await dataService.addLinks(
+            obj.name,
+            request.params.id,
+            request.params.rel,
+            ids,
+          );
+          return { data: result };
+        } catch (err) {
+          return handleError(err, reply);
+        }
+      },
+    );
+
+    fastify.delete<{ Params: { object: string; id: string; rel: string } }>(
+      '/:object/:id/links/:rel',
+      async (request, reply) => {
+        const obj = resolveObject(request.params.object, reply);
+        if (!obj) return reply;
+        const ids = parseIdsBody(request.body, reply);
+        if (!ids) return reply;
+        try {
+          const result = await dataService.removeLinks(
+            obj.name,
+            request.params.id,
+            request.params.rel,
+            ids,
+          );
+          return { data: result };
+        } catch (err) {
+          return handleError(err, reply);
+        }
+      },
+    );
+
     done();
   };
+}
+
+/**
+ * Validates a link/unlink body (`{ ids: string[] }`). Returns the ids, or
+ * sends the 400 and returns null.
+ */
+function parseIdsBody(body: unknown, reply: FastifyReply): string[] | null {
+  const ids = (body as { ids?: unknown } | undefined)?.ids;
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
+    reply.code(400).send({
+      error: 'Validation Error',
+      message: 'Request body must contain an "ids" array of record ids',
+    });
+    return null;
+  }
+  return ids as string[];
 }
 
 /**

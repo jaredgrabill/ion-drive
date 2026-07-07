@@ -39,8 +39,14 @@ export type {
 } from './schema/index.js';
 
 // Data access
-export { DataService, DataServiceError } from './data/index.js';
-export type { QueryOptions, QueryResult, FilterCondition, SortOption } from './data/index.js';
+export { DataService, DataServiceError, listRelationKeys, findRelationKey } from './data/index.js';
+export type {
+  QueryOptions,
+  QueryResult,
+  FilterCondition,
+  SortOption,
+  RelationKey,
+} from './data/index.js';
 
 // API surface (REST, OpenAPI, GraphQL)
 export { registerSchemaRoutes } from './api/schema-routes.js';
@@ -222,6 +228,8 @@ export type {
   CrudEventPayload,
   CrudOperation,
   FieldDiff,
+  LinkEventPayload,
+  LinkOperation,
   Subscription,
   BusHandler,
   EventContext,
