@@ -51,10 +51,22 @@ export function runWithActor<T>(actor: ActorRef | null, fn: () => T): T {
 }
 
 /**
- * Binds the actor to the *current* async execution context and its descendants
- * (the `enterWith` pattern used by @fastify/request-context). Called by the
- * session middleware once per request, after `request.auth` is resolved.
+ * Opens a fresh (empty) context and runs `fn` inside it. This is the
+ * @fastify/request-context pattern: a callback-style `onRequest` hook calls
+ * the framework's `done` *inside* `fn`, which makes the rest of the request
+ * pipeline (later hooks, the handler) descendants of this context. `enterWith`
+ * would NOT work there — an async hook runs in a sibling frame, so the handler
+ * never inherits it.
  */
-export function enterRequestContext(actor: ActorRef | null): void {
-  storage.enterWith({ actor });
+export function runWithNewContext(fn: () => void): void {
+  storage.run({ actor: null }, fn);
+}
+
+/**
+ * Sets the actor on the *current* context (mutates the store `runWithNewContext`
+ * opened). No-op outside a context — never throws.
+ */
+export function setCurrentActor(actor: ActorRef | null): void {
+  const store = storage.getStore();
+  if (store) store.actor = actor;
 }

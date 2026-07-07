@@ -21,7 +21,8 @@ export type {
 export {
   currentActor,
   currentActorId,
-  enterRequestContext,
   runWithActor,
+  runWithNewContext,
+  setCurrentActor,
 } from './request-context.js';
 export type { ActorRef } from './request-context.js';

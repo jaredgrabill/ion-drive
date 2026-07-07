@@ -130,10 +130,12 @@ function DeliveriesTab() {
             className="w-56"
           />
         </div>
-        <label className="mb-2 flex items-center gap-2 text-sm">
-          <Switch checked={dead} onCheckedChange={setDead} aria-label="Dead letters only" />
-          Dead letters only
-        </label>
+        <div className="mb-2 flex items-center gap-2 text-sm">
+          <Switch id="dead-only" checked={dead} onCheckedChange={setDead} />
+          <Label htmlFor="dead-only" className="font-normal">
+            Dead letters only
+          </Label>
+        </div>
         <div className="ml-auto mb-2 text-xs text-muted-foreground">
           {deliveries.data ? `${deliveries.data.totalCount} total` : ''}
         </div>

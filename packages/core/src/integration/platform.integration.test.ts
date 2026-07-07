@@ -26,7 +26,9 @@
  * it never silently passes.
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createServer } from '../server.js';
@@ -504,5 +506,215 @@ describe('platform lifecycle (integration)', () => {
     );
 
     await api('DELETE', '/api/v1/blocks/it_logic?dropData=true');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 12 — events to the edge (actor identity, webhooks, realtime, DLQ)
+// ---------------------------------------------------------------------------
+
+/** Polls `fn` until it returns truthy or the timeout elapses. */
+async function eventually<T>(fn: () => Promise<T | undefined | false>, timeoutMs = 15_000) {
+  const started = Date.now();
+  for (;;) {
+    const value = await fn();
+    if (value) return value;
+    if (Date.now() - started > timeoutMs) throw new Error('eventually(): timed out');
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+describe('events to the edge (Phase 12)', () => {
+  it('stamps created_by/updated_by from the authenticated actor and carries it on events', async () => {
+    const created = await api('POST', '/api/v1/data/it_contacts', {
+      full_name: 'Actor Test',
+      age: 85,
+    });
+    expect(created.status).toBe(201);
+    const row = created.body.data as Json;
+    expect(row.created_by).toBe(auth.userId);
+    expect(row.updated_by).toBe(auth.userId);
+
+    // Client-supplied actor columns are ignored, not trusted.
+    const forged = await api('POST', '/api/v1/data/it_contacts', {
+      full_name: 'Mallory',
+      created_by: 'forged',
+    });
+    expect((forged.body.data as Json).created_by).toBe(auth.userId);
+
+    // The change event carries the structured actor.
+    if (!scratchClient) throw new Error('Scratch client not connected');
+    const event = await scratchClient.query(
+      `SELECT payload FROM _ion_events
+       WHERE topic = 'data.it_contacts.created' AND payload->>'id' = $1`,
+      [row.id],
+    );
+    const actor = (event.rows[0].payload as Json).actor as Json;
+    expect(actor.userId).toBe(auth.userId);
+
+    // Schema migrations record their actor too (objects were created via API).
+    const migrations = await scratchClient.query(
+      'SELECT count(*)::int AS n FROM _ion_migrations WHERE applied_by = $1',
+      [auth.userId],
+    );
+    expect(migrations.rows[0].n).toBeGreaterThanOrEqual(1);
+  });
+
+  it('delivers signed webhooks end-to-end and logs them in the delivery ledger', async () => {
+    // A local receiver capturing raw bodies + headers.
+    const received: { body: string; headers: http.IncomingHttpHeaders }[] = [];
+    const receiver = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+      req.on('end', () => {
+        received.push({ body, headers: req.headers });
+        res.writeHead(200).end('ok');
+      });
+    });
+    await new Promise<void>((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+    const port = (receiver.address() as AddressInfo).port;
+
+    try {
+      const createHook = await api('POST', '/api/v1/webhooks', {
+        name: 'it-receiver',
+        url: `http://127.0.0.1:${port}/hook`,
+        topics: ['data.it_contacts.created'],
+      });
+      expect(createHook.status).toBe(201);
+      const hook = createHook.body.data as Json;
+      const secret = hook.secret as string;
+      expect(secret).toMatch(/^whsec_/);
+      // The secret is never readable again.
+      const fetched = await api('GET', `/api/v1/webhooks/${hook.id}`);
+      expect(fetched.body.data).not.toHaveProperty('secret');
+
+      await api('POST', '/api/v1/data/it_contacts', {
+        full_name: 'Webhook Target',
+        email: 'target@ion.test',
+      });
+
+      const delivery = await eventually(async () => received[0]);
+      // Signature verifies over "<t>.<raw body>" with the once-shown secret.
+      const signature = String(delivery.headers['x-ion-signature']);
+      const t = /t=(\d+)/.exec(signature)?.[1];
+      const expected = createHmac('sha256', secret).update(`${t}.${delivery.body}`).digest('hex');
+      expect(signature).toContain(`v1=${expected}`);
+      const envelope = JSON.parse(delivery.body) as Json;
+      expect(envelope.topic).toBe('data.it_contacts.created');
+
+      // The ledger recorded the delivery as done for this webhook's group.
+      const ledger = await eventually(async () => {
+        const res = await api(
+          'GET',
+          `/api/v1/events/deliveries?consumer=webhook:${hook.id}&status=done`,
+        );
+        return (res.body.data as Json[]).length > 0 ? res.body.data : undefined;
+      });
+      expect((ledger as Json[])[0]?.consumer).toBe(`webhook:${hook.id}`);
+    } finally {
+      receiver.close();
+    }
+  });
+
+  it('failed deliveries appear in the DLQ view and the retry endpoint revives them', async () => {
+    // A receiver that 500s until told otherwise — a deterministic, fast
+    // delivery failure (a dead port can hang through SYN retries on some
+    // platforms). Flipping `healthy` simulates the downstream recovering.
+    let healthy = false;
+    const failing = http.createServer((_req, res) =>
+      healthy ? res.writeHead(200).end('ok') : res.writeHead(500).end('boom'),
+    );
+    await new Promise<void>((resolve) => failing.listen(0, '127.0.0.1', resolve));
+    const failPort = (failing.address() as AddressInfo).port;
+
+    const deadEndHook = await api('POST', '/api/v1/webhooks', {
+      name: 'it-dead-end',
+      url: `http://127.0.0.1:${failPort}/void`,
+      topics: ['data.it_contacts.updated'],
+    });
+    expect(deadEndHook.status).toBe(201);
+    const hookId = (deadEndHook.body.data as Json).id as string;
+    const consumer = `webhook:${hookId}`;
+
+    // Trigger a matching event (update an existing contact).
+    const contacts = await api('GET', '/api/v1/data/it_contacts?pageSize=1');
+    const contactId = ((contacts.body.data as Json[])[0] as Json).id as string;
+    const patched = await api('PATCH', `/api/v1/data/it_contacts/${contactId}`, { age: 86 });
+    expect(patched.status).toBe(200);
+
+    // The failure lands in the ledger with an error and a scheduled retry.
+    const failed = await eventually(async () => {
+      const res = await api('GET', `/api/v1/events/deliveries?consumer=${consumer}&status=failed`);
+      const rows = res.body.data as Json[];
+      return rows.length > 0 ? rows[0] : undefined;
+    });
+    expect(failed.error).toBeTruthy();
+    expect(failed.nextAttemptAt).toBeTruthy();
+
+    // The downstream "recovers"; revive the delivery through the DLQ endpoint
+    // (without it, the next attempt would wait out the exponential backoff).
+    healthy = true;
+    const retry = await api('POST', '/api/v1/events/deliveries/retry', {
+      eventId: failed.eventId,
+      consumer,
+    });
+    expect(retry.status).toBe(202);
+
+    const done = await eventually(async () => {
+      const res = await api('GET', `/api/v1/events/deliveries?consumer=${consumer}&status=done`);
+      const rows = res.body.data as Json[];
+      return rows.length > 0 ? rows[0] : undefined;
+    });
+    expect(done.eventId).toBe(failed.eventId);
+
+    await api('DELETE', `/api/v1/webhooks/${hookId}`);
+    failing.close();
+  });
+
+  it('streams realtime events over SSE with API-key auth', async () => {
+    if (!app) throw new Error('Server not booted');
+    // The SSE stream needs a real socket (inject cannot consume an open
+    // stream) — bind to an ephemeral port for this test only.
+    const address = await app.server.listen({ port: 0, host: '127.0.0.1' });
+
+    const res = await fetch(`${address}/api/v1/events/stream?topics=data.it_contacts.*`, {
+      headers: { accept: 'text/event-stream', 'x-api-key': auth.apiKey },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/event-stream');
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error('No stream body');
+    const decoder = new TextDecoder();
+
+    // Cause a change, then read frames until its event arrives.
+    await api('POST', '/api/v1/data/it_contacts', {
+      full_name: 'Streamed Row',
+      email: 'stream@ion.test',
+    });
+
+    let buffer = '';
+    const frame = await eventually(async () => {
+      const { value, done } = await reader.read();
+      if (done) throw new Error('SSE stream closed early');
+      buffer += decoder.decode(value, { stream: true });
+      const match = buffer.split(/\n\n/).find((f) => f.includes('data.it_contacts.created'));
+      return match;
+    });
+    const data = frame
+      .split('\n')
+      .find((l) => l.startsWith('data:'))
+      ?.slice(5);
+    const event = JSON.parse(data ?? '{}') as Json;
+    expect(event.topic).toBe('data.it_contacts.created');
+    expect((event.payload as Json).object).toBe('it_contacts');
+    expect(((event.payload as Json).actor as Json).userId).toBe(auth.userId);
+
+    await reader.cancel();
+    // Anonymous connections are rejected while enforcement is on.
+    const anon = await fetch(`${address}/api/v1/events/stream`);
+    expect(anon.status).toBe(401);
+    await anon.body?.cancel();
   });
 });
