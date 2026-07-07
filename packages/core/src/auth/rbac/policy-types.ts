@@ -33,6 +33,8 @@ export const PLATFORM_RESOURCES = {
   blocks: 'blocks',
   logs: 'logs',
   stats: 'stats',
+  events: 'events',
+  webhooks: 'webhooks',
 } as const;
 
 /**

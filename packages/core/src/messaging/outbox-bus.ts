@@ -27,7 +27,7 @@ import type { MessageBus } from './message-bus.js';
 export class OutboxBus implements MessageBus {
   private readonly handlers = new Map<string, BusHandler>();
   private readonly subscriptions: Subscription[] = [];
-  private wakeHandler?: () => void;
+  private readonly wakeHandlers = new Set<() => void>();
   private inlineSeq = 0;
 
   constructor(private readonly store: EventStore) {}
@@ -88,7 +88,7 @@ export class OutboxBus implements MessageBus {
   }
 
   wake(): void {
-    this.wakeHandler?.();
+    for (const handler of this.wakeHandlers) handler();
   }
 
   // --- Concrete surface used by the dispatcher (not part of the port) ---
@@ -98,8 +98,12 @@ export class OutboxBus implements MessageBus {
     return this.handlers.get(name);
   }
 
-  /** Registers the dispatcher's drain callback, invoked by {@link wake}. */
+  /**
+   * Registers a drain callback invoked by {@link wake}. Multiple listeners are
+   * supported (Phase 12): the dispatcher and the realtime bridge both react to
+   * a committed publish.
+   */
   setWakeHandler(handler: () => void): void {
-    this.wakeHandler = handler;
+    this.wakeHandlers.add(handler);
   }
 }

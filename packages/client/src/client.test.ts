@@ -159,3 +159,44 @@ describe('IonDriveClient — writes', () => {
     expect(new IonDriveError('x', 500).status).toBe(500);
   });
 });
+
+describe('IonDriveClient — m2m links (Phase 13)', () => {
+  it('link() POSTs the ids to the links path and unwraps the count', async () => {
+    const { fetch, calls } = fakeFetch({ json: { data: { added: 2 } } });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+
+    const result = await ion.from('contacts').link('c1', 'tags', ['t1', 't2']);
+
+    expect(result).toEqual({ added: 2 });
+    expect(calls[0]?.url).toBe('http://x:3000/api/v1/data/contacts/c1/links/tags');
+    expect(calls[0]?.init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ ids: ['t1', 't2'] });
+  });
+
+  it('unlink() DELETEs the ids and unwraps the count', async () => {
+    const { fetch, calls } = fakeFetch({ json: { data: { removed: 1 } } });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+
+    const result = await ion.from('contacts').unlink('c1', 'tags', ['t1']);
+
+    expect(result).toEqual({ removed: 1 });
+    expect(calls[0]?.init.method).toBe('DELETE');
+    expect(calls[0]?.url).toContain('/contacts/c1/links/tags');
+  });
+
+  it('surfaces link errors as IonDriveError with the server message', async () => {
+    const { fetch } = fakeFetch({
+      status: 400,
+      json: { error: 'NOT_MANY_TO_MANY', message: 'Relationship "company" is not many_to_many' },
+    });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+
+    const err = await ion
+      .from('contacts')
+      .link('c1', 'company', ['x'])
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IonDriveError);
+    expect((err as IonDriveError).message).toContain('not many_to_many');
+    expect((err as IonDriveError).status).toBe(400);
+  });
+});

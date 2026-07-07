@@ -39,8 +39,14 @@ export type {
 } from './schema/index.js';
 
 // Data access
-export { DataService, DataServiceError } from './data/index.js';
-export type { QueryOptions, QueryResult, FilterCondition, SortOption } from './data/index.js';
+export { DataService, DataServiceError, listRelationKeys, findRelationKey } from './data/index.js';
+export type {
+  QueryOptions,
+  QueryResult,
+  FilterCondition,
+  SortOption,
+  RelationKey,
+} from './data/index.js';
 
 // API surface (REST, OpenAPI, GraphQL)
 export { registerSchemaRoutes } from './api/schema-routes.js';
@@ -159,7 +165,8 @@ export type {
 } from './blocks/index.js';
 export { registerHookRoutes } from './api/hook-routes.js';
 
-// Extensibility runtime — service registry + plugin host (Phase 9)
+// Extensibility runtime — service registry + plugin host (Phase 9),
+// ambient request/actor context (Phase 12)
 export {
   ServiceRegistry,
   ServiceRegistryError,
@@ -167,6 +174,9 @@ export {
   definePlugin,
   loadPlugins,
   PluginLoadError,
+  currentActor,
+  currentActorId,
+  runWithActor,
 } from './runtime/index.js';
 export type {
   ServiceToken,
@@ -174,6 +184,7 @@ export type {
   PluginContext,
   LoadPluginsOptions,
   LoadedPlugins,
+  ActorRef,
 } from './runtime/index.js';
 
 // Infrastructure provider ports + defaults (Phase 9)
@@ -196,6 +207,19 @@ export {
   topicMatches,
   logEventHandler,
   createPersistEventHandler,
+  // Phase 12: realtime bridge + outbound webhooks + retry/backoff
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_RETRY_BACKOFF,
+  RealtimeBridge,
+  WebhookManager,
+  WebhookStore,
+  WebhookError,
+  bootstrapWebhookTable,
+  signWebhookPayload,
+  generateWebhookSecret,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_CONSUMER_PREFIX,
+  WEBHOOK_HANDLER_NAME,
 } from './messaging/index.js';
 export type {
   MessageBus,
@@ -204,11 +228,23 @@ export type {
   CrudEventPayload,
   CrudOperation,
   FieldDiff,
+  LinkEventPayload,
+  LinkOperation,
   Subscription,
   BusHandler,
   EventContext,
   RecordWriter,
+  DeliveryRow,
+  RetryBackoff,
+  RealtimeBridgeOptions,
+  RealtimeListener,
+  WebhookInput,
+  WebhookView,
+  WebhookRow,
+  CreatedWebhook,
 } from './messaging/index.js';
+export { registerEventRoutes } from './api/event-routes.js';
+export { registerWebhookRoutes } from './api/webhook-admin-routes.js';
 
 // Database
 export { createSystemDb, createTenantDb } from './db/index.js';

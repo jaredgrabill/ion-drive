@@ -26,6 +26,26 @@ export interface EventRow {
   occurredAt: Date;
 }
 
+/** A ledger row joined to its event (the DLQ/operations view, Phase 12). */
+export interface DeliveryRow {
+  eventId: string;
+  consumer: string;
+  status: 'pending' | 'done' | 'failed';
+  attempts: number;
+  error: string | null;
+  claimedAt: Date | null;
+  processedAt: Date | null;
+  nextAttemptAt: Date | null;
+  topic: string;
+  occurredAt: Date;
+}
+
+/** Exponential retry backoff policy: `base × 2^(attempts-1)`, capped. */
+export interface RetryBackoff {
+  baseMs: number;
+  capMs: number;
+}
+
 /** Options for {@link EventStore.findCandidates}. */
 export interface CandidateQuery {
   consumer: string;
@@ -67,8 +87,15 @@ export async function bootstrapEventTables(db: Kysely<TenantDatabase>): Promise<
     .addColumn('error', 'text')
     .addColumn('claimed_at', 'timestamptz')
     .addColumn('processed_at', 'timestamptz')
+    .addColumn('next_attempt_at', 'timestamptz')
     .addPrimaryKeyConstraint('_ion_event_deliveries_pkey', ['event_id', 'consumer_group'])
     .execute();
+
+  // Boot migration (Phase 12): installs created before retry backoff shipped
+  // lack the next_attempt_at column.
+  await sql`alter table _ion_event_deliveries add column if not exists next_attempt_at timestamptz`.execute(
+    db,
+  );
 
   await db.schema
     .createIndex('_ion_event_deliveries_status_idx')
@@ -111,7 +138,8 @@ export class EventStore {
       where e.topic like ${query.topicPrefix}
         and (
           d.event_id is null
-          or (d.status = 'failed' and d.attempts < ${query.maxAttempts})
+          or (d.status = 'failed' and d.attempts < ${query.maxAttempts}
+              and (d.next_attempt_at is null or d.next_attempt_at <= now()))
           or (d.status = 'pending'
               and d.claimed_at < now() - make_interval(secs => ${query.leaseMs} / 1000.0))
         )
@@ -138,7 +166,8 @@ export class EventStore {
       values (${eventId}, ${consumer}, 'pending', 1, now())
       on conflict (event_id, consumer_group) do update
         set status = 'pending', attempts = d.attempts + 1, claimed_at = now()
-        where (d.status = 'failed' and d.attempts < ${maxAttempts})
+        where (d.status = 'failed' and d.attempts < ${maxAttempts}
+               and (d.next_attempt_at is null or d.next_attempt_at <= now()))
            or (d.status = 'pending'
                and d.claimed_at < now() - make_interval(secs => ${leaseMs} / 1000.0))
       returning event_id
@@ -156,13 +185,140 @@ export class EventStore {
       .execute();
   }
 
-  /** Marks a claimed delivery failed, recording the error for inspection/retry. */
-  async markFailed(eventId: string, consumer: string, error: string): Promise<void> {
+  /**
+   * Marks a claimed delivery failed, recording the error for inspection/retry.
+   * When a backoff policy is given, the next retry is deferred exponentially
+   * from the attempt count: `base × 2^(attempts-1)`, capped (Phase 12).
+   */
+  async markFailed(
+    eventId: string,
+    consumer: string,
+    error: string,
+    backoff?: RetryBackoff,
+  ): Promise<void> {
+    const nextAttempt = backoff
+      ? sql`now() + make_interval(secs => least(
+          ${backoff.baseMs / 1000.0} * pow(2, greatest(attempts - 1, 0)),
+          ${backoff.capMs / 1000.0}
+        ))`
+      : null;
     await this.db
       .updateTable('_ion_event_deliveries')
-      .set({ status: 'failed', error })
+      .set({ status: 'failed', error, next_attempt_at: nextAttempt })
       .where('event_id', '=', eventId)
       .where('consumer_group', '=', consumer)
       .execute();
   }
+
+  /**
+   * Revives a delivery for redelivery (the DLQ retry action): resets the
+   * attempt budget and clears the backoff so the dispatcher re-claims it on
+   * its next drain. Returns false when the pair doesn't exist.
+   */
+  async resetDelivery(eventId: string, consumer: string): Promise<boolean> {
+    const result = await this.db
+      .updateTable('_ion_event_deliveries')
+      .set({ status: 'failed', attempts: 0, next_attempt_at: null })
+      .where('event_id', '=', eventId)
+      .where('consumer_group', '=', consumer)
+      .returning('event_id')
+      .execute();
+    return result.length > 0;
+  }
+
+  /**
+   * Committed events after a cursor, oldest first (the realtime bridge's read,
+   * Phase 12). `overlapMs` re-reads a small window before the cursor to absorb
+   * commit-order skew (a slow transaction committing an older `occurred_at`);
+   * the caller dedupes on event id.
+   */
+  async listSince(options: {
+    after: Date;
+    overlapMs: number;
+    limit: number;
+  }): Promise<EventRow[]> {
+    const result = await sql<EventRow>`
+      select id, topic, payload, occurred_at as "occurredAt"
+      from _ion_events
+      where occurred_at > ${options.after}::timestamptz
+                          - make_interval(secs => ${options.overlapMs} / 1000.0)
+      order by occurred_at asc, id asc
+      limit ${options.limit}
+    `.execute(this.db);
+    return result.rows;
+  }
+
+  /** Recent outbox events, newest first, optionally filtered by topic prefix. */
+  async listEvents(options: {
+    topicPrefix?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ data: EventRow[]; totalCount: number }> {
+    let query = this.db.selectFrom('_ion_events');
+    let countQuery = this.db.selectFrom('_ion_events');
+    if (options.topicPrefix) {
+      const like = `${escapeLike(options.topicPrefix)}%`;
+      query = query.where('topic', 'like', like);
+      countQuery = countQuery.where('topic', 'like', like);
+    }
+    const [rows, count] = await Promise.all([
+      query
+        .select(['id', 'topic', 'payload', 'occurred_at as occurredAt'])
+        .orderBy('occurred_at', 'desc')
+        .limit(options.limit)
+        .offset(options.offset)
+        .execute(),
+      countQuery.select(this.db.fn.countAll().as('count')).executeTakeFirst(),
+    ]);
+    return { data: rows as unknown as EventRow[], totalCount: Number(count?.count ?? 0) };
+  }
+
+  /**
+   * The delivery ledger joined to its events — the DLQ/operations view.
+   * `dead: true` narrows to failed deliveries whose retry budget is exhausted.
+   */
+  async listDeliveries(options: {
+    status?: 'pending' | 'done' | 'failed';
+    consumer?: string;
+    /** Only deliveries that exhausted this retry budget (with status failed). */
+    dead?: boolean;
+    maxAttempts: number;
+    limit: number;
+    offset: number;
+  }): Promise<{ data: DeliveryRow[]; totalCount: number }> {
+    const conditions = sql.join(
+      [
+        options.dead
+          ? sql`(d.status = 'failed' and d.attempts >= ${options.maxAttempts})`
+          : sql`true`,
+        options.status ? sql`d.status = ${options.status}` : sql`true`,
+        options.consumer ? sql`d.consumer_group = ${options.consumer}` : sql`true`,
+      ],
+      sql` and `,
+    );
+    const [rows, count] = await Promise.all([
+      sql<DeliveryRow>`
+        select d.event_id as "eventId", d.consumer_group as "consumer", d.status,
+               d.attempts, d.error, d.claimed_at as "claimedAt",
+               d.processed_at as "processedAt", d.next_attempt_at as "nextAttemptAt",
+               e.topic, e.occurred_at as "occurredAt"
+        from _ion_event_deliveries d
+        join _ion_events e on e.id = d.event_id
+        where ${conditions}
+        order by coalesce(d.processed_at, d.claimed_at) desc
+        limit ${options.limit} offset ${options.offset}
+      `.execute(this.db),
+      sql<{ count: string }>`
+        select count(*) as count
+        from _ion_event_deliveries d
+        where ${conditions}
+      `.execute(this.db),
+    ]);
+    return { data: rows.rows, totalCount: Number(count.rows[0]?.count ?? 0) };
+  }
+}
+
+/** Escapes LIKE metacharacters so a topic prefix matches literally. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }

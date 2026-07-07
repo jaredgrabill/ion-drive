@@ -18,6 +18,7 @@ import type {
   IonRelationship,
   SystemDatabase,
 } from '../db/types.js';
+import { currentActorId } from '../runtime/request-context.js';
 import type { DataObjectDefinition, FieldDefinition, RelationshipDefinition } from './types.js';
 
 /**
@@ -296,6 +297,14 @@ export class MetadataStore {
     return (result?.max_version as number | null) ?? 0;
   }
 
+  /**
+   * Appends one entry to the `_ion_migrations` audit trail. `sqlDown` is
+   * **advisory documentation only** — there is deliberately no automated
+   * rollback API (decided Phase 13 / ADR-020): a trustworthy rollback would
+   * need the full data-loss-guard pipeline, and the platform's actual
+   * recovery paths are declarative (snapshot pull/diff/push) plus database
+   * backups/PITR for disasters.
+   */
   async recordMigration(migration: {
     version: number;
     description?: string;
@@ -312,7 +321,9 @@ export class MetadataStore {
         changes: JSON.stringify(migration.changes),
         sql_up: migration.sqlUp,
         sql_down: migration.sqlDown ?? null,
-        applied_by: migration.appliedBy ?? null,
+        // Fall back to the ambient request actor (Phase 12 / ADR-019), so every
+        // schema-manager call site records provenance without threading it.
+        applied_by: migration.appliedBy ?? currentActorId(),
       })
       .execute();
   }

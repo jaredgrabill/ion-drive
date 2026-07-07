@@ -19,6 +19,7 @@ import type { RoleManager } from '../auth/rbac/role-manager.js';
 import type { DataService } from '../data/data-service.js';
 import type { SystemDatabase } from '../db/types.js';
 import type { MessageBus } from '../messaging/message-bus.js';
+import type { WebhookManager } from '../messaging/webhooks.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
 import type { TaskEngine } from '../tasks/index.js';
 import type { ActionRegistry } from './action-registry.js';
@@ -55,6 +56,8 @@ export interface BlockEngineServices {
   bus?: MessageBus;
   /** Action/hook registry — required only for blocks that declare actions/hooks (Phase 14). */
   actionRegistry?: ActionRegistry;
+  /** Webhook manager — required only for blocks that declare outbound webhooks (Phase 12). */
+  webhookManager?: WebhookManager;
   /** Names of loaded plugins, for `requires.plugins` validation (Phase 14). */
   pluginNames?: string[];
 }

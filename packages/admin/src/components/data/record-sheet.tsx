@@ -28,7 +28,9 @@ import {
   cellKindOf,
   linkTargetOf,
   linkedRelationshipOf,
+  m2mRelationshipsOf,
 } from './grid-types';
+import { M2MLinkEditor } from './m2m-link-editor';
 import { RecordPicker } from './record-picker';
 
 // --- Schema derivation --------------------------------------------------
@@ -304,6 +306,26 @@ export function RecordSheet({ object, record, onClose, onSaved }: RecordSheetPro
           );
         })}
       </form>
+
+      {/* Linked records — junction editing per many_to_many rel (Phase 13) */}
+      {record?.id != null && m2mRelationshipsOf(object).length > 0 && (
+        <>
+          <Separator className="my-4" />
+          <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.05em] text-muted-foreground">
+            Linked records
+          </p>
+          <div className="flex flex-col gap-4">
+            {m2mRelationshipsOf(object).map((rel) => (
+              <M2MLinkEditor
+                key={rel.name}
+                object={object}
+                rel={rel}
+                recordId={String(record.id)}
+              />
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Relationships */}
       {relationships.length > 0 && (

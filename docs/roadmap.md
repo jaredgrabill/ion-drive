@@ -38,24 +38,24 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 
 | # | Finding | Detail |
 |:--|:--|:--|
-| F6 | ✅/🟠 **`expand=` is REST-only** | MCP half fixed 2026-07-06: `query_data`/`get_record` gained `expand` (same `string[]` contract as REST). GraphQL still has **no relationship traversal** (no nested object types — relations are bare FK scalars); that remains Phase 13. |
+| F6 | ✅ **`expand=` is REST-only** | Fully fixed: MCP half 2026-07-06; GraphQL half 2026-07-07 (Phase 13 / ADR-020) — relation keys become nested fields resolved through a per-request batching loader over the shared `DataService.hydrateRelation`, with a 12-level depth cap. Reverse traversal (`<fkObj>_by_<rel>`) landed on every surface at once. |
 | F7 | ✅ **No `ion.event.*` metrics** | Fixed 2026-07-06: `ion.event.published` counter, `ion.event.deliveries` counter (`ion.outcome` attr), `ion.event.delivery.duration` histogram — recorded in `OutboxBus.publish` and the dispatcher, documented in `docs/concepts/events.md`. |
 | F8 | ✅ **PUT missing** | Decided 2026-07-06: PATCH-only is deliberate (a stale full-replace would silently null runtime-added fields); documented in `docs/api/rest.md`. |
-| F9 | ✅/🟡 **Migration `sql_down` is write-only** | Wording fixed 2026-07-06 (`schema-manager.ts` no longer implies rollback exists). Building an actual rollback API/CLI remains open — if pursued, it needs data-loss guards like the rest of the change pipeline. |
+| F9 | ✅ **Migration `sql_down` is write-only** | Resolved 2026-07-07 (Phase 13 / ADR-020): **no rollback API, by decision** — `sql_down` is advisory documentation; recovery is declarative (snapshot pull/diff/push, relationships included since Phase 13) plus backups/PITR. |
 
 ### 1.3 Planned-but-missing platform capabilities 🟡
 
 | # | Finding | Detail |
 |:--|:--|:--|
 | F10 | **Multi-tenancy is aspirational** | Positioning says "database-per-tenant by default"; the plan's verification scenarios (create tenant → isolated DB) are unmet. Today: `createTenantDb` exists but there is exactly one tenant DB from config — no tenant provisioning, routing, lifecycle, or per-tenant migrations. |
-| F11 | **Actor identity** (carried from Phase 9) | No `created_by`/`updated_by` system fields; event payloads carry no `actorId`; `audit_log.changed_by` is always null; `_ion_migrations.applied_by` never populated. Requires threading `request.auth` through `DataService` writes on all three surfaces. |
+| F11 | ✅ **Actor identity** (carried from Phase 9) | Fixed 2026-07-06 (Phase 12 / ADR-019): ambient `AsyncLocalStorage` request actor (no signature threading); `created_by`/`updated_by` system fields + boot migration; `actor` on event payloads; `persist_event` gains `payload.actorId`; `_ion_migrations.applied_by` populated. Remaining: point the audit block's `changed_by` map at `payload.actorId` in `ion-drive-blocks`. |
 | F12 | **Field-level RBAC** | `permission-engine.ts` says "field-level scoping is a future extension". Object-level only today. Row-level policies (owner-scoped reads) are also absent — relevant for the app-backend positioning. |
 | F13 | ✅ **No rate limiting / brute-force protection** | Fixed 2026-07-06: `@fastify/rate-limit`, config-gated `ION_RATE_LIMIT_*` (default on: 300/min global per IP, 20/min on `/api/auth/*` via an independent keyed bucket), `/health`+`/metrics` exempt. Live-smoked against Postgres. |
-| F14 | **No realtime** | No way for an app to subscribe to data changes (SSE/WebSocket). The outbox + dispatcher already produce ordered `data.<object>.<op>` events — a realtime bridge is mostly transport work. (Logs already stream over SSE, so the pattern exists in-repo.) |
-| F15 | **No outbound webhooks** | Composable today only by hand (subscription + `http_request` task handler). A first-class `webhook` event handler (signed payloads, retries, delivery log) is a natural near-term win on the same infrastructure. |
+| F14 | ✅ **No realtime** | Fixed 2026-07-06 (Phase 12): `GET /api/v1/events/stream` (SSE, per-event RBAC) via `RealtimeBridge`; client SDK `ion.events.stream()`; admin live feed. GraphQL `Subscription.events` landed 2026-07-07 (Phase 13) over the same bridge. |
+| F15 | ✅ **No outbound webhooks** | Fixed 2026-07-06 (Phase 12): `_ion_webhooks` + `WebhookManager` projecting webhooks onto dispatcher consumer groups (`webhook:<id>`); HMAC-signed payloads (`x-ion-signature`), exponential retry backoff, ledger as delivery log; REST CRUD + test-fire, admin page, block-manifest `webhooks`. |
 | F16 | **No file/blob storage** | "Self-hosted Firebase" implies a storage story. Nothing exists — needs a `StorageProvider` port (Phase 9 pattern), a local-disk default, an S3-compatible plugin, and a `file` field type. |
-| F17 | **`removeRelationship` missing** | `SchemaManager` cannot delete relationships; snapshot push warns/skips relationship removals; the admin has no delete-relationship action. |
-| F18 | **Delivery DLQ has no surface** | Failed event deliveries (`maxAttempts` exhausted) sit in `_ion_event_deliveries` with no admin view, no retry button, no alerting. |
+| F17 | ✅ **`removeRelationship` missing** | Fixed 2026-07-07 (Phase 13 / ADR-020): preview-first `removeRelationship` (data-loss warnings, block protection + force), `DELETE /api/v1/schema/objects/:name/relationships/:relName`, MCP `remove_relationship` (+ `add_relationship`, which was also missing), snapshot `--prune` removes relationships, admin delete dialog. |
+| F18 | ✅ **Delivery DLQ has no surface** | Fixed 2026-07-06 (Phase 12): `GET /api/v1/events[,/deliveries]` (status/consumer/`dead=true`) + `POST /deliveries/retry`; admin Events page with retry. Alerting still open (a webhook on failure topics, or Prometheus rules over `ion.event.deliveries`). |
 | F19 | **External plugin packages don't exist yet** | The ports (cache/email/bus) are proven with in-core defaults; `@ion-drive/plugin-redis`, `plugin-sendgrid`/SMTP, `plugin-rabbitmq` are still to be built as separate repos/packages. |
 
 ### 1.4 CLI & end-user developer experience ✅ (Phase 14, 2026-07-06)
@@ -72,7 +72,7 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 
 Carried from Phases 8–10 (see memory/ADR notes), still valid:
 
-- **Admin:** m2m link editing (chip lists + junction rows); ~~command-palette record search (global `q=`)~~ (✅ 2026-07-06 — debounced `q=` fan-out across the first 8 non-system objects; selecting a result opens the object grid with the search prefilled); ~~logs export button~~ (✅ 2026-07-06 — JSON/CSV export of the filtered view); column pinning; "delete → Undo" toast; popover calendar date picker; stat-card trend deltas (needs persisted stats history); ~~`vitest-axe` assertions (dep installed, unused)~~ (✅ 2026-07-06 — matcher wired in vitest.setup.ts; `src/a11y.test.tsx` runs axe over Button/form fields/Checkbox+Switch/EmptyState/Tabs/Dialog/Login, zero violations found).
+- **Admin:** ~~m2m link editing (chip lists + junction rows)~~ (✅ 2026-07-07 — Phase 13: read-only chip columns in the grid, chip+picker junction editor in the RecordSheet over the link API); ~~command-palette record search (global `q=`)~~ (✅ 2026-07-06 — debounced `q=` fan-out across the first 8 non-system objects; selecting a result opens the object grid with the search prefilled); ~~logs export button~~ (✅ 2026-07-06 — JSON/CSV export of the filtered view); column pinning; "delete → Undo" toast; popover calendar date picker; stat-card trend deltas (needs persisted stats history); ~~`vitest-axe` assertions (dep installed, unused)~~ (✅ 2026-07-06 — matcher wired in vitest.setup.ts; `src/a11y.test.tsx` runs axe over Button/form fields/Checkbox+Switch/EmptyState/Tabs/Dialog/Login, zero violations found).
 - **Schema engine:** ~~doctor's `AUTH_TABLES` allowlist is hardcoded (ask the `AuthProvider` for its tables)~~ (✅ 2026-07-06 — `AuthProvider.getManagedTables?()` feeds the doctor's `systemTables` option; list lives in the Better Auth adapter); `renderDefaultExpression` treats any value ending in `)` as a SQL expression (needs an `isLiteral` escape hatch); no admin UI for snapshots (CLI-first by design — revisit).
 - **Code health:** ~~27 Biome cognitive-complexity warnings~~ (✅ 2026-07-06 — cleared to zero via behavior-preserving helper extraction across 19 files, no suppressions). ~~Yoga logging adapter serialized `Error`s to `{}`~~ (✅ 2026-07-06 — `api/graphql/plugin.ts` now maps a leading Error to pino's `err` key).
 - **Docs:** ~~`docs/deployment/kubernetes.md`; backup/restore guide; security hardening checklist~~ (✅ 2026-07-06); performance benchmarks (promised under Phase 7 "Polish") still outstanding. ~~Hardening gaps surfaced by the checklist (no `trustProxy`, unauthenticated `/metrics`, signup stays open after first admin)~~ (✅ 2026-07-06, Phase 14 warm-up — `ION_TRUST_PROXY`, `ION_METRICS_TOKEN` bearer auth, `ION_DISABLE_SIGNUP` closes signup once the first admin exists; checklist updated, live-smoked).
@@ -92,17 +92,35 @@ Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 6. Release pipeline: changesets (or similar), npm publish workflow for `core`/`cli`/`client`/`blocks`, Docker image publish. (F23) → **moved to Phase 14 Tier 0** — publishing is a hard prerequisite for framework mode (ADR-018).
 7. ~~Docs: `deployment/kubernetes.md`, backup/restore, security checklist~~ ✅ 2026-07-06 (cross-linked from README/getting-started/docker.md; manifests are reference-grade, not cluster-certified). (⚪)
 
-### Phase 12 — Events to the edge (realtime, webhooks, identity)
-1. Actor identity: `created_by`/`updated_by` system fields, actor threaded from `request.auth` through `DataService` on all surfaces, `actorId` in event payloads, `audit_log.changed_by` populated, `applied_by` on migrations. (F11)
-2. First-class **webhooks**: `webhook` handler (HMAC-signed payloads, retry/backoff, delivery log), admin CRUD page, block-manifest support. (F15)
-3. **Realtime subscriptions**: SSE endpoint (`/api/v1/events/stream?topics=data.contacts.*`) bridging the dispatcher, RBAC-filtered; GraphQL subscriptions over the same bridge if cheap. (F14)
-4. ~~`ion.event.*` metrics~~ (✅ 2026-07-06) + DLQ admin surface (failed-deliveries view, retry). (F7, F18)
+### Phase 12 — Events to the edge (realtime, webhooks, identity) ✅ SHIPPED 2026-07-06 (ADR-019, [plan](phase_12_implementation_plan.md))
+All four items landed (F11, F15, F14 minus GraphQL subscriptions, F18) plus the
+pre-phase shutdown/port-release fix. Verified by 4 new integration scenarios
+(15 total) against real Postgres + a 5-check boot-migration live smoke.
+Follow-ups:
+- **Audit block:** map `changed_by: payload.actorId` in the `ion-drive-blocks`
+  repo's audit manifest (one-line change; the core token exists).
+- ~~**GraphQL subscriptions** over the same bridge~~ (✅ 2026-07-07, Phase 13 —
+  `Subscription.events` over yoga GraphQL-SSE, shared per-event RBAC filter).
+- **DLQ alerting** (notify on dead letters) — composable today via a webhook
+  or Prometheus rules on `ion.event.deliveries`; revisit if a first-class
+  notifier earns its keep.
+- Admin Events page could deep-link a webhook's delivery history
+  (`consumer=webhook:<id>` prefill).
 
-### Phase 13 — Relational completeness (parity + schema engine)
-1. GraphQL relationship traversal: nested object types resolved through the same `DataService.expand` machinery (batched, depth-capped). (F6 — the MCP half shipped 2026-07-06.)
-2. `SchemaManager.removeRelationship` + snapshot prune of relationships + admin delete action. (F17)
-3. Admin m2m link editing (chip list cell, junction editing in RecordSheet). (⚪)
-4. ~~Decide + document PUT~~ (✅ PATCH-only, documented); migration rollback build-or-drop decision. (F8, F9)
+### Phase 13 — Relational completeness (parity + schema engine) ✅ SHIPPED 2026-07-07 (ADR-020, [plan](phase_13_implementation_plan.md))
+All four items landed (F6's GraphQL half, F17, the admin m2m polish, F9 decided
+as no-rollback) **plus** the two parked deferrals: GraphQL subscriptions over
+the Phase 12 bridge and GraphQL mutations for block actions. Also new beyond
+the plan: reverse traversal (`<fkObj>_by_<rel>` expand keys on every surface),
+a first-class m2m link write API (REST/GraphQL/MCP/SDK/admin +
+`data.<object>.linked|unlinked` events), and a snapshot scoping fix
+(relationships now match by (source, name), not name alone). Verified by 6 new
+integration scenarios (21 total) against real Postgres. Follow-ups:
+- Pagination/filtering *within* an expansion is deliberately out of scope
+  (query the child object directly); revisit only on real demand.
+- The audit block's `data.#` subscription now also receives `linked`/`unlinked`
+  payloads (no before/after/diff) — its field map handles them as nulls, but a
+  dedicated link-audit row shape could be nicer (ion-drive-blocks follow-up).
 
 ### Phase 14 — Framework mode & vendored-logic blocks ✅ SHIPPED 2026-07-06 (ADR-018, [plan](phase_14_implementation_plan.md))
 All tiers complete and verified end-to-end (a scaffolded project on tarball installs ran the

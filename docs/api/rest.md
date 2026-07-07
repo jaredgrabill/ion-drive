@@ -31,6 +31,8 @@ A machine-readable, always-current [OpenAPI 3.1 spec](#openapi) is served at
 | `GET` | `/api/v1/data/:object/:id` | Get one record by id |
 | `PATCH` | `/api/v1/data/:object/:id` | Partial update — send only the fields you're changing |
 | `DELETE` | `/api/v1/data/:object/:id` | Delete |
+| `POST` | `/api/v1/data/:object/:id/links/:rel` | Add many_to_many links (`{ "ids": [...] }`, idempotent) |
+| `DELETE` | `/api/v1/data/:object/:id/links/:rel` | Remove many_to_many links (`{ "ids": [...] }`) |
 
 > There is deliberately no `PUT` full-replace verb: with runtime-defined schemas, replaying a
 > stale full document would silently null out fields added since it was read. `PATCH` is the
@@ -67,8 +69,11 @@ curl -X POST http://localhost:3000/api/v1/data/contacts \
 # 201 Created -> { "data": { "id": "…", … } }
 ```
 
-System fields (`id`, `created_at`, `updated_at`) are managed by the platform and
-ignored if supplied in the body.
+System fields (`id`, `created_at`, `updated_at`, `created_by`, `updated_by`)
+are managed by the platform and ignored if supplied in the body. The `*_by`
+columns record the authenticated actor (user id, else API-key id): creates
+stamp both, updates re-stamp `updated_by`, and anonymous writes leave them
+null.
 
 ### Get / Update / Delete
 

@@ -11,7 +11,8 @@
  */
 
 import type { IncomingHttpHeaders } from 'node:http';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { runWithNewContext, setCurrentActor } from '../runtime/request-context.js';
 import type { ApiKeyManager } from './api-key-manager.js';
 import type { AuthPrincipal, AuthProvider } from './types.js';
 
@@ -49,33 +50,63 @@ export function installSessionMiddleware(
   const { provider, apiKeys } = options;
   fastify.decorateRequest('auth', null);
 
-  fastify.addHook('onRequest', async (request) => {
-    const apiKey = extractApiKey(request.headers);
-    if (apiKey) {
-      const principal = await apiKeys.authenticate(apiKey);
-      if (principal) {
-        request.auth = {
-          via: 'api_key',
-          userId: principal.userId,
-          user: null,
-          session: null,
-          apiKeyId: principal.apiKeyId,
-          roleId: principal.roleId,
-        };
-        return;
-      }
-    }
-
-    const session = await provider.getSession(request.headers);
-    if (session) {
-      request.auth = {
-        via: 'session',
-        userId: session.user.id,
-        user: session.user,
-        session: session.session,
-        apiKeyId: null,
-        roleId: null,
-      };
-    }
+  // Callback-style on purpose (Phase 12 / ADR-019): calling `done` *inside*
+  // `runWithNewContext` makes every later hook and the route handler a
+  // descendant of the AsyncLocalStorage context, so the ambient actor is
+  // visible to DataService/SchemaManager (created_by/updated_by, event
+  // payloads, migration provenance). An async hook could not do this — its
+  // continuation is a sibling frame, not an ancestor of the handler.
+  fastify.addHook('onRequest', (request, _reply, done) => {
+    runWithNewContext(() => {
+      resolveAuth(request, provider, apiKeys)
+        .then(() => {
+          setCurrentActor(
+            request.auth
+              ? {
+                  userId: request.auth.userId,
+                  apiKeyId: request.auth.apiKeyId,
+                  via: request.auth.via,
+                }
+              : null,
+          );
+          done();
+        })
+        .catch(done);
+    });
   });
+}
+
+/** Resolves `request.auth` — API-key first, then a provider session cookie. */
+async function resolveAuth(
+  request: FastifyRequest,
+  provider: AuthProvider,
+  apiKeys: ApiKeyManager,
+): Promise<void> {
+  const apiKey = extractApiKey(request.headers);
+  if (apiKey) {
+    const principal = await apiKeys.authenticate(apiKey);
+    if (principal) {
+      request.auth = {
+        via: 'api_key',
+        userId: principal.userId,
+        user: null,
+        session: null,
+        apiKeyId: principal.apiKeyId,
+        roleId: principal.roleId,
+      };
+      return;
+    }
+  }
+
+  const session = await provider.getSession(request.headers);
+  if (session) {
+    request.auth = {
+      via: 'session',
+      userId: session.user.id,
+      user: session.user,
+      session: session.session,
+      apiKeyId: null,
+      roleId: null,
+    };
+  }
 }

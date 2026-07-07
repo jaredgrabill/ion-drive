@@ -62,9 +62,11 @@ import {
   cellKindOf,
   linkTargetOf,
   linkedRelationshipOf,
+  m2mRelationshipsOf,
 } from './grid-types';
 import { RecordChip } from './record-chip';
 import { RecordPicker } from './record-picker';
+import { RelationChipList } from './relation-chips';
 
 // Code-split: the RecordSheet pulls in react-hook-form + zod, which the
 // grid itself doesn't need until a record is opened.
@@ -211,9 +213,19 @@ export function DataGrid({ object }: DataGridProps) {
     () => fields.filter((f) => !prefs.hidden.includes(f.name)),
     [fields, prefs.hidden],
   );
+  // m2m relationships render as read-only chip columns after the fields,
+  // fed by expand= on the list query (Phase 13). Editing lives in the sheet.
+  const m2mRels = useMemo(() => m2mRelationshipsOf(object), [object]);
 
   // Reset to page 1 whenever the query shape changes.
-  const queryString = buildQueryString({ page, pageSize, search, filters, sorts });
+  const queryString = buildQueryString({
+    page,
+    pageSize,
+    search,
+    filters,
+    sorts,
+    expand: m2mRels.map((rel) => rel.name),
+  });
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional page reset on query change
   useEffect(() => {
     setPage(1);
@@ -469,12 +481,30 @@ export function DataGrid({ object }: DataGridProps) {
                     onResize={(w) => setWidth(object.name, field.name, w)}
                   />
                 ))}
+                {m2mRels.map((rel) => (
+                  <th
+                    key={`rel-${rel.name}`}
+                    scope="col"
+                    className="border-b border-border bg-muted/50 px-3 py-2 text-left font-medium text-muted-foreground"
+                    style={{ width: 220, minWidth: 220 }}
+                  >
+                    <span className="flex items-center gap-1.5 text-xs">
+                      {rel.displayName}
+                      <span className="rounded-full bg-ion-purple/10 px-1.5 text-[10px] text-ion-purple">
+                        m2m
+                      </span>
+                    </span>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {padTop > 0 && (
                 <tr aria-hidden>
-                  <td style={{ height: padTop }} colSpan={visibleFields.length + 1} />
+                  <td
+                    style={{ height: padTop }}
+                    colSpan={visibleFields.length + m2mRels.length + 1}
+                  />
                 </tr>
               )}
               {virtualRows.map((virtualRow) => {
@@ -552,12 +582,30 @@ export function DataGrid({ object }: DataGridProps) {
                         </td>
                       );
                     })}
+                    {m2mRels.map((rel) => (
+                      // Read-only chip cell; open the record sheet to edit links.
+                      // biome-ignore lint/a11y/useKeyWithClickEvents: mouse shortcut only — the sheet also opens via the row's Open button
+                      <td
+                        key={`rel-${rel.name}`}
+                        className="cursor-pointer border-b border-border/60 px-3 py-1.5"
+                        style={{ width: 220, minWidth: 220, maxWidth: 220 }}
+                        onClick={() => setSheet({ mode: 'edit', row })}
+                      >
+                        <RelationChipList
+                          targetObject={linkTargetOf(object, rel)}
+                          records={row[rel.name]}
+                        />
+                      </td>
+                    ))}
                   </tr>
                 );
               })}
               {padBottom > 0 && (
                 <tr aria-hidden>
-                  <td style={{ height: padBottom }} colSpan={visibleFields.length + 1} />
+                  <td
+                    style={{ height: padBottom }}
+                    colSpan={visibleFields.length + m2mRels.length + 1}
+                  />
                 </tr>
               )}
             </tbody>

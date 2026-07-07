@@ -143,12 +143,43 @@ GET /api/v1/data/contacts?limit=50&offset=50       # offset-based (same window)
 ## Field selection & expansion
 
 - `select` — comma-separated list of fields to return (projection).
-- `expand` — comma-separated relationship names to include.
+- `expand` — comma-separated **relation keys** to include as attached records.
 
 ```
 GET /api/v1/data/contacts?select=id,full_name,email
-GET /api/v1/data/contacts?expand=company
+GET /api/v1/data/contacts?expand=company,tags
+GET /api/v1/data/companies?expand=contacts_by_company
 ```
+
+A relation key is (Phase 13):
+
+| Key | Where | Attaches |
+|:--|:--|:--|
+| `<relName>` | the FK-holding side (`many_to_one`/`one_to_one` source, `one_to_many` target) | the related record or `null` |
+| `<relName>` | either side of a `many_to_many` | the linked records (array) |
+| `<fkObject>_by_<relName>` | the "one" side (reverse traversal) | the FK-holding records (array; single for a reverse `one_to_one`) |
+
+The OpenAPI spec's `expand` parameter (and MCP's `get_object` tool) list each
+object's available keys. Unknown keys are ignored. GraphQL exposes the same
+keys as nested fields (see [graphql.md](graphql.md)).
+
+---
+
+## Writing many-to-many links (Phase 13)
+
+FK-backed links are set through the record itself (`{ "company_id": "…" }`);
+`many_to_many` links are written through the junction endpoints:
+
+```
+POST   /api/v1/data/contacts/:id/links/tags    { "ids": ["…", "…"] }   → { "data": { "added": n } }
+DELETE /api/v1/data/contacts/:id/links/tags    { "ids": ["…"] }        → { "data": { "removed": n } }
+```
+
+Both are idempotent (already-linked / not-linked ids are skipped) and emit
+`data.<object>.linked` / `data.<object>.unlinked` events carrying only the ids
+that actually changed. SDK: `ion.from('contacts').link(id, 'tags', ids)` /
+`.unlink(...)`; MCP: `link_records` / `unlink_records`; GraphQL:
+`link_<object>_<rel>` / `unlink_<object>_<rel>` mutations.
 
 ---
 

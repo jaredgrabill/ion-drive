@@ -17,15 +17,19 @@ import type {
   CrudEventPayload,
   CrudOperation,
   FieldDiff,
+  LinkEventPayload,
+  LinkOperation,
 } from '../messaging/event-types.js';
 import type { MessageBus } from '../messaging/message-bus.js';
 import { NoopBus } from '../messaging/noop-bus.js';
+import { currentActor, currentActorId } from '../runtime/request-context.js';
 import type { SchemaRegistry } from '../schema/schema-registry.js';
 import {
   COLUMN_TYPES,
   type FieldConstraints,
   type RelationshipDefinition,
 } from '../schema/types.js';
+import { type RelationKey, findRelationKey, listRelationKeys } from './relation-keys.js';
 import type {
   BulkResult,
   FilterCondition,
@@ -165,6 +169,7 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     const cleanData = this.sanitizeInput(objectName, data);
     this.validateConstraints(objectName, cleanData);
+    this.stampActor(objectName, cleanData, 'create');
 
     const row = await this.db.transaction().execute(async (trx) => {
       const inserted = await trx
@@ -199,6 +204,7 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     const cleanData = this.sanitizeInput(objectName, data);
     this.validateConstraints(objectName, cleanData);
+    this.stampActor(objectName, cleanData, 'update');
 
     const row = await this.db.transaction().execute(async (trx) => {
       const before = this.eventsEnabled
@@ -273,7 +279,10 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     if (records.length === 0) return { count: 0, ids: [] };
     const cleanRecords = records.map((r) => this.sanitizeInput(objectName, r));
-    for (const record of cleanRecords) this.validateConstraints(objectName, record);
+    for (const record of cleanRecords) {
+      this.validateConstraints(objectName, record);
+      this.stampActor(objectName, record, 'create');
+    }
 
     const rows = await this.db.transaction().execute(async (trx) => {
       const inserted = await trx
@@ -346,6 +355,164 @@ export class DataService {
   }
 
   // =========================================================================
+  // Link Operations (many_to_many junction writes — Phase 13)
+  // =========================================================================
+
+  /**
+   * Adds many_to_many links between a record and target records. Idempotent —
+   * already-linked pairs are skipped via the junction's composite primary key
+   * — and transactional: the junction inserts and the `data.<object>.linked`
+   * event (carrying only the ids actually added) commit together.
+   */
+  async addLinks(
+    objectName: string,
+    id: string,
+    relKey: string,
+    targetIds: string[],
+  ): Promise<{ added: number }> {
+    const { key, thisCol, otherCol, junction } = await this.resolveLinkWrite(
+      objectName,
+      id,
+      relKey,
+    );
+    const unique = [...new Set(targetIds)];
+    if (unique.length === 0) return { added: 0 };
+
+    const added = await this.db
+      .transaction()
+      .execute(async (trx) => {
+        const inserted = await trx
+          .insertInto(junction)
+          .values(unique.map((targetId) => ({ [thisCol]: id, [otherCol]: targetId })))
+          .onConflict((oc) => oc.columns([thisCol, otherCol]).doNothing())
+          .returningAll()
+          .execute();
+        const addedIds = (inserted as Record<string, unknown>[]).map((r) => String(r[otherCol]));
+        if (this.eventsEnabled && addedIds.length > 0) {
+          await this.emitLink(trx, objectName, 'linked', key, id, addedIds);
+        }
+        return addedIds.length;
+      })
+      .catch((err) => {
+        throw mapLinkWriteError(err, key);
+      });
+
+    this.wake();
+    return { added };
+  }
+
+  /**
+   * Removes many_to_many links between a record and target records. Ids that
+   * were not linked are ignored; the `data.<object>.unlinked` event carries
+   * only the ids actually removed and commits with the junction deletes.
+   */
+  async removeLinks(
+    objectName: string,
+    id: string,
+    relKey: string,
+    targetIds: string[],
+  ): Promise<{ removed: number }> {
+    const { key, thisCol, otherCol, junction } = await this.resolveLinkWrite(
+      objectName,
+      id,
+      relKey,
+    );
+    const unique = [...new Set(targetIds)];
+    if (unique.length === 0) return { removed: 0 };
+
+    const removed = await this.db
+      .transaction()
+      .execute(async (trx) => {
+        const deleted = await trx
+          .deleteFrom(junction)
+          .where(thisCol, '=', id)
+          .where(otherCol, 'in', unique)
+          .returningAll()
+          .execute();
+        const removedIds = (deleted as Record<string, unknown>[]).map((r) => String(r[otherCol]));
+        if (this.eventsEnabled && removedIds.length > 0) {
+          await this.emitLink(trx, objectName, 'unlinked', key, id, removedIds);
+        }
+        return removedIds.length;
+      })
+      .catch((err) => {
+        throw mapLinkWriteError(err, key);
+      });
+
+    this.wake();
+    return { removed };
+  }
+
+  /**
+   * Shared preamble for the link writes: resolves the relation key (must be a
+   * many_to_many), verifies the record exists, and derives the junction
+   * table/columns as seen from this object's side.
+   */
+  private async resolveLinkWrite(
+    objectName: string,
+    id: string,
+    relKey: string,
+  ): Promise<{ key: RelationKey; junction: string; thisCol: string; otherCol: string }> {
+    const tableName = this.resolveTable(objectName);
+    const obj = this.registry.getObject(objectName);
+    const key = obj ? findRelationKey(obj, relKey) : undefined;
+    if (!key) {
+      throw new DataServiceError(
+        `Unknown relationship "${relKey}" on object "${objectName}"`,
+        'UNKNOWN_RELATIONSHIP',
+        400,
+      );
+    }
+    if (key.via !== 'junction') {
+      throw new DataServiceError(
+        `Relationship "${relKey}" is not many_to_many — link writes only apply to many_to_many relationships (FK-backed links are set via the record's "${key.rel.name}_id" field)`,
+        'NOT_MANY_TO_MANY',
+        400,
+      );
+    }
+
+    const exists = await this.db
+      .selectFrom(tableName)
+      .select('id')
+      .where('id', '=', id)
+      .executeTakeFirst()
+      .catch((err) => {
+        throw mapLinkWriteError(err, key);
+      });
+    if (!exists) {
+      throw new DataServiceError(
+        `Record "${id}" not found on "${objectName}"`,
+        'RECORD_NOT_FOUND',
+        404,
+      );
+    }
+
+    const isSource = key.rel.sourceObjectName === objectName;
+    return { key, ...this.resolveJunction(key.rel, isSource) };
+  }
+
+  /** Publishes a `data.<object>.linked|unlinked` event in the caller's transaction. */
+  private async emitLink(
+    trx: BusTransaction,
+    objectName: string,
+    op: LinkOperation,
+    key: RelationKey,
+    id: string,
+    targetIds: string[],
+  ): Promise<void> {
+    const payload: LinkEventPayload = {
+      object: objectName,
+      id,
+      op,
+      relationship: key.key,
+      targetObject: key.otherObject,
+      targetIds,
+      actor: currentActor(),
+    };
+    await this.bus.publish({ topic: `data.${objectName}.${op}`, payload }, trx);
+  }
+
+  // =========================================================================
   // Private Helpers
   // =========================================================================
 
@@ -372,8 +539,29 @@ export class DataService {
       before: images.before,
       after: images.after,
       diff: images.diff ?? null,
+      actor: currentActor(),
     };
     await this.bus.publish({ topic: `data.${objectName}.${op}`, payload }, trx);
+  }
+
+  /**
+   * Stamps the ambient actor onto the system actor columns (Phase 12 /
+   * ADR-019): creates set both `created_by` and `updated_by`, updates only
+   * `updated_by`. No-op when there is no actor (anonymous/system writes) or
+   * the object predates the actor columns (registry-guarded, so a stale
+   * schema never produces an unknown-column SQL error).
+   */
+  private stampActor(
+    objectName: string,
+    cleanData: Record<string, unknown>,
+    op: 'create' | 'update',
+  ): void {
+    const actorId = currentActorId();
+    if (!actorId) return;
+    const fields = this.registry.getFields(objectName);
+    const hasColumn = (col: string) => fields.some((f) => f.columnName === col);
+    if (op === 'create' && hasColumn('created_by')) cleanData.created_by = actorId;
+    if (hasColumn('updated_by')) cleanData.updated_by = actorId;
   }
 
   /** Nudges the dispatcher to drain immediately once a write has committed. */
@@ -439,17 +627,32 @@ export class DataService {
   }
 
   /**
-   * Attaches related records to rows for each requested relationship name
-   * (Phase 10 / Tier 3B — powers linked-record chips and peeks).
+   * Attaches one relation's records under its key to already-fetched rows, in
+   * one batched fetch. This is the shared hydration unit: `expand=` loops it,
+   * and the GraphQL relation loader (api/graphql) batches parent rows from
+   * many resolvers into a single call. Unknown keys are ignored (lenient,
+   * like unknown select fields). See `relation-keys.ts` for the key grammar.
+   */
+  async hydrateRelation(
+    objectName: string,
+    rows: Record<string, unknown>[],
+    relKey: string,
+  ): Promise<void> {
+    await this.applyExpansions(objectName, rows, [relKey]);
+  }
+
+  /**
+   * Attaches related records to rows for each requested relation key
+   * (Phase 10 / Tier 3B; reverse + shared-with-GraphQL since Phase 13).
    *
-   * Supported shapes:
-   * - FK on **this** object (many_to_one/one_to_one from here, or one_to_many
-   *   *to* here): one batched `WHERE id IN (…)` fetch of the other side, each
-   *   row gains `row[relName] = relatedRecord | null`.
-   * - many_to_many: one junction-table fetch + one target fetch, each row
-   *   gains `row[relName] = relatedRecord[]`.
-   *
-   * Unknown expansion names are ignored (lenient, like unknown select fields).
+   * Supported shapes (see `relation-keys.ts` for how keys are derived):
+   * - `via: 'fk'` — FK on **this** object: one batched `WHERE id IN (…)`
+   *   fetch of the other side, each row gains `row[key] = record | null`.
+   * - `via: 'reverse'` — FK on the other object (`<fkObj>_by_<rel>`): one
+   *   batched fetch of the FK side grouped by FK value; rows gain a list
+   *   (or `record | null` for one_to_one).
+   * - `via: 'junction'` — many_to_many: one junction fetch + one target
+   *   fetch, each row gains `row[key] = record[]`.
    */
   private async applyExpansions(
     objectName: string,
@@ -460,15 +663,55 @@ export class DataService {
     const obj = this.registry.getObject(objectName);
     if (!obj) return;
 
-    for (const relName of expand) {
-      const rel = (obj.relationships ?? []).find((r) => r.name === relName);
-      if (!rel) continue;
+    const keys = new Map(listRelationKeys(obj).map((k) => [k.key, k]));
+    for (const name of expand) {
+      const key = keys.get(name);
+      if (!key) continue;
 
-      if (rel.type === 'many_to_many') {
-        await this.expandManyToMany(objectName, rows, rel);
+      if (key.via === 'junction') {
+        await this.expandManyToMany(objectName, rows, key.rel);
+      } else if (key.via === 'reverse') {
+        await this.expandReverse(rows, key);
       } else {
-        await this.expandForeignKey(objectName, rows, rel);
+        await this.expandForeignKey(objectName, rows, key.rel);
       }
+    }
+  }
+
+  /**
+   * Expands the non-FK side of a FK-backed relationship (`<fkObj>_by_<rel>`):
+   * one batched fetch of the FK-holding rows grouped by their FK value. Each
+   * row gains a list (one_to_many / many_to_one) or a single record (the
+   * reverse of a one_to_one).
+   */
+  private async expandReverse(rows: Record<string, unknown>[], key: RelationKey): Promise<void> {
+    const otherTable = this.registry.getTableName(key.otherObject);
+    if (!otherTable) return;
+
+    const fkColumn = `${key.rel.name}_id`;
+    const empty = () => (key.kind === 'single' ? null : []);
+    const ids = [...new Set(rows.map((r) => r.id).filter((v) => v != null))];
+    if (ids.length === 0) {
+      for (const row of rows) row[key.key] = empty();
+      return;
+    }
+
+    const related = (await this.db
+      .selectFrom(otherTable)
+      .selectAll()
+      .where(fkColumn, 'in', ids)
+      .execute()) as Record<string, unknown>[];
+
+    const grouped = new Map<string, Record<string, unknown>[]>();
+    for (const record of related) {
+      const parent = String(record[fkColumn]);
+      const list = grouped.get(parent) ?? [];
+      list.push(record);
+      grouped.set(parent, list);
+    }
+    for (const row of rows) {
+      const list = grouped.get(String(row.id)) ?? [];
+      row[key.key] = key.kind === 'single' ? (list[0] ?? null) : list;
     }
   }
 
@@ -708,6 +951,26 @@ export class DataService {
  */
 function escapeLikePattern(term: string): string {
   return term.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/**
+ * Maps the Postgres errors a link write can hit to friendly 400s: a junction
+ * FK violation means a target id doesn't exist on the other side; an invalid
+ * text representation means an id wasn't a UUID. Anything else passes through.
+ */
+function mapLinkWriteError(err: unknown, key: RelationKey): unknown {
+  const code = (err as { code?: string } | null)?.code;
+  if (code === '23503') {
+    return new DataServiceError(
+      `One or more target ids do not exist on "${key.otherObject}"`,
+      'UNKNOWN_TARGET',
+      400,
+    );
+  }
+  if (code === '22P02') {
+    return new DataServiceError('Record ids must be valid UUIDs', 'INVALID_ID', 400);
+  }
+  return err;
 }
 
 /**

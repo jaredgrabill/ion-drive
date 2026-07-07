@@ -14,10 +14,15 @@
 
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 import type { GraphQLSchema } from 'graphql';
-import { createYoga } from 'graphql-yoga';
+import { type Plugin as YogaPlugin, createYoga } from 'graphql-yoga';
+import type { PermissionEngine } from '../../auth/rbac/permission-engine.js';
+import type { ActionExecutor } from '../../blocks/action-executor.js';
 import type { DataService } from '../../data/data-service.js';
+import type { RealtimeBridge } from '../../messaging/realtime.js';
 import type { SchemaRegistry } from '../../schema/schema-registry.js';
-import { buildGraphQLSchema } from './schema-builder.js';
+import { MAX_QUERY_DEPTH, createDepthLimitRule } from './depth-limit.js';
+import { RelationLoader, type RelationLoaderContext } from './relation-loader.js';
+import { type GraphQLSchemaExtras, buildGraphQLSchema } from './schema-builder.js';
 
 export interface GraphQLRoutesOptions {
   registry: SchemaRegistry;
@@ -26,6 +31,14 @@ export interface GraphQLRoutesOptions {
   endpoint?: string;
   /** Whether to serve the GraphiQL playground (default: true). */
   graphiql?: boolean;
+  /** Enables block-action mutations (with `permissionEngine`). Phase 13. */
+  actionExecutor?: ActionExecutor;
+  /** Required for action mutations and subscriptions (per-event RBAC). */
+  permissionEngine?: PermissionEngine;
+  /** Whether RBAC is enforced (config.requireAuth). */
+  enforce?: boolean;
+  /** Enables `Subscription.events` when the outbox bus is live. Phase 13. */
+  realtime?: RealtimeBridge;
 }
 
 type YogaContext = { req: FastifyRequest; reply: FastifyReply };
@@ -43,34 +56,82 @@ function toPinoArgs(args: unknown[]): Record<string, unknown> {
 }
 
 /**
- * Builds a schema provider that rebuilds only when the registry version changes.
+ * How long the cached schema trusts its installed-action snapshot. A block
+ * install usually bumps the registry version (its objects), which rebuilds
+ * immediately; this TTL catches logic-only installs. Execution correctness
+ * never depends on it — action resolution re-checks installed state per call.
  */
-function createSchemaProvider(
-  registry: SchemaRegistry,
-  dataService: DataService,
-): () => GraphQLSchema {
-  let cache: { version: number; schema: GraphQLSchema } | null = null;
-  return () => {
+const ACTIONS_REFRESH_MS = 15_000;
+
+/**
+ * Builds a schema provider that rebuilds when the registry version changes,
+ * and re-checks the installed-action fingerprint at most every
+ * {@link ACTIONS_REFRESH_MS}.
+ */
+function createSchemaProvider(options: GraphQLRoutesOptions): () => Promise<GraphQLSchema> {
+  const { registry, dataService, actionExecutor } = options;
+  const extras: Omit<GraphQLSchemaExtras, 'declaredActions'> = {
+    actionExecutor,
+    permissionEngine: options.permissionEngine,
+    enforce: options.enforce,
+    realtime: options.realtime,
+  };
+  let cache: {
+    version: number;
+    fingerprint: string;
+    checkedAt: number;
+    schema: GraphQLSchema;
+  } | null = null;
+
+  return async () => {
     const version = registry.getVersion();
-    if (!cache || cache.version !== version) {
-      cache = { version, schema: buildGraphQLSchema(registry, dataService) };
+    const now = Date.now();
+    const fresh = cache && now - cache.checkedAt < ACTIONS_REFRESH_MS;
+    if (cache && cache.version === version && (fresh || !actionExecutor)) return cache.schema;
+
+    const declaredActions = actionExecutor ? await actionExecutor.listDeclaredActions() : [];
+    const fingerprint = declaredActions
+      .map((a) => `${a.block}.${a.name}`)
+      .sort()
+      .join(',');
+    if (cache && cache.version === version && cache.fingerprint === fingerprint) {
+      cache.checkedAt = now;
+      return cache.schema;
     }
+    cache = {
+      version,
+      fingerprint,
+      checkedAt: now,
+      schema: buildGraphQLSchema(registry, dataService, { ...extras, declaredActions }),
+    };
     return cache.schema;
   };
 }
 
 export function registerGraphQLRoutes(options: GraphQLRoutesOptions): FastifyPluginCallback {
-  const { registry, dataService } = options;
+  const { dataService } = options;
   const endpoint = options.endpoint ?? '/api/v1/graphql';
   const graphiql = options.graphiql ?? true;
 
   return (fastify, _opts, done) => {
-    const getSchema = createSchemaProvider(registry, dataService);
+    const getSchema = createSchemaProvider(options);
 
-    const yoga = createYoga<YogaContext>({
+    // Reject cyclic-traversal abuse before execution (Phase 13 — the type
+    // graph has relationship cycles now).
+    const depthLimitPlugin: YogaPlugin = {
+      onValidate({ addValidationRule }) {
+        addValidationRule(createDepthLimitRule(MAX_QUERY_DEPTH));
+      },
+    };
+
+    const yoga = createYoga<YogaContext, RelationLoaderContext>({
       schema: () => getSchema(),
       graphqlEndpoint: endpoint,
       graphiql,
+      plugins: [depthLimitPlugin],
+      // One relation loader per request: relation fields on sibling rows
+      // batch into a single DataService fetch (see relation-loader.ts).
+      context: () => ({ relationLoader: new RelationLoader(dataService) }),
       // Fastify owns logging; let it flow through the request logger.
       // Errors must land under pino's `err` key — a raw Error inside an array
       // serializes to `{}` and masked GraphQL errors become invisible in logs.

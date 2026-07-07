@@ -24,10 +24,15 @@
  *   await ion.from('contacts').update(id, { status: 'archived' });
  *   await ion.from('contacts').delete(id);
  *
+ *   // LINKS — many_to_many junction writes (Phase 13):
+ *   await ion.from('contacts').link(id, 'tags', [tagId]);
+ *   await ion.from('contacts').unlink(id, 'tags', [tagId]);
+ *
  * Errors reject with a typed {@link IonDriveError}. Zero runtime dependencies —
  * it uses the global `fetch`.
  */
 
+import { EventsApi } from './events.js';
 import { QueryBuilder } from './query-builder.js';
 import type {
   BulkResult,
@@ -38,6 +43,9 @@ import type {
 } from './types.js';
 
 export class IonDriveClient {
+  /** Realtime event streaming over SSE (Phase 12): `ion.events.stream(...)`. */
+  readonly events: EventsApi;
+
   private readonly baseUrl: string;
   private readonly apiKey?: string;
   private readonly fetchImpl: typeof fetch;
@@ -55,6 +63,14 @@ export class IonDriveClient {
       );
     }
     this.fetchImpl = f.bind(globalThis);
+    this.events = new EventsApi({
+      baseUrl: this.baseUrl,
+      fetchImpl: this.fetchImpl,
+      headers: () => ({
+        ...this.extraHeaders,
+        ...(this.apiKey ? { 'x-api-key': this.apiKey } : {}),
+      }),
+    });
   }
 
   /** Returns a typed accessor for one data object (e.g. `contacts`). */
@@ -191,6 +207,40 @@ export class Resource<T extends Record_ = Record_> {
   /** Deletes many records by id in one call. */
   async bulkDelete(ids: string[]): Promise<BulkResult> {
     return this.client.request<BulkResult>('DELETE', `${this.basePath}/bulk`, { ids });
+  }
+
+  /**
+   * Adds many_to_many links between a record and target records (Phase 13).
+   * Idempotent — already-linked ids are skipped; returns the number of links
+   * actually added. FK-backed relationships are set via `update(id, {
+   * <rel>_id })` instead.
+   *
+   *   await ion.from('contacts').link(contactId, 'tags', [tagA, tagB]);
+   */
+  async link(id: string, relationship: string, ids: string[]): Promise<{ added: number }> {
+    const res = await this.client.request<{ data: { added: number } }>(
+      'POST',
+      this.linkPath(id, relationship),
+      { ids },
+    );
+    return res.data;
+  }
+
+  /**
+   * Removes many_to_many links between a record and target records (Phase
+   * 13). Ids that were not linked are ignored; returns the number removed.
+   */
+  async unlink(id: string, relationship: string, ids: string[]): Promise<{ removed: number }> {
+    const res = await this.client.request<{ data: { removed: number } }>(
+      'DELETE',
+      this.linkPath(id, relationship),
+      { ids },
+    );
+    return res.data;
+  }
+
+  private linkPath(id: string, relationship: string): string {
+    return `${this.basePath}/${encodeURIComponent(id)}/links/${encodeURIComponent(relationship)}`;
   }
 }
 

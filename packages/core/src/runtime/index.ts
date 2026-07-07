@@ -17,3 +17,12 @@ export type {
   LoadPluginsOptions,
   LoadedPlugins,
 } from './plugin.js';
+
+export {
+  currentActor,
+  currentActorId,
+  runWithActor,
+  runWithNewContext,
+  setCurrentActor,
+} from './request-context.js';
+export type { ActorRef } from './request-context.js';

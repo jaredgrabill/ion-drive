@@ -24,6 +24,8 @@ export interface RecordPickerProps {
   onChange: (id: string) => void;
   /** Display-field override (`uiOptions.displayField` on the link field). */
   displayField?: string;
+  /** Trigger label when no record is selected (default "None"). */
+  placeholder?: string;
   'aria-label'?: string;
 }
 
@@ -32,6 +34,7 @@ export function RecordPicker({
   value,
   onChange,
   displayField,
+  placeholder = 'None',
   'aria-label': ariaLabel,
 }: RecordPickerProps) {
   const [open, setOpen] = useState(false);
@@ -71,7 +74,7 @@ export function RecordPicker({
           <span className="flex min-w-0 items-center gap-1.5">
             <Link2 className="h-3 w-3 shrink-0 text-ion-purple" aria-hidden />
             <span className="truncate">
-              {value === '' ? 'None' : recordLabelOf(current.data, field)}
+              {value === '' ? placeholder : recordLabelOf(current.data, field)}
             </span>
           </span>
           <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />

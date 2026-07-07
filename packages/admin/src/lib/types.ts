@@ -349,3 +349,61 @@ export interface InstalledBlock {
   installedAt: string;
   updatedAt: string;
 }
+
+// --- Events & webhooks (Phase 12) ---
+
+/** An outbox event envelope as returned by GET /api/v1/events. */
+export interface EventRecord {
+  id: string;
+  topic: string;
+  payload: Record<string, unknown>;
+  occurredAt: string;
+}
+
+/** A delivery-ledger row joined to its event (the DLQ/operations view). */
+export interface DeliveryRecord {
+  eventId: string;
+  consumer: string;
+  status: 'pending' | 'done' | 'failed';
+  attempts: number;
+  error: string | null;
+  claimedAt: string | null;
+  processedAt: string | null;
+  nextAttemptAt: string | null;
+  topic: string;
+  occurredAt: string;
+}
+
+export interface DeliveryQueryParams {
+  status?: 'pending' | 'done' | 'failed';
+  consumer?: string;
+  dead?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+/** An outbound webhook (secret material never included). */
+export interface Webhook {
+  id: string;
+  name: string;
+  url: string;
+  topics: string[];
+  headers: Record<string, string>;
+  enabled: boolean;
+  managedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Create response — includes the signing secret exactly once. */
+export interface CreatedWebhook extends Webhook {
+  secret: string;
+}
+
+export interface WebhookInput {
+  name: string;
+  url: string;
+  topics: string[];
+  headers?: Record<string, string>;
+  enabled?: boolean;
+}

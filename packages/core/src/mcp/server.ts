@@ -22,6 +22,7 @@ import {
   mcpShapeForAction,
 } from '../blocks/action-executor.js';
 import type { DataService } from '../data/data-service.js';
+import { listRelationKeys } from '../data/relation-keys.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
 import type { ColumnTypeName, FieldConstraints, FieldDefinition } from '../schema/types.js';
 import { COLUMN_TYPES } from '../schema/types.js';
@@ -131,7 +132,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
 
   server.tool(
     'get_object',
-    'Get the full definition of a data object including all fields, types, constraints, and relationships.',
+    'Get the full definition of a data object including all fields, types, constraints, relationships, and the relation keys accepted by expand/link tools.',
     { object_name: z.string().describe('Name of the data object (e.g., "contacts")') },
     async ({ object_name }) => {
       const obj = schemaManager.getObject(object_name);
@@ -142,8 +143,19 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         };
       }
 
+      // The derived expand/link addresses (Phase 13) — saves agents from
+      // re-deriving the reverse-key grammar.
+      const relationKeys = listRelationKeys(obj).map((k) => ({
+        key: k.key,
+        kind: k.kind,
+        otherObject: k.otherObject,
+        via: k.via,
+      }));
+
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify(obj, null, 2) }],
+        content: [
+          { type: 'text' as const, text: JSON.stringify({ ...obj, relationKeys }, null, 2) },
+        ],
       };
     },
   );
@@ -369,6 +381,74 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   );
 
   server.tool(
+    'add_relationship',
+    'Create a relationship between two data objects. FK-backed types (one_to_one, one_to_many, many_to_one) add a "<name>_id" column on the "many" side; many_to_many creates a junction table (write links with link_records). Related records are then readable via expand on query_data/get_record.',
+    {
+      name: z
+        .string()
+        .describe('Relationship name, lowercase snake case (the FK column becomes "<name>_id")'),
+      display_name: z.string().describe('Human-readable name'),
+      type: z.enum(['one_to_one', 'one_to_many', 'many_to_one', 'many_to_many']),
+      source_object_name: z.string().describe('The relationship source object'),
+      target_object_name: z.string().describe('The relationship target object'),
+      cascade_delete: z
+        .boolean()
+        .optional()
+        .describe('Delete dependents with the referenced record (default: restrict)'),
+    },
+    async (args) => {
+      const result = await schemaManager.addRelationship({
+        name: args.name,
+        displayName: args.display_name,
+        type: args.type,
+        sourceObjectName: args.source_object_name,
+        targetObjectName: args.target_object_name,
+        cascadeDelete: args.cascade_delete,
+      });
+      const summary = {
+        success: result.success,
+        warnings: result.preview.warnings.map((w) => w.message),
+        errors: result.preview.errors.map((e) => e.message),
+      };
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(summary, null, 2) }],
+        isError: !result.success,
+      };
+    },
+  );
+
+  server.tool(
+    'remove_relationship',
+    'Remove a relationship (Phase 13). PERMANENT: the FK column (and its stored links) or the many_to_many junction table (and its link rows) are dropped. Use dry_run first to see the SQL and data-loss warnings; relationships owned by a building block require force.',
+    {
+      source_object_name: z
+        .string()
+        .describe('The relationship source object (relationship names are scoped per source)'),
+      relationship_name: z.string().describe('Name of the relationship to remove'),
+      dry_run: z.boolean().optional().describe('Preview only — return SQL + warnings'),
+      force: z.boolean().optional().describe('Override block contract protection'),
+    },
+    async (args) => {
+      const result = await schemaManager.removeRelationship(
+        args.source_object_name,
+        args.relationship_name,
+        { dryRun: args.dry_run, force: args.force },
+      );
+      const summary = {
+        success: result.success,
+        dryRun: args.dry_run ?? false,
+        sql: result.preview.sqlStatements,
+        warnings: result.preview.warnings.map((w) => w.message),
+        errors: result.preview.errors.map((e) => e.message),
+      };
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(summary, null, 2) }],
+        isError: !result.success && !args.dry_run,
+      };
+    },
+  );
+
+  server.tool(
     'list_column_types',
     'List all available column types with their PostgreSQL mappings and categories.',
     {},
@@ -439,7 +519,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         .array(z.string())
         .optional()
         .describe(
-          'Relationship names to expand — each related record (or list) is attached under the relationship name. Valid values are the relationship names on the object (see get_object).',
+          'Relation keys to expand — related records attach under the key. Keys: the relationship name (single record on the FK side; list for many_to_many), or "<fkObject>_by_<relationship>" for the reverse side (e.g. "contacts_by_company" on companies — the children list). See get_object for the object relationships.',
         ),
     },
     async ({ object_name, search, filters, sort, page, page_size, limit, offset, expand }) => {
@@ -474,7 +554,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         .array(z.string())
         .optional()
         .describe(
-          'Relationship names to expand — each related record (or list) is attached under the relationship name. Valid values are the relationship names on the object (see get_object).',
+          'Relation keys to expand — related records attach under the key. Keys: the relationship name (single record on the FK side; list for many_to_many), or "<fkObject>_by_<relationship>" for the reverse side (e.g. "contacts_by_company" on companies — the children list). See get_object for the object relationships.',
         ),
     },
     async ({ object_name, id, expand }) => {
@@ -587,6 +667,54 @@ export function createMcpServer(options: McpServerOptions): McpServer {
               text: `Record "${id}" deleted from "${object_name}" successfully.`,
             },
           ],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'link_records',
+    'Add many_to_many links between a record and target records (Phase 13). Idempotent — already-linked pairs are skipped. FK-backed relationships are set via the record\'s "<relationship>_id" field with update_record instead.',
+    {
+      object_name: z.string().describe('Name of the data object holding the record'),
+      id: z.string().describe('Record UUID whose links to add'),
+      relationship: z.string().describe('The many_to_many relationship name'),
+      target_ids: z.array(z.string()).describe('UUIDs of the records to link'),
+    },
+    async ({ object_name, id, relationship, target_ids }) => {
+      try {
+        const result = await dataService.addLinks(object_name, id, relationship, target_ids);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'unlink_records',
+    'Remove many_to_many links between a record and target records (Phase 13). Ids that were not linked are ignored.',
+    {
+      object_name: z.string().describe('Name of the data object holding the record'),
+      id: z.string().describe('Record UUID whose links to remove'),
+      relationship: z.string().describe('The many_to_many relationship name'),
+      target_ids: z.array(z.string()).describe('UUIDs of the records to unlink'),
+    },
+    async ({ object_name, id, relationship, target_ids }) => {
+      try {
+        const result = await dataService.removeLinks(object_name, id, relationship, target_ids);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         };
       } catch (err) {
         return {

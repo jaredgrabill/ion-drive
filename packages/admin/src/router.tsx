@@ -28,12 +28,14 @@ const ObjectDetail = lazy(() =>
   import('./pages/ObjectDetail').then((m) => ({ default: m.ObjectDetail })),
 );
 const Blocks = lazy(() => import('./pages/blocks').then((m) => ({ default: m.Blocks })));
+const Events = lazy(() => import('./pages/events').then((m) => ({ default: m.Events })));
 const Logs = lazy(() => import('./pages/logs').then((m) => ({ default: m.Logs })));
 const Metrics = lazy(() => import('./pages/metrics').then((m) => ({ default: m.Metrics })));
 const TaskDetail = lazy(() =>
   import('./pages/task-detail').then((m) => ({ default: m.TaskDetail })),
 );
 const Tasks = lazy(() => import('./pages/tasks').then((m) => ({ default: m.Tasks })));
+const Webhooks = lazy(() => import('./pages/webhooks').then((m) => ({ default: m.Webhooks })));
 
 function RootGate() {
   const { isLoading, isAuthenticated } = useSession();
@@ -74,6 +76,8 @@ const routeTree = rootRoute.addChildren([
   route('/secrets', Secrets),
   route('/logs', Logs),
   route('/metrics', Metrics),
+  route('/events', Events),
+  route('/webhooks', Webhooks),
   route('/settings', SettingsPage),
 ]);
 

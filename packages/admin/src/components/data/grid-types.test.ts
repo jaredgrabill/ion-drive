@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { buildQueryString, cellKindOf, operatorsFor } from './grid-types';
+import { buildQueryString, cellKindOf, m2mRelationshipsOf, operatorsFor } from './grid-types';
 
 describe('cellKindOf', () => {
   it('maps backend column types to cell kinds', () => {
@@ -77,5 +77,49 @@ describe('buildQueryString', () => {
       filters: [{ field: '', op: 'eq', value: 'x' }],
     });
     expect(qs).toBe('?page=1&pageSize=25');
+  });
+});
+
+describe('m2m helpers (Phase 13)', () => {
+  const tagsRel = {
+    name: 'tags',
+    displayName: 'Tags',
+    type: 'many_to_many' as const,
+    sourceObjectName: 'contacts',
+    targetObjectName: 'tags',
+  };
+  const companyRel = {
+    name: 'company',
+    displayName: 'Company',
+    type: 'many_to_one' as const,
+    sourceObjectName: 'contacts',
+    targetObjectName: 'companies',
+  };
+  const contacts = {
+    name: 'contacts',
+    displayName: 'Contacts',
+    tableName: 'contacts',
+    fields: [],
+    relationships: [tagsRel, companyRel],
+  };
+
+  it('m2mRelationshipsOf returns only many_to_many rels, de-duplicated', () => {
+    expect(m2mRelationshipsOf(contacts).map((r) => r.name)).toEqual(['tags']);
+    expect(
+      m2mRelationshipsOf({ ...contacts, relationships: [tagsRel, tagsRel] }).map((r) => r.name),
+    ).toEqual(['tags']);
+    expect(m2mRelationshipsOf({ ...contacts, relationships: undefined })).toEqual([]);
+  });
+
+  it('buildQueryString carries expand keys for the chip columns', () => {
+    const qs = buildQueryString({
+      page: 1,
+      pageSize: 25,
+      search: '',
+      filters: [],
+      sorts: [],
+      expand: ['tags', 'teams'],
+    });
+    expect(new URLSearchParams(qs).get('expand')).toBe('tags,teams');
   });
 });

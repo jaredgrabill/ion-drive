@@ -338,6 +338,37 @@ export function registerSchemaRoutes(
       return reply.code(201).send({ success: true, preview: result.preview });
     });
 
+    // --- Remove a relationship (Phase 13 / F17) ---
+    // Names are scoped per source object, so the address is the pair.
+    // Preview-first: ?dryRun=true returns the ChangePreview (data-loss
+    // warnings, real SQL) without applying; ?force=true overrides block
+    // contract protection (ADR-017).
+    fastify.delete<{
+      Params: { name: string; relName: string };
+      Querystring: { dryRun?: string; force?: string };
+    }>('/objects/:name/relationships/:relName', async (request, reply) => {
+      const { name, relName } = request.params;
+      const dryRun = request.query.dryRun === 'true';
+
+      const result = await schemaManager.removeRelationship(name, relName, {
+        dryRun,
+        force: request.query.force === 'true',
+      });
+
+      if (dryRun) {
+        return { data: result.preview };
+      }
+      if (!result.success) {
+        return reply.code(422).send({
+          error: 'Schema Change Failed',
+          preview: result.preview,
+        });
+      }
+
+      recordSchemaChange('remove_relationship', name);
+      return { success: true, preview: result.preview };
+    });
+
     // --- List available column types ---
     fastify.get('/column-types', async () => {
       const types = Object.entries(COLUMN_TYPES).map(([name, info]) => ({

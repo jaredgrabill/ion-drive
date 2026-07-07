@@ -18,6 +18,7 @@
 import type { RoleManager } from '../auth/rbac/role-manager.js';
 import type { DataService } from '../data/data-service.js';
 import type { MessageBus } from '../messaging/message-bus.js';
+import type { WebhookManager } from '../messaging/webhooks.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
 import type { TaskEngine } from '../tasks/index.js';
 import type { ActionRegistry } from './action-registry.js';
@@ -52,6 +53,8 @@ export interface BlockInstallerServices {
   bus?: MessageBus;
   /** Optional — required only if a manifest declares actions/hooks (Phase 14). */
   actionRegistry?: ActionRegistry;
+  /** Optional — required only if a manifest declares outbound webhooks (Phase 12). */
+  webhookManager?: WebhookManager;
   /** Names of plugins loaded through the plugin host, for `requires.plugins` validation. */
   pluginNames?: string[];
 }
@@ -93,6 +96,8 @@ export class BlockInstaller {
       subscriptionsRegistered: [],
       actionsExposed: [],
       hooksExposed: [],
+      webhooksCreated: {},
+      webhooksSkipped: [],
       warnings: [],
     };
 
@@ -106,6 +111,7 @@ export class BlockInstaller {
     await this.applyTasks(manifest, report, dryRun);
     await this.applyRoles(manifest, report, dryRun);
     this.applySubscriptions(manifest, report, dryRun);
+    await this.applyWebhooks(manifest, report, dryRun);
 
     return report;
   }
@@ -339,6 +345,46 @@ export class BlockInstaller {
     }
   }
 
+  /**
+   * Provisions the block's outbound webhooks (Phase 12 / ADR-019). Idempotent:
+   * a webhook whose name already exists is skipped and reported. Freshly
+   * created webhooks surface their once-only signing secret in the report —
+   * the only time it is ever readable — stamped `block:<name>` so uninstall
+   * can remove them.
+   */
+  private async applyWebhooks(
+    manifest: BlockManifest,
+    report: BlockInstallReport,
+    dryRun: boolean,
+  ): Promise<void> {
+    if (manifest.webhooks.length === 0) return;
+    const { webhookManager } = this.services;
+    if (!webhookManager) {
+      report.warnings.push('Block declares webhooks but the event system is disabled — skipped.');
+      return;
+    }
+
+    for (const webhook of manifest.webhooks) {
+      const existing = await webhookManager.getByName(webhook.name);
+      if (existing) {
+        report.webhooksSkipped.push(webhook.name);
+        continue;
+      }
+      if (dryRun) {
+        report.webhooksCreated[webhook.name] = '(generated on install)';
+        continue;
+      }
+      const created = await webhookManager.create({
+        name: webhook.name,
+        url: webhook.url,
+        topics: webhook.topics,
+        headers: webhook.headers,
+        managedBy: `block:${manifest.name}`,
+      });
+      report.webhooksCreated[webhook.name] = created.secret;
+    }
+  }
+
   /** Removes every subscription a block registered (by consumer group). */
   private unsubscribeBlock(installed: InstalledBlock): void {
     const { bus } = this.services;
@@ -357,10 +403,15 @@ export class BlockInstaller {
    * holds rows unless `dropData` is set.
    */
   async uninstall(installed: InstalledBlock, options: UninstallOptions = {}): Promise<string[]> {
-    const { schemaManager, taskEngine } = this.services;
+    const { schemaManager, taskEngine, webhookManager } = this.services;
     const dropData = options.dropData ?? false;
 
     this.unsubscribeBlock(installed);
+
+    // Remove outbound webhooks this block provisioned (by provenance stamp).
+    if (webhookManager) {
+      await webhookManager.removeByManagedBy(`block:${installed.name}`);
+    }
 
     // Delete tasks this block declared (by name).
     if (taskEngine) {

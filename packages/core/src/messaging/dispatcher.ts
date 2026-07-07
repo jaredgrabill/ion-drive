@@ -19,12 +19,18 @@ import { SpanStatusCode, trace } from '@opentelemetry/api';
 import type { LoggerProvider } from '../logging/logger-provider.js';
 import { recordEventDelivery } from '../telemetry/metrics.js';
 import { ION_ATTR } from '../telemetry/span-attributes.js';
-import type { EventRow, EventStore } from './event-store.js';
+import type { EventRow, EventStore, RetryBackoff } from './event-store.js';
 import type { IonEvent, Subscription } from './event-types.js';
 import type { OutboxBus } from './outbox-bus.js';
 import { topicLikePrefix, topicMatches } from './topic-match.js';
 
 const TRACER_NAME = '@ion-drive/core';
+
+/** Default retry budget for a failed delivery (also the DLQ threshold). */
+export const DEFAULT_MAX_ATTEMPTS = 5;
+
+/** Default exponential backoff for failed deliveries: 5s × 2^n, capped at 5 min. */
+export const DEFAULT_RETRY_BACKOFF: RetryBackoff = { baseMs: 5_000, capMs: 300_000 };
 
 export interface EventDispatcherOptions {
   logger: LoggerProvider;
@@ -40,6 +46,8 @@ export interface EventDispatcherOptions {
   handlerTimeoutMs?: number;
   /** Stable per-instance id for `perInstance` consumer groups. */
   instanceId?: string;
+  /** Exponential backoff applied between retries of a failed delivery. */
+  retryBackoff?: RetryBackoff;
 }
 
 export class EventDispatcher {
@@ -50,6 +58,7 @@ export class EventDispatcher {
   private readonly leaseMs: number;
   private readonly handlerTimeoutMs: number;
   private readonly instanceId: string;
+  private readonly retryBackoff: RetryBackoff;
 
   private timer?: ReturnType<typeof setInterval>;
   private running = false;
@@ -64,10 +73,11 @@ export class EventDispatcher {
     this.logger = options.logger;
     this.pollIntervalMs = options.pollIntervalMs ?? 2000;
     this.batchSize = options.batchSize ?? 100;
-    this.maxAttempts = options.maxAttempts ?? 5;
+    this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.leaseMs = options.leaseMs ?? 60_000;
     this.handlerTimeoutMs = options.handlerTimeoutMs ?? 30_000;
     this.instanceId = options.instanceId ?? randomUUID();
+    this.retryBackoff = options.retryBackoff ?? DEFAULT_RETRY_BACKOFF;
   }
 
   /** Begins polling and wires the bus's wake signal to an immediate drain. */
@@ -175,7 +185,7 @@ export class EventDispatcher {
     if (!handler) {
       const message = `No handler "${subscription.handler}" registered for consumer "${subscription.consumer}"`;
       this.logger.warn(message, { topic: row.topic });
-      await this.store.markFailed(row.id, consumer, message);
+      await this.store.markFailed(row.id, consumer, message, this.retryBackoff);
       recordEventDelivery(0, { ...metricAttributes, [ION_ATTR.OUTCOME]: 'failed' });
       return;
     }
@@ -207,7 +217,7 @@ export class EventDispatcher {
         consumer,
         error: message,
       });
-      await this.store.markFailed(row.id, consumer, message);
+      await this.store.markFailed(row.id, consumer, message, this.retryBackoff);
     } finally {
       clearTimeout(timer);
       const durationMs = Number(process.hrtime.bigint() - startNs) / 1e6;

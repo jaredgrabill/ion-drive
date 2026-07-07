@@ -22,10 +22,12 @@ import {
   LockKeyhole,
   PanelLeftClose,
   PanelLeftOpen,
+  Radio,
   ScrollText,
   Settings,
   Shield,
   Users,
+  Webhook,
 } from 'lucide-react';
 import { useHealth, useLocalStorage } from '../../hooks';
 import { api } from '../../lib/api';
@@ -73,6 +75,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/logs', label: 'Logs', icon: ScrollText },
       { to: '/metrics', label: 'Metrics', icon: Activity },
+      { to: '/events', label: 'Events', icon: Radio },
+      { to: '/webhooks', label: 'Webhooks', icon: Webhook },
     ],
   },
 ];

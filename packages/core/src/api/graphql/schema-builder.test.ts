@@ -1,8 +1,9 @@
 import { graphql, printSchema } from 'graphql';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { DataService } from '../../data/data-service.js';
 import { SchemaRegistry } from '../../schema/schema-registry.js';
-import type { DataObjectDefinition } from '../../schema/types.js';
+import type { DataObjectDefinition, RelationshipDefinition } from '../../schema/types.js';
+import { RelationLoader } from './relation-loader.js';
 import { buildGraphQLSchema } from './schema-builder.js';
 
 const CONTACTS: DataObjectDefinition = {
@@ -104,5 +105,246 @@ describe('buildGraphQLSchema', () => {
     });
     expect(result.errors).toBeUndefined();
     expect((result.data as Record<string, unknown>).delete_contacts).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Relationship traversal (Phase 13)
+// ---------------------------------------------------------------------------
+
+const COMPANY_REL: RelationshipDefinition = {
+  name: 'company',
+  displayName: 'Company',
+  type: 'many_to_one',
+  sourceObjectName: 'contacts',
+  targetObjectName: 'companies',
+};
+
+const TAGS_REL: RelationshipDefinition = {
+  name: 'tags',
+  displayName: 'Tags',
+  type: 'many_to_many',
+  sourceObjectName: 'contacts',
+  targetObjectName: 'tags',
+  junctionTable: 'contacts_tags',
+  junctionSourceColumn: 'contacts_id',
+  junctionTargetColumn: 'tags_id',
+};
+
+function relationalRegistry(): SchemaRegistry {
+  const registry = new SchemaRegistry();
+  registry.registerObject({
+    ...CONTACTS,
+    fields: [
+      ...CONTACTS.fields,
+      {
+        name: 'company_id',
+        displayName: 'Company ID',
+        columnName: 'company_id',
+        columnType: 'uuid',
+      },
+    ],
+    relationships: [COMPANY_REL, TAGS_REL],
+  });
+  registry.registerObject({
+    name: 'companies',
+    displayName: 'Companies',
+    tableName: 'companies',
+    fields: [
+      {
+        name: 'id',
+        displayName: 'ID',
+        columnName: 'id',
+        columnType: 'uuid',
+        isPrimary: true,
+        isSystem: true,
+      },
+      { name: 'name', displayName: 'Name', columnName: 'name', columnType: 'text' },
+    ],
+    relationships: [COMPANY_REL],
+  });
+  registry.registerObject({
+    name: 'tags',
+    displayName: 'Tags',
+    tableName: 'tags',
+    fields: [
+      {
+        name: 'id',
+        displayName: 'ID',
+        columnName: 'id',
+        columnType: 'uuid',
+        isPrimary: true,
+        isSystem: true,
+      },
+      { name: 'label', displayName: 'Label', columnName: 'label', columnType: 'text' },
+    ],
+    relationships: [TAGS_REL],
+  });
+  return registry;
+}
+
+describe('relationship traversal', () => {
+  it('reflects relation fields on both sides plus link mutations in the SDL', () => {
+    const sdl = printSchema(buildGraphQLSchema(relationalRegistry(), {} as DataService));
+
+    // FK side: single nullable; m2m: non-null list; reverse: list.
+    expect(sdl).toMatch(/type Contacts \{[^}]*company: Companies\b/s);
+    expect(sdl).toMatch(/type Contacts \{[^}]*tags: \[Tags!\]!/s);
+    expect(sdl).toMatch(/type Companies \{[^}]*contacts_by_company: \[Contacts!\]!/s);
+    expect(sdl).toMatch(/type Tags \{[^}]*tags: \[Contacts!\]!/s);
+    expect(sdl).toContain('link_contacts_tags(');
+    expect(sdl).toContain('unlink_contacts_tags(');
+    // FK-only relationships get no link mutations.
+    expect(sdl).not.toContain('link_contacts_company');
+  });
+
+  it('batches sibling rows into one hydrateRelation call via the loader', async () => {
+    const hydrateRelation = vi.fn(
+      async (_obj: string, rows: Record<string, unknown>[], key: string) => {
+        for (const row of rows) row[key] = { id: 'co1', name: 'Acme' };
+      },
+    );
+    const dataService = {
+      list: async () => ({
+        data: [
+          { id: 'c1', full_name: 'Ada', company_id: 'co1' },
+          { id: 'c2', full_name: 'Grace', company_id: 'co1' },
+        ],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalCount: 2,
+          totalPages: 1,
+          hasNextPage: false,
+          hasPreviousPage: false,
+        },
+      }),
+      hydrateRelation,
+    } as unknown as DataService;
+
+    const schema = buildGraphQLSchema(relationalRegistry(), dataService);
+    const result = await graphql({
+      schema,
+      source: '{ contacts { data { full_name company { name } } } }',
+      contextValue: { relationLoader: new RelationLoader(dataService) },
+    });
+
+    expect(result.errors).toBeUndefined();
+    const rows = (result.data as { contacts: { data: Record<string, unknown>[] } }).contacts.data;
+    expect(rows[0]?.company).toMatchObject({ name: 'Acme' });
+    expect(rows[1]?.company).toMatchObject({ name: 'Acme' });
+    // Both rows hydrated in ONE batched call.
+    expect(hydrateRelation).toHaveBeenCalledTimes(1);
+    expect(hydrateRelation.mock.calls[0]?.[1]).toHaveLength(2);
+  });
+
+  it('falls back to direct hydration without a loader in context', async () => {
+    const dataService = {
+      getById: async () => ({ data: { id: 'c1', company_id: 'co1' } }),
+      hydrateRelation: vi.fn(async (_obj: string, rows: Record<string, unknown>[], key: string) => {
+        for (const row of rows) row[key] = { id: 'co1', name: 'Acme' };
+      }),
+    } as unknown as DataService;
+
+    const schema = buildGraphQLSchema(relationalRegistry(), dataService);
+    const result = await graphql({
+      schema,
+      source: '{ contacts_by_id(id: "c1") { company { name } } }',
+    });
+
+    expect(result.errors).toBeUndefined();
+    expect(
+      (result.data as { contacts_by_id: { company: { name: string } } }).contacts_by_id.company,
+    ).toMatchObject({ name: 'Acme' });
+  });
+
+  it('reflects Subscription.events when a realtime bridge is supplied', () => {
+    const sdl = printSchema(
+      buildGraphQLSchema(registryWithContacts(), {} as DataService, {
+        realtime: {} as never,
+        permissionEngine: {} as never,
+      }),
+    );
+    expect(sdl).toContain('type Subscription');
+    // The topics arg carries a description, so printSchema renders it multi-line.
+    expect(sdl).toMatch(/events\([\s\S]*?topics: \[String!\]\s*\): IonEvent!/);
+    expect(sdl).toContain('type IonEvent');
+  });
+
+  it('reflects and executes block-action mutations through the ActionExecutor', async () => {
+    const executeAction = vi.fn(async () => ({ url: 'https://pay.example' }));
+    const actionExecutor = {
+      resolveAction: async () => ({
+        definition: { block: 'invoicing', name: 'create_payment_link' },
+        rbac: { resource: 'blocks', action: 'update' },
+      }),
+      executeAction,
+    } as never;
+
+    const schema = buildGraphQLSchema(registryWithContacts(), {} as DataService, {
+      declaredActions: [
+        { block: 'invoicing', name: 'create_payment_link', description: 'Create a payment link' },
+      ],
+      actionExecutor,
+      permissionEngine: { can: async () => true } as never,
+      enforce: false,
+    });
+
+    expect(printSchema(schema)).toMatch(
+      /invoicing_create_payment_link\([\s\S]*?input: JSON\s*\): JSON/,
+    );
+
+    const result = await graphql({
+      schema,
+      source: 'mutation { invoicing_create_payment_link(input: { invoice_id: "i1" }) }',
+    });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({
+      invoicing_create_payment_link: { url: 'https://pay.example' },
+    });
+    expect(executeAction).toHaveBeenCalledWith(
+      { block: 'invoicing', name: 'create_payment_link' },
+      { invoice_id: 'i1' },
+      null,
+    );
+  });
+
+  it('surfaces ActionErrors as GraphQL errors instead of masked internals', async () => {
+    const { ActionError } = await import('../../blocks/action-executor.js');
+    const actionExecutor = {
+      resolveAction: async () => {
+        throw new ActionError('not_found', 'Block "invoicing" is not installed');
+      },
+    } as never;
+
+    const schema = buildGraphQLSchema(registryWithContacts(), {} as DataService, {
+      declaredActions: [{ block: 'invoicing', name: 'create_payment_link' }],
+      actionExecutor,
+      permissionEngine: { can: async () => true } as never,
+    });
+    const result = await graphql({
+      schema,
+      source: 'mutation { invoicing_create_payment_link }',
+    });
+    expect(result.errors?.[0]?.message).toContain('not installed');
+    expect(result.errors?.[0]?.extensions?.code).toBe('not_found');
+  });
+
+  it('executes link/unlink mutations through the DataService link operations', async () => {
+    const addLinks = vi.fn(async () => ({ added: 2 }));
+    const removeLinks = vi.fn(async () => ({ removed: 1 }));
+    const dataService = { addLinks, removeLinks } as unknown as DataService;
+
+    const schema = buildGraphQLSchema(relationalRegistry(), dataService);
+    const result = await graphql({
+      schema,
+      source:
+        'mutation { link_contacts_tags(id: "c1", ids: ["t1", "t2"]) unlink_contacts_tags(id: "c1", ids: ["t3"]) }',
+    });
+
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ link_contacts_tags: 2, unlink_contacts_tags: 1 });
+    expect(addLinks).toHaveBeenCalledWith('contacts', 'c1', 'tags', ['t1', 't2']);
+    expect(removeLinks).toHaveBeenCalledWith('contacts', 'c1', 'tags', ['t3']);
   });
 });

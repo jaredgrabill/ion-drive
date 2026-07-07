@@ -18,6 +18,7 @@ import type {
   DataObjectDefinition,
   FieldDefinition,
   FieldModification,
+  RelationshipDefinition,
   SchemaChange,
 } from './types.js';
 import {
@@ -831,30 +832,140 @@ export class ChangeValidator {
     });
   }
 
-  private validateRemoveRelationship(change: SchemaChange): Promise<{
-    warnings: ChangeWarning[];
-    errors: ChangeError[];
-    sqlStatements: string[];
-  }> {
+  /**
+   * Validates a `remove_relationship` change (details: `{ relationshipName,
+   * force? }`; objectName is the relationship's **source** object — names are
+   * scoped per source). Produces the real DDL and data-loss warnings; block
+   * ownership (the FK field's provenance, or — for many_to_many, which stamps
+   * no field — both endpoint objects being block-managed) requires force.
+   */
+  private async validateRemoveRelationship(change: SchemaChange): Promise<ValidationResult> {
     const warnings: ChangeWarning[] = [];
     const errors: ChangeError[] = [];
+    const sqlStatements: string[] = [];
 
     const relName = change.details.relationshipName as string;
-    const allRels = this.registry.getAllRelationships();
-    const rel = allRels.find((r) => r.name === relName);
+    const force = change.details.force === true;
 
+    const rel = this.registry
+      .getAllRelationships()
+      .find((r) => r.name === relName && r.sourceObjectName === change.objectName);
     if (!rel) {
       errors.push({
         change,
-        message: `Relationship "${relName}" does not exist`,
+        message: `Relationship "${relName}" does not exist on "${change.objectName}"`,
         code: 'RELATIONSHIP_NOT_FOUND',
       });
+      return { warnings, errors, sqlStatements };
     }
 
-    return Promise.resolve({
-      warnings,
-      errors,
-      sqlStatements: ['ALTER TABLE ... DROP CONSTRAINT ...'],
+    const sourceObj = this.registry.getObject(rel.sourceObjectName);
+    const targetObj = this.registry.getObject(rel.targetObjectName);
+    if (!sourceObj || !targetObj) {
+      errors.push({
+        change,
+        message: `Relationship "${relName}" references a missing object`,
+        code: 'OBJECT_NOT_FOUND',
+      });
+      return { warnings, errors, sqlStatements };
+    }
+
+    const result: ValidationResult = { warnings, errors, sqlStatements };
+    const rr: RemoveRelationshipCheck = { change, rel, sourceObj, targetObj, force };
+    if (rel.type === 'many_to_many') {
+      await this.checkRemoveJunction(rr, result);
+    } else {
+      await this.checkRemoveFkColumn(rr, result);
+    }
+    return result;
+  }
+
+  /** many_to_many removal: junction drop + doomed-link count + block ownership. */
+  private async checkRemoveJunction(
+    rr: RemoveRelationshipCheck,
+    result: ValidationResult,
+  ): Promise<void> {
+    const { change, rel, sourceObj, targetObj, force } = rr;
+    // No FK field carries provenance for m2m; a relationship whose both
+    // endpoints are block-managed is treated as block-owned (blocks only
+    // declare relationships among their own/dependency objects).
+    const sourceBlock = managedByBlock(sourceObj.managedBy);
+    const targetBlock = managedByBlock(targetObj.managedBy);
+    const owningBlock = sourceBlock && targetBlock ? sourceBlock : undefined;
+    this.pushRelationshipProtection(change, owningBlock, rel.name, force, result);
+
+    const junction = rel.junctionTable ?? `${sourceObj.tableName}_${targetObj.tableName}`;
+    if (await this.ddlExecutor.tableExists(junction)) {
+      const links = await this.ddlExecutor.getRowCount(junction);
+      if (links > 0) {
+        result.warnings.push({
+          change,
+          message: `${links} link row(s) in "${junction}" will be permanently deleted.`,
+          severity: 'high',
+        });
+      }
+    }
+    result.sqlStatements.push(`DROP TABLE IF EXISTS "${junction}"`);
+  }
+
+  /** FK-backed removal: column drop + stored-link warning + block ownership. */
+  private async checkRemoveFkColumn(
+    rr: RemoveRelationshipCheck,
+    result: ValidationResult,
+  ): Promise<void> {
+    const { change, rel, sourceObj, targetObj, force } = rr;
+    // The FK column lives on the "many" side (target for one_to_many).
+    const fkObj = rel.type === 'one_to_many' ? targetObj : sourceObj;
+    const fkColumn = `${rel.name}_id`;
+    const fkField = fkObj.fields.find((f) => f.columnName === fkColumn);
+    this.pushRelationshipProtection(
+      change,
+      managedByBlock(fkField?.managedBy),
+      rel.name,
+      force,
+      result,
+    );
+
+    if (fkField && (await this.ddlExecutor.columnHasData(fkObj.tableName, fkColumn))) {
+      result.warnings.push({
+        change,
+        message: `Column "${fkColumn}" on "${fkObj.tableName}" contains linked ids — dropping the relationship permanently removes those links.`,
+        severity: 'high',
+      });
+    }
+    result.sqlStatements.push(`ALTER TABLE "${fkObj.tableName}" DROP COLUMN "${fkColumn}"`);
+  }
+
+  /** Contract protection for relationships (ADR-017 pattern, Phase 13). */
+  private pushRelationshipProtection(
+    change: SchemaChange,
+    owningBlock: string | null | undefined,
+    relName: string,
+    force: boolean,
+    result: ValidationResult,
+  ): void {
+    if (!owningBlock) return;
+    if (force) {
+      result.warnings.push({
+        change,
+        message: `Relationship "${relName}" belongs to the "${owningBlock}" block; forcing its removal may break that block.`,
+        severity: 'high',
+      });
+      return;
+    }
+    result.errors.push({
+      change,
+      message: `Relationship "${relName}" belongs to the "${owningBlock}" block. Removing it would break the block's contract — pass force=true to override.`,
+      code: 'BLOCK_MANAGED_RELATIONSHIP',
     });
   }
+}
+
+/** The resolved inputs of one remove_relationship validation. */
+interface RemoveRelationshipCheck {
+  change: SchemaChange;
+  rel: RelationshipDefinition;
+  sourceObj: DataObjectDefinition;
+  targetObj: DataObjectDefinition;
+  force: boolean;
 }

@@ -90,6 +90,13 @@ function resolveToken(token: string, event: IonEvent): unknown {
       return payload.diff;
     case 'payload.record':
       return payload.after ?? payload.before;
+    case 'payload.actor':
+      return payload.actor ?? null;
+    case 'payload.actorId': {
+      // The same opaque id the created_by/updated_by columns store (Phase 12).
+      const actor = payload.actor as { userId?: string | null; apiKeyId?: string | null } | null;
+      return actor ? (actor.userId ?? actor.apiKeyId ?? null) : null;
+    }
     default:
       return token;
   }

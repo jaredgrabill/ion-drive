@@ -10,11 +10,47 @@
  *    via pnpm, the pre-Phase-14 behavior.
  */
 
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { isProjectDir } from '../project.js';
 import { banner, c, log, sym } from '../ui.js';
+
+/** How long a Ctrl+C'd dev server gets to shut down before the tree is reaped. */
+const KILL_GRACE_MS = 15_000;
+
+/**
+ * Kills the spawned dev-server tree. With `shell: true` on Windows the direct
+ * child is a cmd.exe wrapper, so a plain `kill()` would orphan the node
+ * process that actually holds the port — `taskkill /t` takes down the tree.
+ */
+function killTree(child: ChildProcess): void {
+  if (!child.pid || child.exitCode !== null) return;
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', shell: true });
+  } else {
+    child.kill('SIGTERM');
+  }
+}
+
+/**
+ * Makes Ctrl+C reliable: the console already delivers the interrupt to the
+ * whole tree, so the first signal just arms a reaper in case the server
+ * wedges mid-shutdown; a second signal (impatient user) reaps immediately.
+ */
+function relaySignals(child: ChildProcess): void {
+  let signalsSeen = 0;
+  const onSignal = () => {
+    signalsSeen += 1;
+    if (signalsSeen === 1) {
+      setTimeout(() => killTree(child), KILL_GRACE_MS).unref();
+    } else {
+      killTree(child);
+    }
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+}
 
 export interface DevOptions {
   port?: string;
@@ -52,6 +88,7 @@ async function runProjectDev(env: NodeJS.ProcessEnv, options: DevOptions): Promi
     shell: true,
     env,
   });
+  relaySignals(child);
   child.on('error', (err) => {
     log.error(`Could not start tsx: ${err.message}`);
     log.dim(`  Is tsx installed? Try: ${c.star('npm install')} then ${c.star('npm run dev')}`);
@@ -92,6 +129,7 @@ function runMonorepoDev(env: NodeJS.ProcessEnv): void {
     shell: true,
     env,
   });
+  relaySignals(child);
   child.on('error', (err) => {
     log.error(`Could not start the dev server: ${err.message}`);
     log.dim(

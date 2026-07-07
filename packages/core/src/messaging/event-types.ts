@@ -15,6 +15,7 @@
 import type { Kysely } from 'kysely';
 import type { TenantDatabase } from '../db/types.js';
 import type { LoggerProvider } from '../logging/logger-provider.js';
+import type { ActorRef } from '../runtime/request-context.js';
 
 /** The immutable event envelope carried through the bus. */
 export interface IonEvent<T = unknown> {
@@ -51,6 +52,30 @@ export interface CrudEventPayload {
   after: Record<string, unknown> | null;
   /** System-field-free diff (only present for updates). */
   diff: FieldDiff | null;
+  /** Who made the change (Phase 12 / ADR-019); null for anonymous/system writes. */
+  actor: ActorRef | null;
+}
+
+/** The junction operation a link event describes (m2m link writes, Phase 13). */
+export type LinkOperation = 'linked' | 'unlinked';
+
+/**
+ * Payload of the `data.<object>.linked` / `data.<object>.unlinked` events
+ * emitted by {@link DataService.addLinks} / `removeLinks` when a
+ * many_to_many junction changes.
+ */
+export interface LinkEventPayload {
+  object: string;
+  /** The record whose links changed. */
+  id: string;
+  op: LinkOperation;
+  /** The relation key whose junction rows changed (see data/relation-keys). */
+  relationship: string;
+  targetObject: string;
+  /** Ids actually added/removed (already-linked / not-linked ids are excluded). */
+  targetIds: string[];
+  /** Who made the change; null for anonymous/system writes. */
+  actor: ActorRef | null;
 }
 
 /**

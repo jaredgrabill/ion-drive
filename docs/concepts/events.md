@@ -41,13 +41,45 @@ Every data mutation through the [Data API](../api/rest.md) emits:
 
 | Topic | When | Payload |
 |---|---|---|
-| `data.<object>.created` | a record is created | `{ object, id, op, before: null, after, diff: null }` |
-| `data.<object>.updated` | a record is updated | `{ object, id, op, before, after, diff }` |
-| `data.<object>.deleted` | a record is deleted | `{ object, id, op, before, after: null, diff: null }` |
+| `data.<object>.created` | a record is created | `{ object, id, op, before: null, after, diff: null, actor }` |
+| `data.<object>.updated` | a record is updated | `{ object, id, op, before, after, diff, actor }` |
+| `data.<object>.deleted` | a record is deleted | `{ object, id, op, before, after: null, diff: null, actor }` |
 
 The `diff` on updates is a `{ field: { before, after } }` map of the business
-fields that changed. **System-managed columns (`created_at`, `updated_at`, and
-future `*_by`) are never included in the diff.**
+fields that changed. **System-managed columns (`created_at`, `updated_at`,
+`created_by`, `updated_by`) are never included in the diff.**
+
+Many-to-many **link writes** (Phase 13) emit their own pair:
+
+| Topic | When | Payload |
+|---|---|---|
+| `data.<object>.linked` | junction rows added via the links API | `{ object, id, op, relationship, targetObject, targetIds, actor }` |
+| `data.<object>.unlinked` | junction rows removed | same shape |
+
+`targetIds` carries only the ids that actually changed — idempotent replays
+(re-linking an existing pair) emit nothing.
+
+### Actor identity (Phase 12)
+
+Every payload carries `actor: { userId, apiKeyId, via: 'session' | 'api_key' } | null`
+— who made the change, resolved from the request's session or API key
+(`null` for anonymous or system writes). The same identity is stamped onto
+the record itself: every object has nullable `created_by`/`updated_by`
+system columns storing the opaque actor id (`userId`, else `apiKeyId`).
+These columns are read-only through the API — client-supplied values are
+stripped and re-stamped server-side. Schema changes record the actor too, in
+`_ion_migrations.applied_by`.
+
+Programmatic embedders running outside an HTTP request can scope an actor
+explicitly:
+
+```ts
+import { runWithActor } from '@ion-drive/core';
+
+await runWithActor({ userId: 'system-import', apiKeyId: null, via: 'session' }, () =>
+  dataService.create('contacts', { full_name: 'Imported Ida' }),
+);
+```
 
 ## Topic patterns
 
@@ -70,6 +102,13 @@ Subscriptions match topics with the AMQP-style convention:
   with multiple app instances.
 - Set `perInstance: true` on a subscription to instead deliver **once per
   instance** — useful for in-memory concerns like cache invalidation.
+- **Failed deliveries back off exponentially** (5s × 2 per attempt, capped at
+  5 minutes) up to a budget of 5 attempts. A delivery that exhausts the budget
+  is a **dead letter** — visible (and retryable) at
+  `GET /api/v1/events/deliveries?dead=true` and on the admin **Events** page.
+  The retry action (`POST /api/v1/events/deliveries/retry` with
+  `{ eventId, consumer }`) resets the attempt budget and redelivers
+  immediately.
 
 ## Subscribing
 
@@ -132,8 +171,47 @@ export default definePlugin({
 
 Token vocabulary for `persist_event`'s `map`: `event.id`, `event.topic`,
 `event.occurredAt`, `payload.object`, `payload.id`, `payload.op`,
-`payload.before`, `payload.after`, `payload.diff`, and `payload.record`
-(after-image, falling back to the before-image on deletes).
+`payload.before`, `payload.after`, `payload.diff`, `payload.record`
+(after-image, falling back to the before-image on deletes), `payload.actor`
+(the structured actor), and `payload.actorId` (the same opaque id
+`created_by`/`updated_by` store — what an audit block maps onto
+`changed_by`).
+
+## Outbound webhooks (Phase 12)
+
+A **webhook** pushes matching events to an external URL — stored config
+(`/api/v1/webhooks`, or the admin **Webhooks** page) rather than code. Under
+the hood each webhook is just a subscription with consumer group
+`webhook:<id>` and the built-in `webhook` handler, so it inherits everything
+above: once-per-webhook across instances, retries with backoff, the delivery
+ledger as its delivery log, and the DLQ view/retry.
+
+- **Signing:** every request carries
+  `x-ion-signature: t=<unix seconds>,v1=<hex hmac>` where the HMAC-SHA256 is
+  computed over `"<t>.<raw body>"` with the webhook's `whsec_…` secret — the
+  secret is generated at creation and shown **exactly once**. Verify with a
+  constant-time compare and reject stale timestamps (the invoicing block's
+  `verifyStripeSignature` shows the receiving side of the same scheme).
+- The body is the event envelope: `{ id, topic, payload, occurredAt }`.
+  `x-ion-event-id` and `x-ion-topic` headers carry the essentials for cheap
+  routing; use `id` as your idempotency key.
+- A non-2xx response (or timeout) marks the delivery failed and schedules a
+  backed-off retry. Disabling a webhook stops deliveries immediately.
+- `POST /api/v1/webhooks/:id/test` fires a `webhook.test.<id>` event through
+  the full pipeline.
+- Block manifests may declare `webhooks` (name/url/topics/headers); the
+  installer provisions them stamped `block:<name>` (their one-time secrets
+  appear in the install report) and uninstall removes them.
+
+## Realtime subscriptions (Phase 12)
+
+`GET /api/v1/events/stream?topics=data.contacts.*,data.orders.created` bridges
+the bus to **Server-Sent Events** — see [Realtime API](../api/realtime.md)
+for the wire contract and the client SDK's `ion.events.stream(...)`. Delivery
+is best-effort from connect time (no replay, nothing persisted) and is
+RBAC-filtered per event: `data.<object>.*` requires `read` on the object.
+Consumers that need guarantees use a subscription (consumer group) instead —
+realtime is a feed, not a queue.
 
 ## Observability
 
