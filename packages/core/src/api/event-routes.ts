@@ -27,6 +27,7 @@ import { requirePermission } from '../auth/rbac/middleware.js';
 import type { PermissionEngine } from '../auth/rbac/permission-engine.js';
 import type { Action } from '../auth/rbac/policy-types.js';
 import { PLATFORM_RESOURCES } from '../auth/rbac/policy-types.js';
+import { createEventAccessFilter } from '../messaging/event-access.js';
 import type { EventStore } from '../messaging/event-store.js';
 import type { MessageBus } from '../messaging/message-bus.js';
 import type { RealtimeBridge } from '../messaging/realtime.js';
@@ -161,27 +162,19 @@ function installStreamRoute(
     });
     socket.write('retry: 3000\n\n');
 
-    // Per-connection RBAC verdict cache: one PermissionEngine check per
-    // distinct resource for the life of the connection.
-    const verdicts = new Map<string, Promise<boolean>>();
-    const auth = request.auth;
-    const allowed = (resource: string): Promise<boolean> => {
-      if (!enforce) return Promise.resolve(true);
-      if (!auth) return Promise.resolve(false);
-      let verdict = verdicts.get(resource);
-      if (!verdict) {
-        verdict = permissionEngine.can(auth, 'read', resource);
-        verdicts.set(resource, verdict);
-      }
-      return verdict;
-    };
+    // Per-connection RBAC filter with a cached verdict per distinct resource
+    // (shared with GraphQL subscriptions — see messaging/event-access.ts).
+    const allowed = createEventAccessFilter({
+      enforce,
+      permissionEngine,
+      auth: request.auth ?? null,
+      fallbackResource: RESOURCE,
+    });
 
     // Frames are unnamed (no `event:` line) so plain `EventSource.onmessage`
     // works; the envelope's own `topic` field identifies the event.
     const unsubscribe = realtime.subscribe(topics, async (event) => {
-      const segments = event.topic.split('.');
-      const resource = segments[0] === 'data' && segments[1] ? segments[1] : RESOURCE;
-      if (!(await allowed(resource))) return;
+      if (!(await allowed(event.topic))) return;
       socket.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
     });
     const heartbeat = setInterval(() => {

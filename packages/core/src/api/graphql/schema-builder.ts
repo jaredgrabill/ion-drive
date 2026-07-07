@@ -16,6 +16,14 @@
  *   Mutation.update_foo(id, input): Foo
  *   Mutation.delete_foo(id): Boolean!
  *
+ * Relationships traverse as nested fields (Phase 13): each relation key from
+ * `data/relation-keys.ts` becomes a field on the object type (single for the
+ * FK side, list for many_to_many and reverse `<obj>_by_<rel>` keys), resolved
+ * through the per-request RelationLoader so sibling rows batch into one
+ * `DataService.hydrateRelation` fetch. many_to_many keys also get
+ * `link_<obj>_<rel>` / `unlink_<obj>_<rel>` mutations. The resulting type
+ * graph is cyclic, so the plugin enforces a query depth cap (depth-limit.ts).
+ *
  * This is the code-first counterpart to the runtime REST routes (ADR-009). We
  * use graphql-js type constructors directly — for a schema whose shape is only
  * known at runtime, they are cleaner than a compile-time builder like Pothos.
@@ -41,17 +49,25 @@ import {
   GraphQLSchema,
   GraphQLString,
 } from 'graphql';
+import type { PermissionEngine } from '../../auth/rbac/permission-engine.js';
+import type { ActionExecutor, DeclaredAction } from '../../blocks/action-executor.js';
 import type { DataService } from '../../data/data-service.js';
+import { listRelationKeys, type RelationKey } from '../../data/relation-keys.js';
+import type { RealtimeBridge } from '../../messaging/realtime.js';
 import type { SchemaRegistry } from '../../schema/schema-registry.js';
 import type { DataObjectDefinition, FieldDefinition } from '../../schema/types.js';
+import type { RelationLoaderContext } from './relation-loader.js';
 import {
+  makeActionResolver,
   makeCreateResolver,
   makeDeleteResolver,
   makeGetResolver,
+  makeLinkResolver,
   makeListResolver,
   makeUpdateResolver,
 } from './resolver-factory.js';
 import { DateTimeScalar, JSONScalar } from './scalars.js';
+import { makeEventsSubscribe } from './subscriptions.js';
 
 // ---------------------------------------------------------------------------
 // Shared types (built once, reused across all objects)
@@ -201,10 +217,17 @@ function columnToGraphQLType(field: FieldDefinition): DualPositionType {
 /**
  * Builds the output object type for a data object. Field resolvers read the
  * physical column name, since DataService returns column-keyed rows.
+ *
+ * Relation keys become nested fields resolved through the per-request
+ * RelationLoader (batched); the `fields` thunk runs after every object type
+ * is registered in `typeByObject`, so cyclic references are fine. Column
+ * fields win any name collision (relation-keys already drops those keys).
  */
 function buildObjectType(
   obj: DataObjectDefinition,
   fieldTypes: Map<string, DualPositionType>,
+  typeByObject: Map<string, GraphQLObjectType>,
+  dataService: DataService,
 ): GraphQLObjectType {
   return new GraphQLObjectType({
     name: pascalCase(obj.name),
@@ -219,9 +242,46 @@ function buildObjectType(
           resolve: (source) => source[field.columnName],
         };
       }
+      for (const relationKey of listRelationKeys(obj)) {
+        const otherType = typeByObject.get(relationKey.otherObject);
+        if (!otherType || fields[relationKey.key]) continue;
+        fields[relationKey.key] = {
+          type:
+            relationKey.kind === 'list'
+              ? new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(otherType)))
+              : otherType,
+          description: relationDescription(relationKey),
+          resolve: (source, _args, context) =>
+            resolveRelation(dataService, obj.name, relationKey.key, source, context),
+        };
+      }
       return fields;
     },
   });
+}
+
+/** Human description of a relation field for the SDL. */
+function relationDescription(key: RelationKey): string {
+  const shape = key.kind === 'single' ? 'The related' : 'Related';
+  const suffix = key.kind === 'single' ? 'record' : 'records';
+  return `${shape} ${key.otherObject} ${suffix} (${key.rel.type} "${key.rel.name}").`;
+}
+
+/**
+ * Resolves a relation field: batched through the request's RelationLoader
+ * when present, else a direct single-row hydration (programmatic execution
+ * without the plugin's context, e.g. tests).
+ */
+function resolveRelation(
+  dataService: DataService,
+  objectName: string,
+  relKey: string,
+  source: Record<string, unknown>,
+  context: unknown,
+): Promise<unknown> {
+  const loader = (context as RelationLoaderContext | null)?.relationLoader;
+  if (loader) return loader.load(objectName, relKey, source);
+  return dataService.hydrateRelation(objectName, [source], relKey).then(() => source[relKey]);
 }
 
 /** Fields eligible for user input (excludes system + primary-key fields). */
@@ -266,11 +326,31 @@ function buildInputTypes(
 // ---------------------------------------------------------------------------
 
 /**
+ * Optional Phase 13 surface extensions. All absent in minimal builds (tests,
+ * headless embedders): the schema then contains only the CRUD reflection.
+ */
+export interface GraphQLSchemaExtras {
+  /**
+   * Installed blocks' declared actions — each becomes
+   * `Mutation.<block>_<action>(input: JSON): JSON` running through the shared
+   * ActionExecutor (requires `actionExecutor` + `permissionEngine`).
+   */
+  declaredActions?: DeclaredAction[];
+  actionExecutor?: ActionExecutor;
+  permissionEngine?: PermissionEngine;
+  /** Whether RBAC is enforced (action mutations + subscription auth). */
+  enforce?: boolean;
+  /** Present when the outbox bus is live — enables `Subscription.events`. */
+  realtime?: RealtimeBridge;
+}
+
+/**
  * Builds the full GraphQL schema from the current registry state.
  */
 export function buildGraphQLSchema(
   registry: SchemaRegistry,
   dataService: DataService,
+  extras: GraphQLSchemaExtras = {},
 ): GraphQLSchema {
   const objects = registry.listObjects().filter((o) => !o.isSystem);
 
@@ -291,9 +371,20 @@ export function buildGraphQLSchema(
 
   const mutationFields: GraphQLFieldConfigMap<unknown, unknown> = {};
 
+  // First pass: register every object type so relation fields (resolved in
+  // the lazy `fields` thunks) can reference each other, cycles included.
+  const typeByObject = new Map<string, GraphQLObjectType>();
+  const fieldTypesByObject = new Map<string, Map<string, DualPositionType>>();
   for (const obj of objects) {
     const fieldTypes = buildFieldTypeMap(obj);
-    const objectType = buildObjectType(obj, fieldTypes);
+    fieldTypesByObject.set(obj.name, fieldTypes);
+    typeByObject.set(obj.name, buildObjectType(obj, fieldTypes, typeByObject, dataService));
+  }
+
+  for (const obj of objects) {
+    const fieldTypes = fieldTypesByObject.get(obj.name) ?? buildFieldTypeMap(obj);
+    const objectType = typeByObject.get(obj.name);
+    if (!objectType) continue; // unreachable — the first pass covers every object
     const { create: createInput, update: updateInput } = buildInputTypes(obj, fieldTypes);
 
     const listResult = new GraphQLObjectType({
@@ -358,7 +449,29 @@ export function buildGraphQLSchema(
       args: { id: { type: new GraphQLNonNull(GraphQLID) } },
       resolve: makeDeleteResolver(dataService, obj.name),
     };
+
+    // Link writes — one mutation pair per many_to_many relation key (Phase 13).
+    for (const relationKey of listRelationKeys(obj).filter((k) => k.via === 'junction')) {
+      const linkArgs = {
+        id: { type: new GraphQLNonNull(GraphQLID) },
+        ids: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLID))) },
+      };
+      mutationFields[`link_${obj.name}_${relationKey.key}`] = {
+        type: new GraphQLNonNull(GraphQLInt),
+        description: `Link ${relationKey.otherObject} records to a ${obj.displayName} record via "${relationKey.key}". Idempotent; returns the number of links added.`,
+        args: linkArgs,
+        resolve: makeLinkResolver(dataService, obj.name, relationKey.key, 'link'),
+      };
+      mutationFields[`unlink_${obj.name}_${relationKey.key}`] = {
+        type: new GraphQLNonNull(GraphQLInt),
+        description: `Unlink ${relationKey.otherObject} records from a ${obj.displayName} record via "${relationKey.key}". Returns the number of links removed.`,
+        args: linkArgs,
+        resolve: makeLinkResolver(dataService, obj.name, relationKey.key, 'unlink'),
+      };
+    }
   }
+
+  addActionMutations(mutationFields, extras);
 
   return new GraphQLSchema({
     query: new GraphQLObjectType({ name: 'Query', fields: queryFields }),
@@ -366,6 +479,85 @@ export function buildGraphQLSchema(
       Object.keys(mutationFields).length > 0
         ? new GraphQLObjectType({ name: 'Mutation', fields: mutationFields })
         : undefined,
+    subscription: buildSubscriptionType(extras),
+  });
+}
+
+/**
+ * Reflects installed blocks' declared actions as mutations (Phase 13 — the
+ * GraphQL face of the Phase 14 action seam). Input stays a JSON scalar: the
+ * handler's Zod schema is the validator, and deriving typed GraphQL inputs
+ * from Zod would be a fidelity trap (unions, refinements) for no real gain.
+ */
+function addActionMutations(
+  mutationFields: GraphQLFieldConfigMap<unknown, unknown>,
+  extras: GraphQLSchemaExtras,
+): void {
+  const { declaredActions, actionExecutor, permissionEngine } = extras;
+  if (!declaredActions?.length || !actionExecutor || !permissionEngine) return;
+
+  const deps = { actionExecutor, permissionEngine, enforce: extras.enforce ?? false };
+  for (const action of declaredActions) {
+    // Block names may contain hyphens; GraphQL names may not.
+    const fieldName = `${action.block}_${action.name}`.replace(/[^_0-9A-Za-z]/g, '_');
+    if (mutationFields[fieldName]) continue;
+    mutationFields[fieldName] = {
+      type: JSONScalar,
+      description:
+        action.description ?? `Invoke the "${action.block}" block's "${action.name}" action.`,
+      args: {
+        input: {
+          type: JSONScalar,
+          description: "Action input object (validated by the handler's registered schema).",
+        },
+      },
+      resolve: makeActionResolver(deps, action.block, action.name),
+    };
+  }
+}
+
+/**
+ * `Subscription.events(topics)` — the realtime feed over the Phase 12 bridge
+ * (yoga serves it over GraphQL-SSE). Only present when the outbox bus is
+ * live, mirroring `GET /api/v1/events/stream`.
+ */
+function buildSubscriptionType(extras: GraphQLSchemaExtras): GraphQLObjectType | undefined {
+  const { realtime, permissionEngine } = extras;
+  if (!realtime || !permissionEngine) return undefined;
+
+  const eventType = new GraphQLObjectType({
+    name: 'IonEvent',
+    description: 'An event from the platform outbox (see docs/concepts/events.md).',
+    fields: {
+      id: { type: new GraphQLNonNull(GraphQLID) },
+      topic: { type: new GraphQLNonNull(GraphQLString) },
+      occurredAt: { type: new GraphQLNonNull(DateTimeScalar) },
+      payload: { type: JSONScalar },
+    },
+  });
+
+  return new GraphQLObjectType({
+    name: 'Subscription',
+    fields: {
+      events: {
+        type: new GraphQLNonNull(eventType),
+        description:
+          'Realtime change feed. Best-effort from subscribe time (a feed, not a queue); each event is RBAC-filtered for the connected principal. Same semantics as GET /api/v1/events/stream.',
+        args: {
+          topics: {
+            type: new GraphQLList(new GraphQLNonNull(GraphQLString)),
+            description:
+              'Topic patterns (`data.contacts.*`, `data.#`, …). Default: `data.#` (all data changes).',
+          },
+        },
+        subscribe: makeEventsSubscribe({
+          realtime,
+          permissionEngine,
+          enforce: extras.enforce ?? false,
+        }),
+        resolve: (event: unknown) => event,
+      },
+    },
   });
 }
 

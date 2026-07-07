@@ -556,6 +556,17 @@ export async function createServer(
     { prefix: '/api/v1' },
   );
 
+  // --- Phase 12: webhook management + event operations/realtime routes ---
+  // Registered before GraphQL so the realtime bridge can back its
+  // Subscription.events field (Phase 13).
+  const realtime = await registerEventEdge(server, {
+    config,
+    webhookManager,
+    eventStore,
+    bus,
+    permissionEngine,
+  });
+
   // --- GraphQL surface (graphql-yoga, schema reflected from the registry) ---
   await server.register(
     registerGraphQLRoutes({
@@ -563,6 +574,10 @@ export async function createServer(
       dataService,
       endpoint: '/api/v1/graphql',
       graphiql: config.nodeEnv !== 'production',
+      actionExecutor,
+      permissionEngine,
+      enforce: config.requireAuth,
+      realtime,
     }),
   );
 
@@ -609,15 +624,6 @@ export async function createServer(
     registerTaskRoutes({ taskEngine, permissionEngine, enforce: config.requireAuth }),
     { prefix: '/api/v1/tasks' },
   );
-
-  // --- Phase 12: webhook management + event operations/realtime routes ---
-  const realtime = await registerEventEdge(server, {
-    config,
-    webhookManager,
-    eventStore,
-    bus,
-    permissionEngine,
-  });
 
   // --- Building-blocks routes (install/list/uninstall + actions, Phase 14) ---
   if (config.blocksEnabled) {
