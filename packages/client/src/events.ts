@@ -60,40 +60,20 @@ export class EventsApi {
     onEvent: (event: IonEventMessage<T>) => void,
     options: EventStreamOptions = {},
   ): EventStreamHandle {
-    const topicList = Array.isArray(topics) ? topics : [topics];
-    const controller = new AbortController();
-    let closed = false;
-    let lastEventId: string | undefined;
+    const session: StreamSession = {
+      topics: Array.isArray(topics) ? topics.join(',') : topics,
+      controller: new AbortController(),
+      closed: false,
+      lastEventId: undefined,
+    };
 
     const run = async () => {
       let backoff = INITIAL_BACKOFF_MS;
-      while (!closed) {
-        try {
-          const url = `${this.transport.baseUrl}/api/v1/events/stream?topics=${encodeURIComponent(
-            topicList.join(','),
-          )}`;
-          const res = await this.transport.fetchImpl(url, {
-            headers: {
-              accept: 'text/event-stream',
-              ...(lastEventId ? { 'last-event-id': lastEventId } : {}),
-              ...this.transport.headers(),
-            },
-            signal: controller.signal,
-          });
-          if (!res.ok || !res.body) {
-            throw new Error(`Event stream connection failed with status ${res.status}`);
-          }
-          options.onConnect?.();
-          backoff = INITIAL_BACKOFF_MS; // healthy connection resets the clock
-          lastEventId = await this.consume<T>(res.body, onEvent, (id) => {
-            lastEventId = id;
-          });
-        } catch (err) {
-          if (closed) return;
-          options.onError?.(err);
-        }
-        if (closed || options.reconnect === false) return;
-        await sleep(backoff, controller.signal);
+      while (!session.closed) {
+        const connected = await this.attempt(session, onEvent, options);
+        if (session.closed || options.reconnect === false) return;
+        if (connected) backoff = INITIAL_BACKOFF_MS; // a healthy connection resets the clock
+        await sleep(backoff, session.controller.signal);
         backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
       }
     };
@@ -101,43 +81,88 @@ export class EventsApi {
 
     return {
       close: () => {
-        closed = true;
-        controller.abort();
+        session.closed = true;
+        session.controller.abort();
       },
     };
   }
 
-  /** Reads and parses SSE frames until the stream ends; returns the last id. */
+  /** One connect-and-read cycle; returns whether the connection was healthy. */
+  private async attempt<T>(
+    session: StreamSession,
+    onEvent: (event: IonEventMessage<T>) => void,
+    options: EventStreamOptions,
+  ): Promise<boolean> {
+    try {
+      const url = `${this.transport.baseUrl}/api/v1/events/stream?topics=${encodeURIComponent(
+        session.topics,
+      )}`;
+      const res = await this.transport.fetchImpl(url, {
+        headers: {
+          accept: 'text/event-stream',
+          ...(session.lastEventId ? { 'last-event-id': session.lastEventId } : {}),
+          ...this.transport.headers(),
+        },
+        signal: session.controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        throw new Error(`Event stream connection failed with status ${res.status}`);
+      }
+      options.onConnect?.();
+      await this.consume<T>(res.body, onEvent, (id) => {
+        session.lastEventId = id;
+      });
+      return true;
+    } catch (err) {
+      if (!session.closed) options.onError?.(err);
+      return false;
+    }
+  }
+
+  /** Reads and parses SSE frames until the stream ends. */
   private async consume<T>(
     body: ReadableStream<Uint8Array>,
     onEvent: (event: IonEventMessage<T>) => void,
     trackId: (id: string) => void,
-  ): Promise<string | undefined> {
+  ): Promise<void> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let lastId: string | undefined;
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) return lastId;
+      if (done) return;
       buffer += decoder.decode(value, { stream: true });
       // Frames are separated by a blank line; keep the trailing partial frame.
       const frames = buffer.split(/\r?\n\r?\n/);
       buffer = frames.pop() ?? '';
       for (const frame of frames) {
-        const parsed = parseSseFrame(frame);
-        if (parsed.id) {
-          lastId = parsed.id;
-          trackId(parsed.id);
-        }
-        if (parsed.data === undefined) continue; // comment/heartbeat frame
-        try {
-          onEvent(JSON.parse(parsed.data) as IonEventMessage<T>);
-        } catch {
-          // Malformed frame — skip rather than kill the stream.
-        }
+        dispatchFrame(frame, onEvent, trackId);
       }
     }
+  }
+}
+
+/** Internal per-stream state shared by the reconnect loop and close(). */
+interface StreamSession {
+  topics: string;
+  controller: AbortController;
+  closed: boolean;
+  lastEventId: string | undefined;
+}
+
+/** Parses one frame and invokes the callbacks (heartbeats are skipped). */
+function dispatchFrame<T>(
+  frame: string,
+  onEvent: (event: IonEventMessage<T>) => void,
+  trackId: (id: string) => void,
+): void {
+  const parsed = parseSseFrame(frame);
+  if (parsed.id) trackId(parsed.id);
+  if (parsed.data === undefined) return; // comment/heartbeat frame
+  try {
+    onEvent(JSON.parse(parsed.data) as IonEventMessage<T>);
+  } catch {
+    // Malformed frame — skip rather than kill the stream.
   }
 }
 
