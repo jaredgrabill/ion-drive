@@ -159,7 +159,8 @@ export type {
 } from './blocks/index.js';
 export { registerHookRoutes } from './api/hook-routes.js';
 
-// Extensibility runtime — service registry + plugin host (Phase 9)
+// Extensibility runtime — service registry + plugin host (Phase 9),
+// ambient request/actor context (Phase 12)
 export {
   ServiceRegistry,
   ServiceRegistryError,
@@ -167,6 +168,9 @@ export {
   definePlugin,
   loadPlugins,
   PluginLoadError,
+  currentActor,
+  currentActorId,
+  runWithActor,
 } from './runtime/index.js';
 export type {
   ServiceToken,
@@ -174,6 +178,7 @@ export type {
   PluginContext,
   LoadPluginsOptions,
   LoadedPlugins,
+  ActorRef,
 } from './runtime/index.js';
 
 // Infrastructure provider ports + defaults (Phase 9)

@@ -158,6 +158,18 @@ export class DdlExecutor {
   }
 
   /**
+   * Adds a plain nullable column only when absent. Used by boot migrations
+   * that retrofit new system columns (e.g. the Phase 12 actor columns) onto
+   * pre-existing tables — `IF NOT EXISTS` makes a crash between DDL and
+   * metadata recording safely re-runnable.
+   */
+  async addColumnIfNotExists(tableName: string, field: FieldDefinition): Promise<string> {
+    const statement = `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "${field.columnName}" ${this.resolveColumnType(field)}`;
+    await sql.raw(statement).execute(this.db);
+    return statement;
+  }
+
+  /**
    * Drops a column from an existing table.
    */
   async dropColumn(tableName: string, columnName: string): Promise<string[]> {

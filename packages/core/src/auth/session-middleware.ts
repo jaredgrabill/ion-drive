@@ -12,6 +12,7 @@
 
 import type { IncomingHttpHeaders } from 'node:http';
 import type { FastifyInstance } from 'fastify';
+import { enterRequestContext } from '../runtime/request-context.js';
 import type { ApiKeyManager } from './api-key-manager.js';
 import type { AuthPrincipal, AuthProvider } from './types.js';
 
@@ -62,20 +63,30 @@ export function installSessionMiddleware(
           apiKeyId: principal.apiKeyId,
           roleId: principal.roleId,
         };
-        return;
       }
     }
 
-    const session = await provider.getSession(request.headers);
-    if (session) {
-      request.auth = {
-        via: 'session',
-        userId: session.user.id,
-        user: session.user,
-        session: session.session,
-        apiKeyId: null,
-        roleId: null,
-      };
+    if (!request.auth) {
+      const session = await provider.getSession(request.headers);
+      if (session) {
+        request.auth = {
+          via: 'session',
+          userId: session.user.id,
+          user: session.user,
+          session: session.session,
+          apiKeyId: null,
+          roleId: null,
+        };
+      }
     }
+
+    // Make the actor ambient for the rest of this request's async chain
+    // (Phase 12 / ADR-019) — DataService/SchemaManager read it for
+    // created_by/updated_by, event payloads, and migration provenance.
+    enterRequestContext(
+      request.auth
+        ? { userId: request.auth.userId, apiKeyId: request.auth.apiKeyId, via: request.auth.via }
+        : null,
+    );
   });
 }

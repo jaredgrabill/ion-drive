@@ -15,6 +15,7 @@
 import type { Kysely } from 'kysely';
 import type { TenantDatabase } from '../db/types.js';
 import type { LoggerProvider } from '../logging/logger-provider.js';
+import type { ActorRef } from '../runtime/request-context.js';
 
 /** The immutable event envelope carried through the bus. */
 export interface IonEvent<T = unknown> {
@@ -51,6 +52,8 @@ export interface CrudEventPayload {
   after: Record<string, unknown> | null;
   /** System-field-free diff (only present for updates). */
   diff: FieldDiff | null;
+  /** Who made the change (Phase 12 / ADR-019); null for anonymous/system writes. */
+  actor: ActorRef | null;
 }
 
 /**

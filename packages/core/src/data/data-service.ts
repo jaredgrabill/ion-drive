@@ -20,6 +20,7 @@ import type {
 } from '../messaging/event-types.js';
 import type { MessageBus } from '../messaging/message-bus.js';
 import { NoopBus } from '../messaging/noop-bus.js';
+import { currentActor, currentActorId } from '../runtime/request-context.js';
 import type { SchemaRegistry } from '../schema/schema-registry.js';
 import {
   COLUMN_TYPES,
@@ -165,6 +166,7 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     const cleanData = this.sanitizeInput(objectName, data);
     this.validateConstraints(objectName, cleanData);
+    this.stampActor(objectName, cleanData, 'create');
 
     const row = await this.db.transaction().execute(async (trx) => {
       const inserted = await trx
@@ -199,6 +201,7 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     const cleanData = this.sanitizeInput(objectName, data);
     this.validateConstraints(objectName, cleanData);
+    this.stampActor(objectName, cleanData, 'update');
 
     const row = await this.db.transaction().execute(async (trx) => {
       const before = this.eventsEnabled
@@ -273,7 +276,10 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     if (records.length === 0) return { count: 0, ids: [] };
     const cleanRecords = records.map((r) => this.sanitizeInput(objectName, r));
-    for (const record of cleanRecords) this.validateConstraints(objectName, record);
+    for (const record of cleanRecords) {
+      this.validateConstraints(objectName, record);
+      this.stampActor(objectName, record, 'create');
+    }
 
     const rows = await this.db.transaction().execute(async (trx) => {
       const inserted = await trx
@@ -372,8 +378,29 @@ export class DataService {
       before: images.before,
       after: images.after,
       diff: images.diff ?? null,
+      actor: currentActor(),
     };
     await this.bus.publish({ topic: `data.${objectName}.${op}`, payload }, trx);
+  }
+
+  /**
+   * Stamps the ambient actor onto the system actor columns (Phase 12 /
+   * ADR-019): creates set both `created_by` and `updated_by`, updates only
+   * `updated_by`. No-op when there is no actor (anonymous/system writes) or
+   * the object predates the actor columns (registry-guarded, so a stale
+   * schema never produces an unknown-column SQL error).
+   */
+  private stampActor(
+    objectName: string,
+    cleanData: Record<string, unknown>,
+    op: 'create' | 'update',
+  ): void {
+    const actorId = currentActorId();
+    if (!actorId) return;
+    const fields = this.registry.getFields(objectName);
+    const hasColumn = (col: string) => fields.some((f) => f.columnName === col);
+    if (op === 'create' && hasColumn('created_by')) cleanData.created_by = actorId;
+    if (hasColumn('updated_by')) cleanData.updated_by = actorId;
   }
 
   /** Nudges the dispatcher to drain immediately once a write has committed. */

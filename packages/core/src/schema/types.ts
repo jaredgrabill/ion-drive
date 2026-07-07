@@ -304,13 +304,35 @@ export const SYSTEM_FIELDS: FieldDefinition[] = [
     defaultValue: 'NOW()',
     sortOrder: -1,
   },
+  // Actor identity (Phase 12 / ADR-019): who created/last-changed the row.
+  // Nullable — writes are anonymous when auth is off or the caller is
+  // unauthenticated. Values are set by DataService from the ambient request
+  // actor (user id, else API key id), never by client input.
+  {
+    name: 'created_by',
+    displayName: 'Created By',
+    columnName: 'created_by',
+    columnType: 'text',
+    isSystem: true,
+    managedBy: 'system',
+    sortOrder: -4,
+  },
+  {
+    name: 'updated_by',
+    displayName: 'Updated By',
+    columnName: 'updated_by',
+    columnType: 'text',
+    isSystem: true,
+    managedBy: 'system',
+    sortOrder: -3,
+  },
 ];
 
 /**
  * Physical columns the platform manages automatically. Change events exclude
  * these from their diff so a record's diff only ever reflects business fields
- * (never `updated_at`, and — once actor tracking lands — never `*_by`). This is
- * the single source of truth for that exclusion. See ADR-015.
+ * (never `updated_at`, never the `*_by` actor columns). This is the single
+ * source of truth for that exclusion. See ADR-015.
  */
 export const SYSTEM_MANAGED_COLUMNS: ReadonlySet<string> = new Set([
   'created_at',

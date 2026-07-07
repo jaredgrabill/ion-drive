@@ -67,10 +67,38 @@ export class SchemaManager {
    * Initializes the Schema Manager:
    * 1. Bootstraps system tables if they don't exist
    * 2. Loads existing schema state into the registry
+   * 3. Retrofits newly-introduced system fields onto pre-existing objects
    */
   async initialize(): Promise<void> {
     await bootstrapSystemTables(this.systemDb);
     await this.registry.loadFromStore(this.metadataStore);
+    await this.ensureActorFields();
+  }
+
+  /**
+   * Boot migration (Phase 12 / ADR-019): objects created before actor identity
+   * shipped lack the `created_by`/`updated_by` system columns. Adds the columns
+   * (`IF NOT EXISTS`) and their `_ion_fields` rows, then re-hydrates each
+   * touched object so the registry reflects the new shape. Idempotent — objects
+   * that already have both fields are skipped.
+   */
+  private async ensureActorFields(): Promise<void> {
+    const actorFields = SYSTEM_FIELDS.filter(
+      (f) => f.columnName === 'created_by' || f.columnName === 'updated_by',
+    );
+    for (const obj of this.registry.listObjects()) {
+      const missing = actorFields.filter(
+        (sf) => !obj.fields.some((f) => f.columnName === sf.columnName),
+      );
+      if (missing.length === 0 || !obj.id) continue;
+
+      for (const field of missing) {
+        await this.ddlExecutor.addColumnIfNotExists(obj.tableName, field);
+        await this.metadataStore.createField(obj.id, field);
+      }
+      const fullDef = await this.metadataStore.getFullObjectDefinition(obj.name);
+      if (fullDef) this.registry.registerObject(fullDef);
+    }
   }
 
   // =========================================================================
