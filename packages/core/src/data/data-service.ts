@@ -29,7 +29,7 @@ import {
   type FieldConstraints,
   type RelationshipDefinition,
 } from '../schema/types.js';
-import { findRelationKey, listRelationKeys, type RelationKey } from './relation-keys.js';
+import { type RelationKey, findRelationKey, listRelationKeys } from './relation-keys.js';
 import type {
   BulkResult,
   FilterCondition,

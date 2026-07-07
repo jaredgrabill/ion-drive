@@ -102,8 +102,7 @@ function fakeDb(options: FakeDbOptions) {
     selectFrom: () => ({
       select: () => ({
         where: () => ({
-          executeTakeFirst: async () =>
-            (options.recordExists ?? true) ? { id: 'c1' } : undefined,
+          executeTakeFirst: async () => ((options.recordExists ?? true) ? { id: 'c1' } : undefined),
         }),
       }),
     }),

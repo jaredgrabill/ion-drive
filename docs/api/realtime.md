@@ -85,6 +85,22 @@ curl -N -H "x-api-key: iond_…" \
   "http://localhost:3000/api/v1/events/stream?topics=data.%23"
 ```
 
+## GraphQL subscriptions (Phase 13)
+
+The same feed is available as a GraphQL subscription — useful when your app
+already speaks GraphQL (GraphiQL and `graphql-sse` clients work out of the
+box; yoga serves it over GraphQL-SSE):
+
+```graphql
+subscription {
+  events(topics: ["data.contacts.*"]) { id topic occurredAt payload }
+}
+```
+
+Identical semantics: topic patterns (default `data.#`), best-effort from
+subscribe time, per-event RBAC (unreadable objects' events are skipped), and
+an auth error at subscribe time for anonymous connections under enforcement.
+
 ## Operations: the event ledger
 
 The same route prefix carries the operational surface (RBAC resource

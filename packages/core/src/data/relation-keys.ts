@@ -43,39 +43,38 @@ export interface RelationKey {
  * `contacts_by_manager` on the same object).
  */
 export function listRelationKeys(obj: DataObjectDefinition): RelationKey[] {
-  const keys: RelationKey[] = [];
-  for (const rel of obj.relationships ?? []) {
-    if (rel.type === 'many_to_many') {
-      const isSource = rel.sourceObjectName === obj.name;
-      keys.push({
-        key: rel.name,
-        rel,
-        kind: 'list',
-        otherObject: isSource ? rel.targetObjectName : rel.sourceObjectName,
-        via: 'junction',
-      });
-      continue;
-    }
-    // The FK column lives on the "many" side (the target for one_to_many,
-    // the source otherwise) — mirrors SchemaManager.createRelationshipFkColumn.
-    const fkObject = rel.type === 'one_to_many' ? rel.targetObjectName : rel.sourceObjectName;
-    const oneObject = rel.type === 'one_to_many' ? rel.sourceObjectName : rel.targetObjectName;
-    if (fkObject === obj.name) {
-      keys.push({ key: rel.name, rel, kind: 'single', otherObject: oneObject, via: 'fk' });
-    }
-    if (oneObject === obj.name) {
-      keys.push({
-        key: `${fkObject}_by_${rel.name}`,
-        rel,
-        kind: rel.type === 'one_to_one' ? 'single' : 'list',
-        otherObject: fkObject,
-        via: 'reverse',
-      });
-    }
-  }
-
+  const keys = (obj.relationships ?? []).flatMap((rel) => keysForRelationship(obj.name, rel));
   const fieldNames = new Set(obj.fields.map((f) => f.name));
   return keys.filter((k) => !fieldNames.has(k.key));
+}
+
+/** The relation keys one relationship contributes to `objectName`'s surface. */
+function keysForRelationship(objectName: string, rel: RelationshipDefinition): RelationKey[] {
+  if (rel.type === 'many_to_many') {
+    const isSource = rel.sourceObjectName === objectName;
+    const otherObject = isSource ? rel.targetObjectName : rel.sourceObjectName;
+    return [{ key: rel.name, rel, kind: 'list', otherObject, via: 'junction' }];
+  }
+
+  // The FK column lives on the "many" side (the target for one_to_many,
+  // the source otherwise) — mirrors SchemaManager.createRelationshipFkColumn.
+  const fkObject = rel.type === 'one_to_many' ? rel.targetObjectName : rel.sourceObjectName;
+  const oneObject = rel.type === 'one_to_many' ? rel.sourceObjectName : rel.targetObjectName;
+
+  const keys: RelationKey[] = [];
+  if (fkObject === objectName) {
+    keys.push({ key: rel.name, rel, kind: 'single', otherObject: oneObject, via: 'fk' });
+  }
+  if (oneObject === objectName) {
+    keys.push({
+      key: `${fkObject}_by_${rel.name}`,
+      rel,
+      kind: rel.type === 'one_to_one' ? 'single' : 'list',
+      otherObject: fkObject,
+      via: 'reverse',
+    });
+  }
+  return keys;
 }
 
 /** Finds one relation key by its public name, or undefined. */

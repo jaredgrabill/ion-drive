@@ -65,8 +65,8 @@ import {
   m2mRelationshipsOf,
 } from './grid-types';
 import { RecordChip } from './record-chip';
-import { RelationChipList } from './relation-chips';
 import { RecordPicker } from './record-picker';
+import { RelationChipList } from './relation-chips';
 
 // Code-split: the RecordSheet pulls in react-hook-form + zod, which the
 // grid itself doesn't need until a record is opened.
@@ -501,7 +501,10 @@ export function DataGrid({ object }: DataGridProps) {
             <tbody>
               {padTop > 0 && (
                 <tr aria-hidden>
-                  <td style={{ height: padTop }} colSpan={visibleFields.length + m2mRels.length + 1} />
+                  <td
+                    style={{ height: padTop }}
+                    colSpan={visibleFields.length + m2mRels.length + 1}
+                  />
                 </tr>
               )}
               {virtualRows.map((virtualRow) => {
@@ -599,7 +602,10 @@ export function DataGrid({ object }: DataGridProps) {
               })}
               {padBottom > 0 && (
                 <tr aria-hidden>
-                  <td style={{ height: padBottom }} colSpan={visibleFields.length + m2mRels.length + 1} />
+                  <td
+                    style={{ height: padBottom }}
+                    colSpan={visibleFields.length + m2mRels.length + 1}
+                  />
                 </tr>
               )}
             </tbody>

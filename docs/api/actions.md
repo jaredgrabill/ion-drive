@@ -44,8 +44,9 @@ Declared actions automatically appear:
 - as **MCP tools** named `<block>_<action>` — parameters mirror the handler's
   Zod object schema, so agents can call your business operations directly.
 
-GraphQL mutations for actions are deferred (revisit with the GraphQL
-relational work).
+- as **GraphQL mutations** `Mutation.<block>_<action>(input: JSON): JSON`
+  (Phase 13) — same executor, RBAC, validation, and timeout as REST/MCP;
+  validation errors surface as GraphQL errors with `extensions.code`.
 
 ### Registering a handler (vendored code)
 

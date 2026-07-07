@@ -12,8 +12,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { ApiError, api } from '../../lib/api';
-import type { DataObjectDefinition, RelationshipDefinition } from '../../lib/types';
 import { displayFieldOf, recordLabelOf } from '../../lib/record-label';
+import type { DataObjectDefinition, RelationshipDefinition } from '../../lib/types';
 import { Skeleton, toast } from '../ui';
 import { linkTargetOf } from './grid-types';
 import { RecordPicker } from './record-picker';

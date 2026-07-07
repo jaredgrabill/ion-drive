@@ -18,6 +18,7 @@ import type {
   DataObjectDefinition,
   FieldDefinition,
   FieldModification,
+  RelationshipDefinition,
   SchemaChange,
 } from './types.js';
 import {
@@ -869,52 +870,70 @@ export class ChangeValidator {
       return { warnings, errors, sqlStatements };
     }
 
+    const result: ValidationResult = { warnings, errors, sqlStatements };
+    const rr: RemoveRelationshipCheck = { change, rel, sourceObj, targetObj, force };
     if (rel.type === 'many_to_many') {
-      // No FK field carries provenance for m2m; a relationship whose both
-      // endpoints are block-managed is treated as block-owned (blocks only
-      // declare relationships among their own/dependency objects).
-      const sourceBlock = managedByBlock(sourceObj.managedBy);
-      const targetBlock = managedByBlock(targetObj.managedBy);
-      const owningBlock = sourceBlock && targetBlock ? sourceBlock : undefined;
-      this.pushRelationshipProtection(change, owningBlock, relName, force, errors, warnings);
-
-      const junction = rel.junctionTable ?? `${sourceObj.tableName}_${targetObj.tableName}`;
-      if (await this.ddlExecutor.tableExists(junction)) {
-        const links = await this.ddlExecutor.getRowCount(junction);
-        if (links > 0) {
-          warnings.push({
-            change,
-            message: `${links} link row(s) in "${junction}" will be permanently deleted.`,
-            severity: 'high',
-          });
-        }
-      }
-      sqlStatements.push(`DROP TABLE IF EXISTS "${junction}"`);
+      await this.checkRemoveJunction(rr, result);
     } else {
-      // The FK column lives on the "many" side (target for one_to_many).
-      const fkObj = rel.type === 'one_to_many' ? targetObj : sourceObj;
-      const fkColumn = `${rel.name}_id`;
-      const fkField = fkObj.fields.find((f) => f.columnName === fkColumn);
-      this.pushRelationshipProtection(
-        change,
-        managedByBlock(fkField?.managedBy),
-        relName,
-        force,
-        errors,
-        warnings,
-      );
+      await this.checkRemoveFkColumn(rr, result);
+    }
+    return result;
+  }
 
-      if (fkField && (await this.ddlExecutor.columnHasData(fkObj.tableName, fkColumn))) {
-        warnings.push({
+  /** many_to_many removal: junction drop + doomed-link count + block ownership. */
+  private async checkRemoveJunction(
+    rr: RemoveRelationshipCheck,
+    result: ValidationResult,
+  ): Promise<void> {
+    const { change, rel, sourceObj, targetObj, force } = rr;
+    // No FK field carries provenance for m2m; a relationship whose both
+    // endpoints are block-managed is treated as block-owned (blocks only
+    // declare relationships among their own/dependency objects).
+    const sourceBlock = managedByBlock(sourceObj.managedBy);
+    const targetBlock = managedByBlock(targetObj.managedBy);
+    const owningBlock = sourceBlock && targetBlock ? sourceBlock : undefined;
+    this.pushRelationshipProtection(change, owningBlock, rel.name, force, result);
+
+    const junction = rel.junctionTable ?? `${sourceObj.tableName}_${targetObj.tableName}`;
+    if (await this.ddlExecutor.tableExists(junction)) {
+      const links = await this.ddlExecutor.getRowCount(junction);
+      if (links > 0) {
+        result.warnings.push({
           change,
-          message: `Column "${fkColumn}" on "${fkObj.tableName}" contains linked ids — dropping the relationship permanently removes those links.`,
+          message: `${links} link row(s) in "${junction}" will be permanently deleted.`,
           severity: 'high',
         });
       }
-      sqlStatements.push(`ALTER TABLE "${fkObj.tableName}" DROP COLUMN "${fkColumn}"`);
     }
+    result.sqlStatements.push(`DROP TABLE IF EXISTS "${junction}"`);
+  }
 
-    return { warnings, errors, sqlStatements };
+  /** FK-backed removal: column drop + stored-link warning + block ownership. */
+  private async checkRemoveFkColumn(
+    rr: RemoveRelationshipCheck,
+    result: ValidationResult,
+  ): Promise<void> {
+    const { change, rel, sourceObj, targetObj, force } = rr;
+    // The FK column lives on the "many" side (target for one_to_many).
+    const fkObj = rel.type === 'one_to_many' ? targetObj : sourceObj;
+    const fkColumn = `${rel.name}_id`;
+    const fkField = fkObj.fields.find((f) => f.columnName === fkColumn);
+    this.pushRelationshipProtection(
+      change,
+      managedByBlock(fkField?.managedBy),
+      rel.name,
+      force,
+      result,
+    );
+
+    if (fkField && (await this.ddlExecutor.columnHasData(fkObj.tableName, fkColumn))) {
+      result.warnings.push({
+        change,
+        message: `Column "${fkColumn}" on "${fkObj.tableName}" contains linked ids — dropping the relationship permanently removes those links.`,
+        severity: 'high',
+      });
+    }
+    result.sqlStatements.push(`ALTER TABLE "${fkObj.tableName}" DROP COLUMN "${fkColumn}"`);
   }
 
   /** Contract protection for relationships (ADR-017 pattern, Phase 13). */
@@ -923,22 +942,30 @@ export class ChangeValidator {
     owningBlock: string | null | undefined,
     relName: string,
     force: boolean,
-    errors: ChangeError[],
-    warnings: ChangeWarning[],
+    result: ValidationResult,
   ): void {
     if (!owningBlock) return;
     if (force) {
-      warnings.push({
+      result.warnings.push({
         change,
         message: `Relationship "${relName}" belongs to the "${owningBlock}" block; forcing its removal may break that block.`,
         severity: 'high',
       });
       return;
     }
-    errors.push({
+    result.errors.push({
       change,
       message: `Relationship "${relName}" belongs to the "${owningBlock}" block. Removing it would break the block's contract — pass force=true to override.`,
       code: 'BLOCK_MANAGED_RELATIONSHIP',
     });
   }
+}
+
+/** The resolved inputs of one remove_relationship validation. */
+interface RemoveRelationshipCheck {
+  change: SchemaChange;
+  rel: RelationshipDefinition;
+  sourceObj: DataObjectDefinition;
+  targetObj: DataObjectDefinition;
+  force: boolean;
 }

@@ -52,7 +52,7 @@ import {
 import type { PermissionEngine } from '../../auth/rbac/permission-engine.js';
 import type { ActionExecutor, DeclaredAction } from '../../blocks/action-executor.js';
 import type { DataService } from '../../data/data-service.js';
-import { listRelationKeys, type RelationKey } from '../../data/relation-keys.js';
+import { type RelationKey, listRelationKeys } from '../../data/relation-keys.js';
 import type { RealtimeBridge } from '../../messaging/realtime.js';
 import type { SchemaRegistry } from '../../schema/schema-registry.js';
 import type { DataObjectDefinition, FieldDefinition } from '../../schema/types.js';
@@ -242,22 +242,32 @@ function buildObjectType(
           resolve: (source) => source[field.columnName],
         };
       }
-      for (const relationKey of listRelationKeys(obj)) {
-        const otherType = typeByObject.get(relationKey.otherObject);
-        if (!otherType || fields[relationKey.key]) continue;
-        fields[relationKey.key] = {
-          type:
-            relationKey.kind === 'list'
-              ? new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(otherType)))
-              : otherType,
-          description: relationDescription(relationKey),
-          resolve: (source, _args, context) =>
-            resolveRelation(dataService, obj.name, relationKey.key, source, context),
-        };
-      }
+      addRelationFields(fields, obj, typeByObject, dataService);
       return fields;
     },
   });
+}
+
+/** Appends the object's relation keys as nested (loader-resolved) fields. */
+function addRelationFields(
+  fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown>,
+  obj: DataObjectDefinition,
+  typeByObject: Map<string, GraphQLObjectType>,
+  dataService: DataService,
+): void {
+  for (const relationKey of listRelationKeys(obj)) {
+    const otherType = typeByObject.get(relationKey.otherObject);
+    if (!otherType || fields[relationKey.key]) continue;
+    fields[relationKey.key] = {
+      type:
+        relationKey.kind === 'list'
+          ? new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(otherType)))
+          : otherType,
+      description: relationDescription(relationKey),
+      resolve: (source, _args, context) =>
+        resolveRelation(dataService, obj.name, relationKey.key, source, context),
+    };
+  }
 }
 
 /** Human description of a relation field for the SDL. */

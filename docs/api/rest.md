@@ -31,6 +31,8 @@ A machine-readable, always-current [OpenAPI 3.1 spec](#openapi) is served at
 | `GET` | `/api/v1/data/:object/:id` | Get one record by id |
 | `PATCH` | `/api/v1/data/:object/:id` | Partial update — send only the fields you're changing |
 | `DELETE` | `/api/v1/data/:object/:id` | Delete |
+| `POST` | `/api/v1/data/:object/:id/links/:rel` | Add many_to_many links (`{ "ids": [...] }`, idempotent) |
+| `DELETE` | `/api/v1/data/:object/:id/links/:rel` | Remove many_to_many links (`{ "ids": [...] }`) |
 
 > There is deliberately no `PUT` full-replace verb: with runtime-defined schemas, replaying a
 > stale full document would silently null out fields added since it was read. `PATCH` is the

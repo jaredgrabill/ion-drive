@@ -141,9 +141,9 @@ describe('diffSnapshot', () => {
   it('prunes relationships absent from the snapshot (Phase 13)', () => {
     const snapshot = snapshotOf({ ...contacts, relationships: [] });
     // The FK field must also disappear from the snapshot's view of contacts.
-    snapshot.objects[0]!.fields = snapshot.objects[0]!.fields.filter(
-      (f) => f.name !== 'company_id',
-    );
+    const snapContacts = snapshot.objects[0];
+    if (!snapContacts) throw new Error('snapshot missing contacts');
+    snapContacts.fields = snapContacts.fields.filter((f) => f.name !== 'company_id');
 
     expect(diffSnapshot(snapshot, [contacts]).map((e) => e.kind)).toEqual([]);
     const pruned = diffSnapshot(snapshot, [contacts], { prune: true });

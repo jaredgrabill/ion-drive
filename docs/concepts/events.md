@@ -49,6 +49,16 @@ The `diff` on updates is a `{ field: { before, after } }` map of the business
 fields that changed. **System-managed columns (`created_at`, `updated_at`,
 `created_by`, `updated_by`) are never included in the diff.**
 
+Many-to-many **link writes** (Phase 13) emit their own pair:
+
+| Topic | When | Payload |
+|---|---|---|
+| `data.<object>.linked` | junction rows added via the links API | `{ object, id, op, relationship, targetObject, targetIds, actor }` |
+| `data.<object>.unlinked` | junction rows removed | same shape |
+
+`targetIds` carries only the ids that actually changed — idempotent replays
+(re-linking an existing pair) emit nothing.
+
 ### Actor identity (Phase 12)
 
 Every payload carries `actor: { userId, apiKeyId, via: 'session' | 'api_key' } | null`

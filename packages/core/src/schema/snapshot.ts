@@ -217,21 +217,33 @@ export function diffSnapshot(
     }
   }
 
-  // Relationships: matched by their (source object, name) pair — names are
-  // only scoped per source. Missing ones are added; with `prune`, live ones
-  // absent from the snapshot are removed (Phase 13 — through the validated
-  // removeRelationship pipeline, data-loss warnings included).
+  entries.push(...diffRelationships(snapshot, current, options));
+
+  return entries;
+}
+
+/**
+ * Relationship-level diff: matched by the (source object, name) pair — names
+ * are only scoped per source. Missing ones are added; with `prune`, live ones
+ * absent from the snapshot are removed (Phase 13 — through the validated
+ * removeRelationship pipeline, data-loss warnings included).
+ */
+function diffRelationships(
+  snapshot: SchemaSnapshot,
+  current: DataObjectDefinition[],
+  options: DiffOptions,
+): SnapshotDiffEntry[] {
+  const entries: SnapshotDiffEntry[] = [];
   const relKey = (source: string, name: string) => `${source}:${name}`;
   const currentRels = new Map(
     current.flatMap((o) =>
-      (o.relationships ?? []).map(
-        (r) => [relKey(r.sourceObjectName, r.name), r] as const,
-      ),
+      (o.relationships ?? []).map((r) => [relKey(r.sourceObjectName, r.name), r] as const),
     ),
   );
   const snapshotRelKeys = new Set(
     snapshot.relationships.map((r) => relKey(r.sourceObjectName, r.name)),
   );
+
   for (const rel of snapshot.relationships) {
     if (!currentRels.has(relKey(rel.sourceObjectName, rel.name))) {
       entries.push({
@@ -255,7 +267,6 @@ export function diffSnapshot(
       }
     }
   }
-
   return entries;
 }
 
@@ -483,11 +494,9 @@ async function applyEntry(
       }
       case 'remove_relationship':
         return finish(
-          await schemaManager.removeRelationship(
-            entry.objectName,
-            entry.relationshipName ?? '',
-            { force: options.force },
-          ),
+          await schemaManager.removeRelationship(entry.objectName, entry.relationshipName ?? '', {
+            force: options.force,
+          }),
         );
       case 'remove_field':
         return finish(

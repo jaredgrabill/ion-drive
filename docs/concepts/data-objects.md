@@ -68,9 +68,21 @@ Get the live list any time via the MCP `list_column_types` tool or the
 ## Relationships
 
 Objects can relate via `one_to_one`, `one_to_many`, `many_to_one`, and
-`many_to_many` (junction tables are created automatically). Relationships are
-managed by the schema engine's `RelationshipManager` and can be expanded in
-queries with `expand=`.
+`many_to_many` (junction tables are created automatically). Related records
+are readable from **both sides** via relation keys — `expand=` on REST/MCP and
+nested fields on GraphQL (see the [querying guide](../api/querying.md)); m2m
+links are written through the link endpoints/mutations (Phase 13).
+
+Relationships can also be **removed** (Phase 13): the same preview-first
+contract as field changes — `DELETE
+/api/v1/schema/objects/:name/relationships/:relName?dryRun=true` returns the
+exact SQL and data-loss warnings (the FK column's stored links, or the
+junction table's counted rows), block-owned relationships require
+`?force=true`, and `ion-drive schema push --prune` removes relationships
+absent from the snapshot through the same pipeline. There is deliberately
+**no automated migration rollback** (`_ion_migrations.sql_down` is advisory
+documentation; ADR-020) — recovery is declarative (snapshot pull/diff/push)
+plus database backups.
 
 ## Lifecycle & safety
 

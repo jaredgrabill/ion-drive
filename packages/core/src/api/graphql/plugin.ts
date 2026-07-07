@@ -14,15 +14,15 @@
 
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
 import type { GraphQLSchema } from 'graphql';
-import { createYoga, type Plugin as YogaPlugin } from 'graphql-yoga';
+import { type Plugin as YogaPlugin, createYoga } from 'graphql-yoga';
 import type { PermissionEngine } from '../../auth/rbac/permission-engine.js';
 import type { ActionExecutor } from '../../blocks/action-executor.js';
 import type { DataService } from '../../data/data-service.js';
 import type { RealtimeBridge } from '../../messaging/realtime.js';
 import type { SchemaRegistry } from '../../schema/schema-registry.js';
-import { createDepthLimitRule, MAX_QUERY_DEPTH } from './depth-limit.js';
+import { MAX_QUERY_DEPTH, createDepthLimitRule } from './depth-limit.js';
 import { RelationLoader, type RelationLoaderContext } from './relation-loader.js';
-import { buildGraphQLSchema, type GraphQLSchemaExtras } from './schema-builder.js';
+import { type GraphQLSchemaExtras, buildGraphQLSchema } from './schema-builder.js';
 
 export interface GraphQLRoutesOptions {
   registry: SchemaRegistry;

@@ -664,8 +664,7 @@ function RemoveRelationshipDialog({
     (e) => e.code === 'BLOCK_MANAGED_RELATIONSHIP',
   );
   const hasDataLoss = (preview.data?.warnings ?? []).some((w) => w.severity === 'high');
-  const canRemove =
-    preview.data?.isValid === true && (!hasDataLoss || confirmText === rel.name);
+  const canRemove = preview.data?.isValid === true && (!hasDataLoss || confirmText === rel.name);
 
   const remove = useMutation({
     mutationFn: () => api.removeRelationship(source, rel.name, force),
@@ -727,10 +726,12 @@ function RemoveRelationshipDialog({
         )}
 
         {blockProtected && (
-          <label className="flex items-center gap-2">
-            <Switch checked={force} onCheckedChange={setForce} aria-label="Override protection" />
-            <span>Override block protection (may break the owning block)</span>
-          </label>
+          <div className="flex items-center gap-2">
+            <Switch id="force-remove-rel" checked={force} onCheckedChange={setForce} />
+            <Label htmlFor="force-remove-rel">
+              Override block protection (may break the owning block)
+            </Label>
+          </div>
         )}
 
         {hasDataLoss && preview.data?.isValid && (
