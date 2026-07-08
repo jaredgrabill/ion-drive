@@ -28,12 +28,29 @@ import { BlockManifestError, parseManifest } from './block-manifest.js';
 import { BlockStore, bootstrapBlockTables } from './block-store.js';
 import {
   type BlockInstallReport,
+  type BlockManifest,
   type InstalledBlock,
   toSubscriptionInput,
 } from './block-types.js';
+import {
+  type OutOfRangeDependency,
+  dependencyNames,
+  evaluateDependencies,
+} from './dependency-check.js';
 
-/** Error codes map to HTTP statuses in the block routes. */
-export type BlockErrorCode = 'validation' | 'not_found' | 'conflict' | 'dependency' | 'install';
+/**
+ * Error codes map to HTTP statuses in the block routes: `validation` → 400,
+ * `dependency`/`dependency_version` → 422, `not_found` → 404, `conflict` →
+ * 409, `install` → 500. `dependency_version` (spec-02) is a dependency that
+ * *is* installed, but at a version outside the declared semver range.
+ */
+export type BlockErrorCode =
+  | 'validation'
+  | 'not_found'
+  | 'conflict'
+  | 'dependency'
+  | 'dependency_version'
+  | 'install';
 
 export class BlockEngineError extends Error {
   constructor(
@@ -60,6 +77,11 @@ export interface BlockEngineServices {
   webhookManager?: WebhookManager;
   /** Names of loaded plugins, for `requires.plugins` validation (Phase 14). */
   pluginNames?: string[];
+  /**
+   * The running core version, checked against manifests' `requires.core`
+   * (spec-02). Defaults to core's own package version; injectable for tests.
+   */
+  coreVersion?: string;
 }
 
 export interface InstallBlockOptions {
@@ -131,7 +153,15 @@ export class BlockEngine {
   async preview(manifestInput: unknown): Promise<BlockInstallReport> {
     const manifest = this.parse(manifestInput);
     const report = await this.installer.install(manifest, { dryRun: true });
-    const missing = await this.missingDependencies(manifest.dependencies);
+    const { missing, outOfRange } = evaluateDependencies(
+      manifest.dependencies,
+      await this.store.listInstalledVersions(),
+    );
+    for (const dep of outOfRange) {
+      report.warnings.unshift(
+        `Dependency ${dep.name}@${dep.installedVersion} does not satisfy the declared range ${dep.range}.`,
+      );
+    }
     if (missing.length > 0) {
       report.warnings.unshift(`Requires blocks not yet installed: ${missing.join(', ')}`);
     }
@@ -164,18 +194,19 @@ export class BlockEngine {
       );
     }
 
-    // Dependencies must be installed first.
-    const missing = await this.missingDependencies(manifest.dependencies);
-    if (missing.length > 0) {
-      throw new BlockEngineError(
-        'dependency',
-        `Block "${manifest.name}" requires: ${missing.join(', ')}. Install ${missing.length > 1 ? 'those blocks' : 'that block'} first.`,
-      );
-    }
+    const outOfRange = await this.checkDependencies(manifest, options.force ?? false);
 
     await this.store.begin(manifest);
     try {
-      const report = await this.installer.install(manifest, { dryRun: false });
+      const report = await this.installer.install(manifest, {
+        dryRun: false,
+        force: options.force,
+      });
+      for (const dep of outOfRange) {
+        report.warnings.push(
+          `Dependency ${dep.name}@${dep.installedVersion} does not satisfy ${dep.range} — overridden by force.`,
+        );
+      }
       // On a force reinstall the objects already exist (skipped, not created) —
       // keep the prior ledger ownership so uninstall still knows what to drop.
       const owned = [...new Set([...(existing?.createdObjects ?? []), ...report.objectsCreated])];
@@ -184,7 +215,13 @@ export class BlockEngine {
     } catch (err) {
       await this.store.finish(manifest.name, 'failed', []);
       if (err instanceof BlockInstallError) {
-        throw new BlockEngineError('install', err.message, err.warnings);
+        // An unsatisfied `requires.core` is the caller's manifest being wrong
+        // for this server — a validation failure (400), not a broken install.
+        throw new BlockEngineError(
+          err.code === 'core_range' ? 'validation' : 'install',
+          err.message,
+          err.warnings,
+        );
       }
       throw err;
     }
@@ -227,6 +264,41 @@ export class BlockEngine {
 
   // --- Helpers ---
 
+  /**
+   * The spec-02 dependency preflight: every declared dependency must be
+   * installed (missing → 422 `dependency`) at a version satisfying its range
+   * (out-of-range → 422 `dependency_version`; `force` downgrades to warnings).
+   * Returns the out-of-range list so a forced install can report each override.
+   */
+  private async checkDependencies(
+    manifest: BlockManifest,
+    force: boolean,
+  ): Promise<OutOfRangeDependency[]> {
+    const { missing, outOfRange } = evaluateDependencies(
+      manifest.dependencies,
+      await this.store.listInstalledVersions(),
+    );
+    if (missing.length > 0) {
+      throw new BlockEngineError(
+        'dependency',
+        `Block "${manifest.name}" requires: ${missing.join(', ')}. Install ${missing.length > 1 ? 'those blocks' : 'that block'} first.`,
+      );
+    }
+    if (outOfRange.length > 0 && !force) {
+      const detail = outOfRange
+        .map(
+          (d) => `requires ${d.name}@${d.range} but ${d.name}@${d.installedVersion} is installed`,
+        )
+        .join('; ');
+      const names = outOfRange.map((d) => d.name).join(' ');
+      throw new BlockEngineError(
+        'dependency_version',
+        `Block "${manifest.name}" ${detail}. Run \`ion-drive update ${names}\` (or reinstall with force).`,
+      );
+    }
+    return outOfRange;
+  }
+
   private parse(input: unknown) {
     try {
       return parseManifest(input);
@@ -238,26 +310,39 @@ export class BlockEngine {
     }
   }
 
-  /** Dependency names not yet fully installed. */
-  private async missingDependencies(deps: string[]): Promise<string[]> {
-    if (deps.length === 0) return [];
-    const installed = await this.store.listInstalledNames();
-    return deps.filter((d) => !installed.has(d));
-  }
-
-  /** Installed blocks that declare `name` as a dependency. */
+  /**
+   * Installed blocks that declare `name` as a dependency (record form,
+   * matching namespaced refs by bare name). Legacy array snapshots in pre-v1
+   * ledgers count as having no dependencies — the spec-02 clean break.
+   */
   private async dependentsOf(name: string): Promise<string[]> {
     const all = await this.store.list();
     return all
-      .filter((b) => b.name !== name && (b.manifest.dependencies ?? []).includes(name))
+      .filter((b) => b.name !== name && manifestDependsOn(b.manifest, name))
       .map((b) => b.name);
   }
+}
+
+/** Whether a ledger manifest snapshot declares `name` among its dependencies. */
+function manifestDependsOn(manifest: BlockManifest, name: string): boolean {
+  const deps: unknown = manifest.dependencies;
+  if (deps === null || typeof deps !== 'object' || Array.isArray(deps)) return false;
+  return dependencyNames(deps as Record<string, string>).includes(name);
 }
 
 export { BlockStore, bootstrapBlockTables } from './block-store.js';
 export { BlockInstaller, BlockInstallError } from './block-installer.js';
 export { BlockManifestError, parseManifest } from './block-manifest.js';
-export { blockManifestSchema } from './block-types.js';
+export {
+  blockManifestSchema,
+  blockNameSchema,
+  blockRefSchema,
+  semverRangeSchema,
+  semverVersionSchema,
+  splitBlockRef,
+} from './block-types.js';
+export { dependencyNames, evaluateDependencies } from './dependency-check.js';
+export type { DependencyEvaluation, OutOfRangeDependency } from './dependency-check.js';
 export type {
   BlockManifest,
   BlockManifestInput,

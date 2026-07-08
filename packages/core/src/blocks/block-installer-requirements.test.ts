@@ -1,8 +1,10 @@
 /**
- * Unit tests for the installer's Phase 14 requirements gate: declared
- * actions/hooks must have registered handlers, `requires.handlers` must be
- * registered bus handlers, and `requires.plugins` must be loaded plugins —
- * hard errors on install, warnings in preview.
+ * Unit tests for the installer's requirements gate: declared actions/hooks
+ * must have registered handlers, `requires.handlers` must be registered bus
+ * handlers, and `requires.plugins` must be loaded plugins (Phase 14) — hard
+ * errors on install, warnings in preview. Plus the spec-02 `requires.core`
+ * matrix: satisfied / unsatisfied / force-overridden / dry-run against an
+ * injected `coreVersion`.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -89,6 +91,52 @@ describe('BlockInstaller requirements gate', () => {
     const plain = parseManifest({ name: 'crm', title: 'CRM' });
     const installer = new BlockInstaller({ schemaManager, dataService });
     const report = await installer.install(plain, { dryRun: false });
+    expect(report.warnings).toEqual([]);
+  });
+});
+
+describe('BlockInstaller requires.core gate (spec-02)', () => {
+  const withCoreRange = (range: string) =>
+    parseManifest({ name: 'crm', title: 'CRM', requires: { core: range } });
+  const installer = new BlockInstaller({ schemaManager, dataService, coreVersion: '0.3.0' });
+
+  it('passes silently when the running core satisfies the range', async () => {
+    const report = await installer.install(withCoreRange('>=0.2.0 <1.0.0'), { dryRun: false });
+    expect(report.warnings).toEqual([]);
+  });
+
+  it('throws a core_range error naming both versions on a real install', async () => {
+    const promise = installer.install(withCoreRange('>=1.0.0'), { dryRun: false });
+    await expect(promise).rejects.toThrowError(BlockInstallError);
+    await expect(
+      installer.install(withCoreRange('>=1.0.0'), { dryRun: false }),
+    ).rejects.toThrowError(/requires core >=1\.0\.0 but this server runs core 0\.3\.0/);
+    await expect(
+      installer.install(withCoreRange('>=1.0.0'), { dryRun: false }),
+    ).rejects.toMatchObject({ code: 'core_range' });
+  });
+
+  it('force downgrades the failure to a warning and installs', async () => {
+    const report = await installer.install(withCoreRange('>=1.0.0'), {
+      dryRun: false,
+      force: true,
+    });
+    expect(report.warnings).toEqual([
+      'Block "crm" requires core >=1.0.0 but this server runs core 0.3.0 — overridden by force',
+    ]);
+  });
+
+  it('dry run reports the failure as a warning without throwing', async () => {
+    const report = await installer.install(withCoreRange('>=1.0.0'), { dryRun: true });
+    expect(report.warnings).toEqual([
+      'Block "crm" requires core >=1.0.0 but this server runs core 0.3.0',
+    ]);
+  });
+
+  it('is a no-op when requires.core is absent', async () => {
+    const report = await installer.install(parseManifest({ name: 'crm', title: 'CRM' }), {
+      dryRun: false,
+    });
     expect(report.warnings).toEqual([]);
   });
 });

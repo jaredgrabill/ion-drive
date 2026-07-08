@@ -39,20 +39,14 @@
  * aggregated into a {@link RegistryParseError} with readable issues.
  */
 
-import semver from 'semver';
 import { z } from 'zod';
+import { blockNameSchema, semverRangeSchema, semverVersionSchema } from './block-types.js';
 
 // --- Shared format schemas -------------------------------------------------
-
-/** A canonical semver version — exactly what `semver.valid` normalises to. */
-const semverStringSchema = z.string().refine((v) => semver.valid(v) === v, {
-  message: 'must be a canonical semver version (e.g. "0.2.0")',
-});
-
-/** A semver range expression (`^1.2`, `>=0.2.0 <1.0.0`, `1.x`, …). */
-const semverRangeSchema = z.string().refine((v) => semver.validRange(v) !== null, {
-  message: 'must be a valid semver range (e.g. ">=0.2.0 <1.0.0")',
-});
+// The name/version/range grammar is shared with the manifest schema (spec-02):
+// `blockNameSchema` keys the record maps, `semverVersionSchema` is the
+// canonical-version grammar, `semverRangeSchema` the range grammar — all
+// imported from `block-types.ts` so the wire format has one source of truth.
 
 /** `sha256:` + 64 lowercase hex chars over the exact artifact bytes (spec-04). */
 const digestSchema = z
@@ -63,18 +57,6 @@ const digestSchema = z
 const isoUtcSchema = z.string().datetime({
   message: 'must be an ISO-8601 UTC timestamp (e.g. "2026-07-08T00:00:00Z")',
 });
-
-/**
- * Block-name record keys — the manifest `name` grammar. Deliberately
- * duplicated from `block-types.ts` (`blockManifestSchema.name`): spec-02
- * unifies the two under a shared export; until then this module must not
- * reach into the manifest schema it treats as opaque.
- */
-const blockNameKeySchema = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(/^[a-z][a-z0-9_-]*$/, 'must be lowercase kebab/snake case');
 
 // --- index.json ------------------------------------------------------------
 
@@ -90,7 +72,7 @@ const registryIndexEntrySchema = z
     description: z.string().optional(),
     categories: z.array(z.string()).optional(),
     /** Latest published version — a canonical semver string. */
-    latest: semverStringSchema,
+    latest: semverVersionSchema,
     /** URL of the per-block version file, relative to the index or absolute https. */
     blockUrl: z.string().min(1),
     /** Display hint only; third-party values are ignored (spec-04 computes real trust). */
@@ -111,7 +93,7 @@ export const registryIndexSchema = z
     /** Regenerated on every build — cache-busting signal and staleness display. */
     generatedAt: isoUtcSchema,
     /** Summary per block. Required, may be empty. Keys use the manifest name grammar. */
-    blocks: z.record(blockNameKeySchema, registryIndexEntrySchema),
+    blocks: z.record(blockNameSchema, registryIndexEntrySchema),
   })
   .strict();
 
@@ -149,7 +131,7 @@ const registryVersionEntrySchema = z
      * so resolvers plan the closure without fetching artifacts. Required, may
      * be empty.
      */
-    dependencies: z.record(blockNameKeySchema, semverRangeSchema),
+    dependencies: z.record(blockNameSchema, semverRangeSchema),
     /**
      * Mirror of manifest `requires` — at minimum `core` (semver range) when
      * declared; may include `handlers`/`plugins` counts or lists for display,
@@ -187,7 +169,7 @@ export const registryBlockSchema = z
     /** Protocol version. Clients reject anything but literal `1`. */
     schemaVersion: z.literal(1),
     /** Block name — the manifest name grammar. */
-    name: blockNameKeySchema,
+    name: blockNameSchema,
     title: z.string().optional(),
     description: z.string().optional(),
     categories: z.array(z.string()).optional(),
@@ -195,9 +177,9 @@ export const registryBlockSchema = z
     repository: z.string().url().optional(),
     homepage: z.string().url().optional(),
     /** Must be a key of `versions` (cross-field check). */
-    latest: semverStringSchema,
+    latest: semverVersionSchema,
     /** Version history, keyed by canonical semver version. */
-    versions: z.record(semverStringSchema, registryVersionEntrySchema),
+    versions: z.record(semverVersionSchema, registryVersionEntrySchema),
     advisories: z.array(registryAdvisorySchema).default([]),
   })
   .strict();

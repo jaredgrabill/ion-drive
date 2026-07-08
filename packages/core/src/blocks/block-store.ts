@@ -72,6 +72,19 @@ export class BlockStore {
   }
 
   /**
+   * Name → version of every fully-installed block, in one query — the input
+   * to `evaluateDependencies` (spec-02's dependency-range check).
+   */
+  async listInstalledVersions(): Promise<Map<string, string>> {
+    const rows = await this.db
+      .selectFrom('_ion_blocks')
+      .select(['name', 'version'])
+      .where('status', '=', 'installed')
+      .execute();
+    return new Map(rows.map((r) => [r.name, r.version]));
+  }
+
+  /**
    * Records the start of an install (status `installing`). Upserts so a retried
    * install of a previously-failed block overwrites the stale row.
    */

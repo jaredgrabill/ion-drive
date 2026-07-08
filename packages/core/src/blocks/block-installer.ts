@@ -15,6 +15,8 @@
  * without touching the database, powering the CLI/console preview.
  */
 
+import { createRequire } from 'node:module';
+import semver from 'semver';
 import type { RoleManager } from '../auth/rbac/role-manager.js';
 import type { DataService } from '../data/data-service.js';
 import type { MessageBus } from '../messaging/message-bus.js';
@@ -32,10 +34,21 @@ import {
   toTaskInput,
 } from './block-types.js';
 
+/** The core package's own version — the default `coreVersion` (works from src/ and dist/). */
+const OWN_CORE_VERSION: string = (
+  createRequire(import.meta.url)('../../package.json') as { version: string }
+).version;
+
 export class BlockInstallError extends Error {
   constructor(
     message: string,
     readonly warnings: string[] = [],
+    /**
+     * Machine-readable failure kind. `core_range` (an unsatisfied
+     * `requires.core`, spec-02) maps to a 400 validation error in the engine;
+     * everything else stays the generic 500 install failure.
+     */
+    readonly code?: 'core_range',
   ) {
     super(message);
     this.name = 'BlockInstallError';
@@ -57,11 +70,18 @@ export interface BlockInstallerServices {
   webhookManager?: WebhookManager;
   /** Names of plugins loaded through the plugin host, for `requires.plugins` validation. */
   pluginNames?: string[];
+  /**
+   * The running core version `requires.core` is checked against (spec-02).
+   * Defaults to this package's own version; injectable for tests.
+   */
+  coreVersion?: string;
 }
 
 export interface InstallOptions {
   /** Compute the report without writing anything. */
   dryRun?: boolean;
+  /** Downgrade `requires.core` failures to warnings (the ADR-017 force contract). */
+  force?: boolean;
 }
 
 export interface UninstallOptions {
@@ -101,9 +121,10 @@ export class BlockInstaller {
       warnings: [],
     };
 
-    // Requirements first: a block whose vendored code is missing must fail
-    // (or, in preview, report) before any schema is touched.
-    this.checkRequirements(manifest, report, dryRun);
+    // Requirements first: a block whose vendored code is missing or whose
+    // `requires.core` excludes this server must fail (or, in preview, report)
+    // before any schema is touched.
+    this.checkRequirements(manifest, report, dryRun, options.force ?? false);
 
     await this.applyObjects(manifest, report, dryRun);
     await this.applyRelationships(manifest, report, dryRun);
@@ -117,7 +138,8 @@ export class BlockInstaller {
   }
 
   /**
-   * Validates the manifest's runtime requirements (Phase 14): every declared
+   * Validates the manifest's runtime requirements (Phase 14 + spec-02): the
+   * running core version must satisfy `requires.core`, every declared
    * action/hook must have a handler registered by the block's vendored code,
    * every `requires.handlers` entry must be a registered bus handler, and every
    * `requires.plugins` entry must be a loaded plugin. On a real install a
@@ -128,7 +150,9 @@ export class BlockInstaller {
     manifest: BlockManifest,
     report: BlockInstallReport,
     dryRun: boolean,
+    force: boolean,
   ): void {
+    this.checkCoreRange(manifest, report, dryRun, force);
     const missing = this.collectMissingRequirements(manifest);
 
     for (const action of manifest.actions) report.actionsExposed.push(action.name);
@@ -143,6 +167,36 @@ export class BlockInstaller {
       `Block "${manifest.name}" requires ${missing.join('; ')} — did you vendor its code? (expected in /blocks/${manifest.name})`,
       report.warnings,
     );
+  }
+
+  /**
+   * Enforces `requires.core` (spec-02): the running core version must satisfy
+   * the manifest's declared range. Dry runs report a warning; `force`
+   * downgrades the failure to a warning (the ADR-017 force contract); a real
+   * install throws a {@link BlockInstallError} tagged `core_range` so the
+   * engine maps it to a 400 validation error, naming both versions.
+   */
+  private checkCoreRange(
+    manifest: BlockManifest,
+    report: BlockInstallReport,
+    dryRun: boolean,
+    force: boolean,
+  ): void {
+    const range = manifest.requires.core;
+    if (!range) return;
+    const coreVersion = this.services.coreVersion ?? OWN_CORE_VERSION;
+    if (semver.satisfies(coreVersion, range)) return;
+
+    const message = `Block "${manifest.name}" requires core ${range} but this server runs core ${coreVersion}`;
+    if (dryRun) {
+      report.warnings.push(message);
+      return;
+    }
+    if (force) {
+      report.warnings.push(`${message} — overridden by force`);
+      return;
+    }
+    throw new BlockInstallError(message, report.warnings, 'core_range');
   }
 
   /** Human-readable descriptions of every unmet requirement. */

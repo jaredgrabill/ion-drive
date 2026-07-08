@@ -15,6 +15,7 @@
  * code paths a human uses via the admin console.
  */
 
+import semver from 'semver';
 import { z } from 'zod';
 import { ACTIONS } from '../auth/rbac/policy-types.js';
 import type { Subscription } from '../messaging/event-types.js';
@@ -25,6 +26,70 @@ import type {
   RelationshipDefinition,
 } from '../schema/types.js';
 import type { TaskInput } from '../tasks/index.js';
+
+// ---------------------------------------------------------------------------
+// Shared name / version / range grammar (ADR-022 / spec-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * The block `name` grammar — bare, namespace-free, lowercase kebab/snake case.
+ * The ledger and `/blocks/<name>` paths key on this; the registry protocol
+ * (`registry-types.ts`) uses it for its record keys too.
+ */
+export const blockNameSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z][a-z0-9_-]*$/, 'must be lowercase kebab/snake case');
+
+/**
+ * A block *reference* — how a dependency names another block: bare (`crm`,
+ * resolved in the registry the depending block came from — spec-03) or
+ * namespaced (`@acme/billing`, naming a configured registry). A namespace is
+ * a *source*, not an identity: the server ledger keys blocks by bare name.
+ * The bare part is exactly the {@link blockNameSchema} grammar.
+ */
+export const blockRefSchema = z
+  .string()
+  .regex(
+    /^(@[a-z][a-z0-9-]*\/)?[a-z][a-z0-9_-]*$/,
+    'must be a block ref like "crm" or "@acme/billing"',
+  );
+
+/**
+ * A canonical semver version — exactly what `semver.valid` normalises to, so
+ * `v1.0.0` (prefix) and `1.0.0+build.1` (build metadata) are rejected rather
+ * than silently normalised. The 32-char cap matches the `_ion_blocks.version`
+ * column; it lives inside the refine (not `.max()`) so the rendered JSON
+ * Schema stays a plain string — refinements don't emit, which keeps the
+ * published registry schema files byte-stable.
+ */
+export const semverVersionSchema = z
+  .string()
+  .refine((v) => v.length <= 32 && semver.valid(v, { loose: false }) === v, {
+    message: 'must be a canonical semver version like "0.2.0" (no "v" prefix, no build metadata)',
+  });
+
+/** Any range `semver.validRange` accepts: `^0.2.0`, `>=1.2 <2`, `1.x`, `*`. */
+export const semverRangeSchema = z.string().refine((r) => semver.validRange(r) !== null, {
+  message: 'must be a valid semver range (e.g. ">=0.2.0 <1.0.0")',
+});
+
+/**
+ * Splits a block ref into its parts: `crm` → `{ name: 'crm' }`;
+ * `@acme/billing` → `{ namespace: '@acme', name: 'billing' }`. Returns `null`
+ * for anything the ref grammar rejects — including `crm@0.2.0` (version
+ * pinning is CLI argument grammar, spec-03 — never part of a ref), uppercase
+ * namespaces, and extra path segments.
+ */
+export function splitBlockRef(ref: string): { namespace?: string; name: string } | null {
+  const match = /^(?:(@[a-z][a-z0-9-]*)\/)?([a-z][a-z0-9_-]*)$/.exec(ref);
+  if (!match) return null;
+  const namespace = match[1];
+  const name = match[2];
+  if (name === undefined) return null; // unreachable — the regex guarantees group 2
+  return namespace === undefined ? { name } : { namespace, name };
+}
 
 // ---------------------------------------------------------------------------
 // Zod schema — the single source of truth for manifest validation
@@ -191,43 +256,49 @@ const outboundWebhookSchema = z
   .strict();
 
 /**
- * What must be present in the runtime for the block to work (Phase 14):
+ * What must be present in the runtime for the block to work (Phase 14 +
+ * spec-02): `core` is a semver range the running core version must satisfy;
  * `handlers` are message-bus handler names; `plugins` are plugin names loaded
- * through the plugin host. Both are validated at install time with actionable
- * errors ("did you vendor its code?").
+ * through the plugin host. All are validated at install time with actionable
+ * errors ("did you vendor its code?" / naming the running core version).
  */
 const requiresSchema = z
   .object({
+    /** Semver range the running core version must satisfy (e.g. `>=0.2.0 <1.0.0`). */
+    core: semverRangeSchema.optional(),
     handlers: z.array(z.string().min(1).max(128)).default([]),
     plugins: z.array(z.string().min(1).max(128)).default([]),
   })
   .strict();
 
 /**
- * The building-block manifest — the shadcn `registry-item.json` analog.
+ * The building-block manifest (v1) — the shadcn `registry-item.json` analog.
  *
  * `name`/`version`/`title`/`description`/`author`/`categories`/`meta` are pure
- * metadata. `dependencies` names *other blocks* that must be installed first
- * (the `registryDependencies` analog). Everything else describes what the block
+ * metadata. `dependencies` maps *other blocks* that must be installed first
+ * (the `registryDependencies` analog) to the semver range this block is
+ * compatible with — a compatibility **constraint**, never a solver problem:
+ * blocks are singletons per server. Everything else describes what the block
  * materialises in a running Ion Drive instance.
  */
 export const blockManifestSchema = z
   .object({
     $schema: z.string().optional(),
-    /** Unique, URL-safe block identifier (e.g. `crm`). */
-    name: z
-      .string()
-      .min(1)
-      .max(64)
-      .regex(/^[a-z][a-z0-9_-]*$/, 'must be lowercase kebab/snake case'),
-    /** Semver-ish version string for update diffing. */
-    version: z.string().min(1).max(32).default('0.1.0'),
+    /** Unique, URL-safe block identifier (e.g. `crm`) — always namespace-free. */
+    name: blockNameSchema,
+    /** Strict canonical semver version (spec-02); powers range resolution + update diffing. */
+    version: semverVersionSchema.default('0.1.0'),
     title: z.string().min(1).max(255),
     description: z.string().max(2000).default(''),
     author: z.string().max(255).optional(),
     categories: z.array(z.string()).default([]),
-    /** Names of other blocks this block requires (installed first). */
-    dependencies: z.array(z.string()).default([]),
+    /**
+     * Blocks that must be installed first, as a block-ref → semver-range
+     * record (e.g. `{ "crm": "^0.2.0" }`; `"*"` is the unconstrained escape
+     * hatch). Checked at install: missing → 422, installed-but-out-of-range →
+     * 422 `DEPENDENCY_VERSION` (spec-02).
+     */
+    dependencies: z.record(blockRefSchema, semverRangeSchema).default({}),
     /** npm packages a block's code files need at runtime (informational). */
     npmDependencies: z.record(z.string()).default({}),
     /** Environment variables the block expects (informational; surfaced to the operator). */

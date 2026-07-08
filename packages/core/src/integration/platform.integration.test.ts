@@ -15,7 +15,8 @@
  *   5. relationships + `expand=` hydration (list and getById)
  *   6. GraphQL list query with a filter
  *   7. transactional-outbox events in `_ion_events`
- *   8. block lifecycle (install → seed → guarded uninstall → dropData)
+ *   8. block lifecycle (install → seed → guarded uninstall → dropData),
+ *      including the spec-02 dependency-range + requires.core preflight
  *
  * Run with a reachable Postgres 17 (defaults match CI's service container):
  *
@@ -407,7 +408,7 @@ describe('platform lifecycle (integration)', () => {
 
     // Dependency guard: unmet block dependencies are rejected server-side.
     const dependent = await api('POST', '/api/v1/blocks/install', {
-      manifest: { ...manifest, name: 'it_dependent', dependencies: ['it_missing'] },
+      manifest: { ...manifest, name: 'it_dependent', dependencies: { it_missing: '*' } },
     });
     expect(dependent.status).toBe(422);
 
@@ -431,6 +432,58 @@ describe('platform lifecycle (integration)', () => {
     expect(uninstall.status).toBe(200);
     expect((await api('GET', '/api/v1/schema/objects/it_projects')).status).toBe(404);
     expect((await api('GET', '/api/v1/data/it_projects')).status).toBe(404);
+  });
+
+  it('enforces dependency ranges and requires.core (spec-02)', async () => {
+    // Minimal schemaless blocks — this scenario is about the preflight guards.
+    const depA = { name: 'it_dep_a', version: '0.1.0', title: 'IT Dep A' };
+    const depB = {
+      name: 'it_dep_b',
+      version: '0.1.0',
+      title: 'IT Dep B',
+      dependencies: { it_dep_a: '^0.2.0' },
+    };
+
+    expect((await api('POST', '/api/v1/blocks/install', { manifest: depA })).status).toBe(201);
+
+    // Installed-but-out-of-range dependency → 422 with the machine-readable code.
+    const outOfRange = await api('POST', '/api/v1/blocks/install', { manifest: depB });
+    expect(outOfRange.status).toBe(422);
+    expect(outOfRange.body.code).toBe('DEPENDENCY_VERSION');
+    expect(outOfRange.body.message).toContain('it_dep_a@^0.2.0');
+    expect(outOfRange.body.message).toContain('it_dep_a@0.1.0');
+
+    // force overrides the range with a warning in the report.
+    const forced = await api('POST', '/api/v1/blocks/install?force=true', { manifest: depB });
+    expect(forced.status).toBe(201);
+    expect((forced.body.data as Json).warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining('overridden by force')]),
+    );
+
+    // requires.core excluding the running version → 400 naming both…
+    const impossible = {
+      name: 'it_core_pin',
+      version: '0.1.0',
+      title: 'IT Core Pin',
+      requires: { core: '<0.0.1' },
+    };
+    const rejected = await api('POST', '/api/v1/blocks/install', { manifest: impossible });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.message).toContain('requires core <0.0.1');
+    // …while a dry run reports the same fact as a warning without failing.
+    const dryRun = await api('POST', '/api/v1/blocks/install?dryRun=true', {
+      manifest: impossible,
+    });
+    expect(dryRun.status).toBe(200);
+    expect((dryRun.body.data as Json).warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining('requires core <0.0.1')]),
+    );
+
+    // Cleanup (dependents first — the uninstall guard is exercised elsewhere;
+    // it_core_pin left a `failed` ledger row behind, removed the same way).
+    expect((await api('DELETE', '/api/v1/blocks/it_dep_b')).status).toBe(200);
+    expect((await api('DELETE', '/api/v1/blocks/it_dep_a')).status).toBe(200);
+    expect((await api('DELETE', '/api/v1/blocks/it_core_pin')).status).toBe(200);
   });
 
   it('exposes block actions and hooks with requires validation (Phase 14)', async () => {

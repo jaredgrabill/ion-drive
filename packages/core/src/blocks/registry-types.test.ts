@@ -460,7 +460,15 @@ describe('published JSON Schemas (drift guard)', () => {
       const doc = JSON.parse(text);
       expect(doc.$id).toBe(`https://ion-drive.dev/schemas/${basename}`);
       expect(doc.$schema).toBe('https://json-schema.org/draft/2020-12/schema');
-      expect(doc.properties.schemaVersion.const).toBe(1);
+      // Registry wire files pin `schemaVersion: 1`; the manifest schema is
+      // versioned by its filename/$id instead (spec-02).
+      if (basename !== 'block-manifest.v1.json') {
+        expect(doc.properties.schemaVersion.const).toBe(1);
+      }
     }
+  });
+
+  it('publishes the manifest v1 schema alongside the registry schemas (spec-02)', () => {
+    expect(Object.keys(rendered)).toContain('block-manifest.v1.json');
   });
 });

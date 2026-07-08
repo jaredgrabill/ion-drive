@@ -10,11 +10,11 @@ import { resolvePlan } from './resolver.js';
 
 vi.mock('./registry-client.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./registry-client.js')>();
-  const catalog: Record<string, { name: string; dependencies?: string[] }> = {
+  const catalog: Record<string, { name: string; dependencies?: Record<string, string> }> = {
     crm: { name: 'crm' },
-    invoicing: { name: 'invoicing', dependencies: ['crm'] },
-    loop_a: { name: 'loop_a', dependencies: ['loop_b'] },
-    loop_b: { name: 'loop_b', dependencies: ['loop_a'] },
+    invoicing: { name: 'invoicing', dependencies: { crm: '^0.2.0' } },
+    loop_a: { name: 'loop_a', dependencies: { loop_b: '*' } },
+    loop_b: { name: 'loop_b', dependencies: { loop_a: '*' } },
   };
   return {
     ...actual,

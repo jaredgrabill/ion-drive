@@ -171,6 +171,9 @@ importers:
       prompts:
         specifier: ^2.4.0
         version: 2.4.2
+      semver:
+        specifier: ^7.6.0
+        version: 7.8.5
     devDependencies:
       '@ion-drive/core':
         specifier: workspace:^
@@ -184,6 +187,9 @@ importers:
       '@types/prompts':
         specifier: ^2.4.0
         version: 2.4.9
+      '@types/semver':
+        specifier: ^7.5.0
+        version: 7.7.1
       rimraf:
         specifier: ^6.0.0
         version: 6.1.3

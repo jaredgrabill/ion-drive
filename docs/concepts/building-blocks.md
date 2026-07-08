@@ -50,7 +50,8 @@ block uses: a flat **registry index** (`registry/index.json`) maps
 | Block | Contents | Depends on | Logic |
 |:---|:---|:---|:---|
 | `crm` | Contacts, Companies, Deals, Activities | — | — |
-| `invoicing` | Invoices, Line Items, Payments | `crm` | Stripe payment links + webhook (`code/`) |
+| `invoicing` | Invoices, Line Items, Payments | `crm: ^0.2.0` | Stripe payment links + webhook (`code/`) |
+| `catalog` | Products, prices, stock moves | `invoicing: ^0.1.0` | Stock adjustment + invoice-line pricing (`code/`) |
 | `communications` | Message log, templates, campaigns | — | — |
 | `audit` | `audit_log` fed by the message bus | — | — |
 
@@ -60,6 +61,24 @@ blocks pruned) before anything is applied. Override the registry with the
 
 > The registry wire format is moving to **protocol v1** (versioned, digest-verified,
 > multi-registry — ADR-022): see [Block Registries](block-registries.md).
+
+## Manifest versioning
+
+Manifest **v1** (spec-02) uses real semver semantics:
+
+- **`version`** is a strict, canonical semver version (`0.2.0`,
+  `1.0.0-rc.1`). No `v` prefix, no build metadata — anything
+  `semver.valid` would normalise away is rejected.
+- **`dependencies`** is a **name → semver-range record**, not an array:
+  `{ "crm": "^0.2.0" }`. `"*"` is the unconstrained escape hatch. Refs may be
+  namespaced (`"@acme/billing": "^1.2"`) — a namespace names a *registry
+  source*, never a separate identity, so the server matches by bare name.
+- **`requires.core`** is a semver range the running core version must satisfy
+  (e.g. `">=0.2.0 <1.0.0"`), checked before anything is applied.
+
+Blocks are **singletons per server** — exactly one version of a block is
+installed at a time, so ranges are compatibility *constraints* the installer
+checks, never an npm-style multi-version solver problem.
 
 ## Installing with the CLI
 
@@ -101,7 +120,17 @@ Blocks are also a plain REST surface under **`/api/v1/blocks`** (RBAC resource
 
 Installation is **step-wise and idempotent-friendly** — existing objects are
 skipped and reported rather than duplicated — and **dependency, requirement,
-and data-loss guards are enforced server-side**, not just in the CLI.
+and data-loss guards are enforced server-side**, not just in the CLI:
+
+- A missing dependency fails `422` (`code: DEPENDENCY`); a dependency
+  installed at a version **outside the declared range** fails `422` with
+  `code: DEPENDENCY_VERSION`, naming the installed version and the required
+  range.
+- An unsatisfied `requires.core` fails `400`, naming the running core version
+  and the declared range.
+- `?force=true` downgrades both range failures to warnings in the install
+  report (the ADR-017 force contract); `?dryRun=true` reports them as
+  warnings without failing.
 
 Actions and inbound webhooks are documented in
 [Actions & hooks](../api/actions.md).

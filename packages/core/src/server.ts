@@ -433,6 +433,7 @@ export async function createServer(
     actionRegistry,
     webhookManager,
     pluginNames: loadedPlugins.plugins.map((p) => p.name),
+    coreVersion: PACKAGE_VERSION,
   });
   await blockEngine.initialize();
 

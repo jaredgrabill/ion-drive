@@ -9,8 +9,9 @@
  * Mirrors the task/admin route style: each endpoint is guarded by the `blocks`
  * RBAC resource when enforcement is enabled, and the guard is a no-op otherwise
  * so local dev stays frictionless. {@link BlockEngineError} codes map to HTTP
- * statuses (validation→400, dependency→422, not_found→404, conflict→409,
- * install→500).
+ * statuses (validation→400, dependency→422, dependency_version→422,
+ * not_found→404, conflict→409, install→500); error envelopes also carry a
+ * machine-readable upper-snake `code` (e.g. `DEPENDENCY_VERSION`).
  */
 
 import type {
@@ -41,15 +42,25 @@ const RESOURCE = PLATFORM_RESOURCES.blocks;
 const ERROR_RESPONSES: Record<BlockEngineError['code'], { status: number; label: string }> = {
   validation: { status: 400, label: 'Validation Error' },
   dependency: { status: 422, label: 'Unmet Dependency' },
+  dependency_version: { status: 422, label: 'Dependency Version Conflict' },
   not_found: { status: 404, label: 'Not Found' },
   conflict: { status: 409, label: 'Conflict' },
   install: { status: 500, label: 'Install Failed' },
 };
 
-/** Maps a BlockEngineError to an HTTP status + envelope. */
+/**
+ * Maps a BlockEngineError to an HTTP status + envelope. `code` is the
+ * additive machine-readable form of the engine code (upper-snake, e.g.
+ * `DEPENDENCY_VERSION`) so clients can branch without parsing labels.
+ */
 function sendEngineError(reply: FastifyReply, err: BlockEngineError) {
   const { status, label } = ERROR_RESPONSES[err.code];
-  return reply.code(status).send({ error: label, message: err.message, warnings: err.warnings });
+  return reply.code(status).send({
+    error: label,
+    code: err.code.toUpperCase(),
+    message: err.message,
+    warnings: err.warnings,
+  });
 }
 
 /** Maps an ActionError code to an HTTP status + label (shared with hook-routes). */

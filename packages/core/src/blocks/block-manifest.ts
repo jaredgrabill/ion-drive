@@ -13,7 +13,7 @@
  */
 
 import type { z } from 'zod';
-import { type BlockManifest, blockManifestSchema } from './block-types.js';
+import { type BlockManifest, blockManifestSchema, splitBlockRef } from './block-types.js';
 
 export class BlockManifestError extends Error {
   constructor(
@@ -30,6 +30,7 @@ export class BlockManifestError extends Error {
  * @throws {BlockManifestError} if the value is structurally or semantically invalid.
  */
 export function parseManifest(input: unknown): BlockManifest {
+  rejectLegacyShape(input);
   const parsed = blockManifestSchema.safeParse(input);
   if (!parsed.success) {
     const issues = formatZodIssues(parsed.error);
@@ -46,6 +47,20 @@ export function parseManifest(input: unknown): BlockManifest {
   }
 
   return manifest;
+}
+
+/**
+ * Pre-Zod gate for the retired pre-v1 manifest shape (spec-02 clean break):
+ * `dependencies` as an array of bare names is rejected with a pointer at the
+ * v1 record form instead of a generic Zod "expected object" type error.
+ */
+function rejectLegacyShape(input: unknown): void {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return; // let Zod report
+  if (Array.isArray((input as Record<string, unknown>).dependencies)) {
+    const issue =
+      'dependencies is the legacy array form — manifest v1 uses a name → semver-range record, e.g. {"crm": "^0.2.0"}';
+    throw new BlockManifestError(`Invalid block manifest: ${issue}`, [issue]);
+  }
 }
 
 /** Cross-field checks the Zod schema cannot express on its own. */
@@ -75,10 +90,7 @@ function checkConsistency(manifest: BlockManifest): string[] {
     }
   }
 
-  // A block may not depend on itself.
-  if (manifest.dependencies.includes(manifest.name)) {
-    issues.push('a block cannot depend on itself');
-  }
+  issues.push(...checkDependencyRefs(manifest));
 
   // Actions, hooks, and code file paths must be unique within the block.
   issues.push(
@@ -100,6 +112,34 @@ function checkConsistency(manifest: BlockManifest): string[] {
     ),
   );
 
+  return issues;
+}
+
+/**
+ * Dependency-ref checks (spec-02): no self-dependency — bare (`crm`) or
+ * namespaced (`@ns/crm`) — because blocks are singletons per server, so a
+ * namespaced ref to the block's own name is the same block from a different
+ * source; and no bare name referenced twice under different namespace forms
+ * (`crm` + `@ion/crm`), which would make the source ambiguous.
+ */
+function checkDependencyRefs(manifest: BlockManifest): string[] {
+  const issues: string[] = [];
+  const seenRefs = new Map<string, string>();
+  for (const ref of Object.keys(manifest.dependencies)) {
+    const bare = splitBlockRef(ref)?.name ?? ref;
+    if (bare === manifest.name) {
+      issues.push(
+        `dependency "${ref}": a block cannot depend on itself (blocks are singletons per server)`,
+      );
+    }
+    const prior = seenRefs.get(bare);
+    if (prior !== undefined) {
+      issues.push(
+        `dependencies "${prior}" and "${ref}" both name block "${bare}" (ambiguous source)`,
+      );
+    }
+    seenRefs.set(bare, ref);
+  }
   return issues;
 }
 

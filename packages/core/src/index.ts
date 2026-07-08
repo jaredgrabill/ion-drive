@@ -139,7 +139,15 @@ export {
   BlockManifestError,
   parseManifest,
   blockManifestSchema,
+  blockNameSchema,
+  blockRefSchema,
+  semverRangeSchema,
+  semverVersionSchema,
+  splitBlockRef,
+  dependencyNames,
+  evaluateDependencies,
 } from './blocks/index.js';
+export type { DependencyEvaluation, OutOfRangeDependency } from './blocks/index.js';
 export type {
   BlockManifest,
   BlockManifestInput,

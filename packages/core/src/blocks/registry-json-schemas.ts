@@ -1,9 +1,11 @@
 /**
- * Registry protocol v1 — published JSON Schema rendering (ADR-022 / spec-01 §8).
+ * Registry protocol v1 + manifest v1 — published JSON Schema rendering
+ * (ADR-022 / spec-01 §8 / spec-02).
  *
- * Generates the three JSON Schema documents published at
- * `https://ion-drive.dev/schemas/*.v1.json` from the Zod schemas in
- * `registry-types.ts`, so the wire format has exactly one source of truth.
+ * Generates the JSON Schema documents published at
+ * `https://ion-drive.dev/schemas/*.v1.json` — the three registry wire formats
+ * (from `registry-types.ts`) plus the block manifest itself (from
+ * `block-types.ts`) — so each format has exactly one source of truth.
  * The committed files under `packages/core/schemas/` are written by
  * `scripts/emit-json-schemas.ts` (`pnpm --filter @ion-drive/core emit:schemas`)
  * and drift-guarded by a unit test that re-renders and byte-compares.
@@ -14,6 +16,7 @@
 
 import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { blockManifestSchema } from './block-types.js';
 import {
   registriesDirectorySchema,
   registryBlockSchema,
@@ -28,6 +31,7 @@ const SCHEMA_SOURCES: Record<string, z.ZodTypeAny> = {
   'registry-index.v1.json': registryIndexSchema,
   'registry-block.v1.json': registryBlockSchema,
   'registries-directory.v1.json': registriesDirectorySchema,
+  'block-manifest.v1.json': blockManifestSchema,
 };
 
 /**

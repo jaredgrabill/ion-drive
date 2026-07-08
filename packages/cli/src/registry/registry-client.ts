@@ -6,8 +6,8 @@
  *
  *  - **registry name** — `crm` or `crm@0.2.0`: looked up in the registry
  *    **index**, a flat JSON file mapping names → versions → artifact URLs.
- *    Default index: the `jaredgrabill/block-registry` repo; override with the
- *    `ION_DRIVE_REGISTRY` env var or `registryUrl` in `ion.config.json`.
+ *    Default index: the `jaredgrabill/ion-drive-blocks` repo; override with
+ *    the `ION_DRIVE_REGISTRY` env var or `registryUrl` in `ion.config.json`.
  *  - **direct URL** — any `http(s)://…/block.json`, so third-party/self-hosted
  *    blocks work without a registry entry.
  *  - **local path** — `ion-drive add ../block-crm`: reads `block.json` (and a
@@ -27,7 +27,8 @@ import { readConfig } from '../config.js';
 /** A manifest is an opaque object here; the server validates it on install. */
 export type Manifest = Record<string, unknown> & {
   name: string;
-  dependencies?: string[];
+  /** Block-ref → semver-range record (manifest v1, spec-02). */
+  dependencies?: Record<string, string>;
   code?: { path: string; contents: string }[];
 };
 
@@ -192,9 +193,16 @@ function readCodeDir(codeDir: string): { path: string; contents: string }[] {
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** Normalises a manifest's declared dependencies to a string array. */
+/**
+ * Block refs a manifest depends on — the keys of its v1 name → semver-range
+ * record. Only the record form counts: the legacy array (or any non-object)
+ * yields `[]` — `Object.keys` on an array would return its *indices* and send
+ * the resolver hunting for a block named "0".
+ */
 export function dependenciesOf(manifest: Manifest): string[] {
-  return Array.isArray(manifest.dependencies) ? manifest.dependencies : [];
+  const deps: unknown = manifest.dependencies;
+  if (deps === null || typeof deps !== 'object' || Array.isArray(deps)) return [];
+  return Object.keys(deps);
 }
 
 // ---------------------------------------------------------------------------

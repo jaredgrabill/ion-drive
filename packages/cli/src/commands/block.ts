@@ -19,7 +19,8 @@
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { readLocalBlock } from '../registry/registry-client.js';
+import semver from 'semver';
+import { type Manifest, readLocalBlock } from '../registry/registry-client.js';
 import { c, log, sym } from '../ui.js';
 
 // ---------------------------------------------------------------------------
@@ -30,13 +31,13 @@ import { c, log, sym } from '../ui.js';
 function manifestSkeleton(name: string): string {
   return `${JSON.stringify(
     {
-      $schema: 'https://ion-drive.dev/schemas/block-manifest.json',
+      $schema: 'https://ion-drive.dev/schemas/block-manifest.v1.json',
       name,
       version: '0.1.0',
       title: titleCase(name),
       description: `The ${name} building block.`,
       categories: [],
-      dependencies: [],
+      dependencies: {},
       objects: [
         {
           name: `${name.replace(/-/g, '_')}_items`,
@@ -219,7 +220,7 @@ export async function blockValidateCommand(dir = '.'): Promise<void> {
     );
   }
 
-  issues.push(...structuralChecks(manifest, root));
+  issues.push(...structuralManifestChecks(manifest));
 
   if (issues.length > 0) {
     for (const issue of issues) log.error(issue);
@@ -233,8 +234,20 @@ export async function blockValidateCommand(dir = '.'): Promise<void> {
   );
 }
 
-/** Checks the CLI can make without core: code presence for declared handlers. */
-function structuralChecks(manifest: ReturnType<typeof readLocalBlock>, root: string): string[] {
+/**
+ * Fallback checks the CLI can make without core (exported pure for unit
+ * tests): code presence for declared handlers, plus the manifest-v1 grammar
+ * (spec-02) — strict semver `version`, `dependencies` as a name → range
+ * record with valid ranges, and a valid `requires.core` range. Core's
+ * `parseManifest` is authoritative when resolvable; these keep `block
+ * validate` useful when it isn't.
+ */
+export function structuralManifestChecks(manifest: Manifest): string[] {
+  return [...vendoredCodeIssues(manifest), ...manifestGrammarIssues(manifest)];
+}
+
+/** Declared actions/hooks must ship vendored code with a plugin entry point. */
+function vendoredCodeIssues(manifest: Manifest): string[] {
   const issues: string[] = [];
   const code = manifest.code ?? [];
   const declaresLogic =
@@ -248,8 +261,50 @@ function structuralChecks(manifest: ReturnType<typeof readLocalBlock>, root: str
   if (declaresLogic && !code.some((f) => f.path === 'index.ts')) {
     issues.push('Vendored code must include an index.ts (the plugin entry the barrel imports).');
   }
-  if (code.length > 0 && !existsSync(join(root, 'code'))) {
-    // Embedded-code manifests are fine too — nothing to check on disk.
+  return issues;
+}
+
+/**
+ * Manifest v1 grammar (spec-02). Version uses canonical-equality (not
+ * truthiness) so a "v" prefix or build metadata is rejected instead of
+ * silently normalised.
+ */
+function manifestGrammarIssues(manifest: Manifest): string[] {
+  const issues: string[] = [];
+  const version = manifest.version;
+  if (version !== undefined && (typeof version !== 'string' || semver.valid(version) !== version)) {
+    issues.push(
+      `version must be a canonical semver version like "0.2.0" (no "v" prefix, no build metadata); got ${JSON.stringify(version)}`,
+    );
+  }
+  issues.push(...dependencyRecordIssues(manifest.dependencies));
+  const core = (manifest.requires as { core?: unknown } | undefined)?.core;
+  if (core !== undefined && (typeof core !== 'string' || semver.validRange(core) === null)) {
+    issues.push(
+      `requires.core must be a valid semver range (e.g. ">=0.2.0 <1.0.0"); got ${JSON.stringify(core)}`,
+    );
+  }
+  return issues;
+}
+
+/** `dependencies` must be a name → semver-range record (never the legacy array). */
+function dependencyRecordIssues(deps: unknown): string[] {
+  if (deps === undefined) return [];
+  if (Array.isArray(deps)) {
+    return [
+      'dependencies is the legacy array form — manifest v1 uses a name → semver-range record, e.g. {"crm": "^0.2.0"}',
+    ];
+  }
+  if (deps === null || typeof deps !== 'object') {
+    return ['dependencies must be a name → semver-range record, e.g. {"crm": "^0.2.0"}'];
+  }
+  const issues: string[] = [];
+  for (const [name, range] of Object.entries(deps as Record<string, unknown>)) {
+    if (typeof range !== 'string' || semver.validRange(range) === null) {
+      issues.push(
+        `dependencies.${name} must be a valid semver range (e.g. "^0.2.0"); got ${JSON.stringify(range)}`,
+      );
+    }
   }
   return issues;
 }
