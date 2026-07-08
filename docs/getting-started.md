@@ -123,7 +123,8 @@ Blocks with logic are **your code** — edit `blocks/invoicing/stripe.ts` and th
 dev server hot-reloads. Their actions are live at
 `POST /api/v1/blocks/invoicing/actions/create_payment_link`, in the OpenAPI
 spec, and as MCP tools. See [Building Blocks](concepts/building-blocks.md) and
-[Actions & hooks](api/actions.md).
+[Actions & hooks](api/actions.md). To author and ship your own block, see
+[Publishing a block](concepts/building-blocks.md#publishing-a-block).
 
 ## Next steps
 

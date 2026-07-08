@@ -1,5 +1,30 @@
 # Spec 05 — Publishing Pipeline: `registry build`, `block publish`, and the Reusable Workflow
 
+> **Status:** ✅ implemented 2026-07-08 (CLI `registry build`/`yank`/`deprecate` +
+> `block publish`, blocks-repo migration to versioned paths + workflows + runbook +
+> Pages config). **AC1/AC2/AC6** verified by unit tests + the local rehearsal smoke;
+> **AC3, AC4, and AC5's live half are owner-deferred** (they need the repo on GitHub,
+> F23's first npm publish, and Pages/DNS) — exact commands in
+> [`OWNER-TODO.md`](OWNER-TODO.md) §"From spec-05". Local rehearsals of AC3 (script
+> replay of the workflow's shell steps, idempotent second run) and AC5 (`block publish
+> --direct` against a local bare registry repo, then install by ref from the served
+> clone) were run and recorded in the implementation report.
+>
+> **Implementation notes vs. the text below:** (1) the `DEFAULT_REGISTRY_URL` swap in
+> §5 had already landed with spec-03 — `BUILT_IN_REGISTRIES['@ion']` points at
+> `https://registry.iondrive.dev/registry/index.json`; nothing to change here.
+> (2) Pages layout = repo root is the site root (`/registry/index.json`,
+> `/registry/blocks/<name>.json`, `/<name>/dist/<version>/block.json[.sigstore.json]`,
+> `/schemas/*.v1.json`, `/registries.json`); spec-01's §6 example URL was amended to
+> match. (3) `attestationUrl` absent→present is codified as the sole legal mutation of
+> a released version entry (D5; amended into spec-01 §5). (4) New requirement
+> discovered during implementation: a registry repo carries a hand-maintained
+> **`registry.config.json`** at its root (`{ name, description?, homepage?,
+> repository?, trust? }`) — `registry build` refuses without it; `repository` is
+> stamped on every block doc (per-block override: manifest `meta.repository`); the
+> official repo's is seeded with the ion-drive-blocks identity. (5) `block pack` now
+> emits `dist/<version>/block.json` (the delete-the-defect path change, D8).
+
 **Lands in:** `jaredgrabill/ion-drive` (`packages/cli`) and `jaredgrabill/ion-drive-blocks`
 (workflows + layout migration + serving).
 **Depends on:** specs 01, 02, 04. **Blocks on (external):** roadmap F23 — the first npm

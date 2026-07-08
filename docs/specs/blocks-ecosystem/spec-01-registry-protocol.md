@@ -170,6 +170,10 @@ by `ion-drive audit` (spec-06) and the resolver's warnings (spec-03).
   `publishedAt`, `dependencies`, `requires`, and `attestationUrl` **never change**, and
   the artifact bytes at `artifactUrl` never change. Republishing a version is forbidden;
   fixing anything means publishing a new version.
+  *(Amendment, spec-05 D5: the one legal transition is `attestationUrl` **absent →
+  present** — CI attests immediately after packing, so the entry may exist for one
+  build before the bundle lands adjacent; `registry build` sets it iff the bundle file
+  exists on disk, and never changes an existing value.)*
 - Mutable by design: `latest`, per-version `status`/`statusReason`/`yankedAt`,
   top-level `advisories`, and all display metadata (title/description/categories/…).
 - Status semantics for clients (enforced in spec-03/04, stated here as protocol):
@@ -194,7 +198,7 @@ by `ion-drive audit` (spec-06) and the resolver's warnings (spec-03).
   "registries": [
     {
       "namespace": "@ion",
-      "url": "https://registry.iondrive.dev/index.json",
+      "url": "https://registry.iondrive.dev/registry/index.json",
       "owner": "IonShift Labs",
       "repository": "https://github.com/jaredgrabill/ion-drive-blocks",
       "description": "Official Ion Drive blocks.",

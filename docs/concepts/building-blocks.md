@@ -225,14 +225,14 @@ ion-drive block new my-block      # ./block-my-block/{block.json, code/, CI}
 cd block-my-block
 # …edit block.json (+ code/ if the block ships logic)…
 ion-drive block validate          # platform schema + structural code checks
-ion-drive block pack              # dist/block.json with code/ embedded
+ion-drive block pack              # dist/<version>/block.json with code/ embedded
 ```
 
 ```
 block-my-block/
-  block.json        # the manifest — source of truth
-  code/             # vendored TypeScript (index.ts default-exports a definePlugin)
-  dist/block.json   # packed artifact — what a registry serves
+  block.json                # the manifest — source of truth
+  code/                     # vendored TypeScript (index.ts default-exports a definePlugin)
+  dist/<version>/block.json # immutable packed artifact — what a registry serves
 ```
 
 Test against a real project without publishing anything:
@@ -247,5 +247,49 @@ install fails with an actionable error otherwise. Keep vendored code **thin
 and heavily commented**: call `DataService`/`SecretsManager`/platform APIs,
 never re-implement plumbing. LLM legibility is a product goal.
 
-See [ADR-013 and ADR-018](../research/architecture-decisions.md) for the
-design rationale.
+## Publishing a block
+
+A registry is a **git repo of block directories plus generated protocol-v1
+JSON** — GitHub Pages/S3/nginx serve it; no server required. Two commands run
+the whole publish side (spec-05):
+
+```bash
+ion-drive registry build [dir]    # the generator: validate every */block.json,
+                                  # pack missing dist/<version>/ artifacts,
+                                  # regenerate registry/blocks/*.json + index.json
+ion-drive registry build --check  # CI drift guard: fails on any would-be change
+ion-drive block publish           # clone a registry repo → copy this block in →
+                                  # build there → open a PR (--direct pushes)
+```
+
+The generator is **append-only**: released `(name, version)` artifacts and
+version entries are immutable — any mutation is a named refusal, and fixing
+anything means bumping the version. A `registry.config.json` at the registry
+repo's root supplies the registry's identity (`name`, plus the `repository`
+stamped on every block doc — the claim attestations are verified against).
+`block publish` reads its default target repo from
+`meta.publishConfig.registryRepo` in `block.json`, or takes
+`--registry-repo <owner/repo | git URL | local path>`.
+
+Provenance comes from CI, not from your laptop: the official repo's reusable
+workflow (`publish-block.yml`) packs new versions on merge to `main`, attests
+each artifact with GitHub artifact attestations (sigstore — that's what makes
+`ion-drive add` show `◆ official` / `✔ verified`), and commits the result.
+**Publishing locally cannot attest provenance** — a locally-pushed version is
+`community` until the registry repo's CI attests it, the same incentive
+structure npm uses.
+
+Mutable-status administration (in a registry checkout, then commit + PR):
+
+```bash
+ion-drive registry yank crm@0.2.0 --reason "corrupts pipeline stages"
+ion-drive registry deprecate crm@0.1.0 --reason "superseded by 0.2.0"
+```
+
+Yanked versions are never *selected* by resolvers (exact re-installs of a
+version recorded in your project keep working, loudly warned); deprecated
+versions install with a warning. The official repo's full operating procedures
+live in its `docs/registry-operations.md`.
+
+See [ADR-013, ADR-018, and ADR-022](../research/architecture-decisions.md)
+for the design rationale.

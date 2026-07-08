@@ -14,21 +14,30 @@
  *   remove <block>   Uninstall a block (your vendored code stays yours)
  *   dev              Run the project's server.ts (or core's, in the monorepo)
  *   schema …         Snapshot pull/diff/push + drift doctor
- *   block …          Block-authoring toolchain (new/validate/pack/verify)
- *   registry …       Manage configured block registries (list/add/remove/ping)
+ *   block …          Block-authoring toolchain (new/validate/pack/verify/publish)
+ *   registry …       Configured registries (list/add/remove/ping) + the
+ *                    registry-repo generator/admin loop (build/yank/deprecate)
  */
 
 import { Command } from 'commander';
 import { addCommand } from './commands/add.js';
-import { blockNewCommand, blockPackCommand, blockValidateCommand } from './commands/block.js';
+import {
+  blockNewCommand,
+  blockPackCommand,
+  blockPublishCommand,
+  blockValidateCommand,
+} from './commands/block.js';
 import { devCommand } from './commands/dev.js';
 import { initCommand } from './commands/init.js';
 import { listCommand } from './commands/list.js';
 import {
   registryAddCommand,
+  registryBuildCommand,
+  registryDeprecateCommand,
   registryListCommand,
   registryPingCommand,
   registryRemoveCommand,
+  registryYankCommand,
 } from './commands/registry.js';
 import { removeCommand } from './commands/remove.js';
 import {
@@ -148,7 +157,7 @@ schema
 
 const block = program
   .command('block')
-  .description('Block-authoring toolchain (repo scaffold, validate, pack, verify)');
+  .description('Block-authoring toolchain (repo scaffold, validate, pack, publish, verify)');
 
 block
   .command('new')
@@ -169,6 +178,25 @@ block
   .action((dir) => blockPackCommand(dir));
 
 block
+  .command('publish')
+  .argument('[dir]', 'Block repo directory (default: current)')
+  .description('Publish a block to a git-hosted registry repo (clone → build → PR or push)')
+  .option('--registry-repo <repo>', 'Target registry repo (owner/repo, git URL, or local path)')
+  .option('--pr', 'Open a pull request (default)')
+  .option('--direct', 'Push straight to the default branch instead of opening a PR')
+  .option('-d, --dry-run', 'Stop after the temp-dir registry build, printing the plan')
+  .option('--json', 'Plain JSON output')
+  .action((dir, options) =>
+    blockPublishCommand(dir, {
+      registryRepo: options.registryRepo,
+      pr: options.pr,
+      direct: options.direct,
+      dryRun: options.dryRun,
+      json: options.json,
+    }),
+  );
+
+block
   .command('verify')
   .argument('<ref>', 'Registry ref (crm, crm@0.2.0, @acme/billing@1.0.0), URL, or local path')
   .description('Verify a published block: digest, attestation, trust tier (spec-04)')
@@ -178,10 +206,36 @@ block
     blockVerifyCommand(ref, { againstInstalled: options.againstInstalled, json: options.json }),
   );
 
-// (`registry build` joins this group in spec-05 — the name is reserved.)
 const registry = program
   .command('registry')
-  .description('Manage configured block registries (spec-03)');
+  .description('Manage configured block registries (spec-03) and registry repos (spec-05)');
+
+registry
+  .command('build')
+  .argument('[dir]', 'Registry repo directory (default: current)')
+  .description('Generate registry JSON: pack new versions, regenerate blocks/*.json + index.json')
+  .option('--check', 'CI drift guard: run everything, write nothing, fail on any would-be change')
+  .option('--block <name>', 'Limit packing/regeneration to one block')
+  .option('--json', 'Plain JSON output (includes packed[] for the publish workflow)')
+  .action((dir, options) =>
+    registryBuildCommand(dir, { check: options.check, block: options.block, json: options.json }),
+  );
+
+registry
+  .command('yank')
+  .argument('<ref>', 'Released version to yank, as <name>@<version>')
+  .description('Mark a released version yanked in the local registry checkout')
+  .option('--reason <text>', 'Human context recorded as statusReason')
+  .option('--json', 'Plain JSON output')
+  .action((ref, options) => registryYankCommand(ref, options));
+
+registry
+  .command('deprecate')
+  .argument('<ref>', 'Released version to deprecate, as <name>@<version>')
+  .description('Mark a released version deprecated in the local registry checkout')
+  .option('--reason <text>', 'Human context recorded as statusReason')
+  .option('--json', 'Plain JSON output')
+  .action((ref, options) => registryDeprecateCommand(ref, options));
 
 registry
   .command('list')

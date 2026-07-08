@@ -98,6 +98,10 @@ hot-reloads. Its action is live at
 `POST /api/v1/blocks/invoicing/actions/create_payment_link`, in OpenAPI, and
 as an MCP tool.
 
+Built a block of your own? `ion-drive block new` scaffolds it and
+`ion-drive block publish` ships it to any git-hosted registry — see
+[Publishing a block](docs/concepts/building-blocks.md#publishing-a-block).
+
 > **Contributing to Ion Drive itself?** Clone this repo and `pnpm dev` — see [Development](#development).
 
 ### Query it from code
@@ -130,8 +134,8 @@ ion-drive/
 ├── packages/
 │   ├── core/       # Fastify backend (schema engine, APIs, MCP, auth)
 │   ├── admin/      # React admin console (Vite SPA)
-│   ├── cli/        # CLI for project management and building blocks
-│   ├── blocks/     # Official building block catalog (crm, invoicing, communications, audit)
+│   ├── cli/        # CLI for project management, building blocks, and registry publishing
+│   ├── plugin-*/   # First-party infra plugins (redis, sendgrid, storage-s3)
 │   └── client/     # Zero-dependency typed query builder + REST client SDK
 ├── docker/         # Docker Compose for dev and observability
 └── docs/           # Documentation

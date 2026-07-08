@@ -1,18 +1,21 @@
 /**
  * `ion-drive registry …` — manage the project's configured block registries
- * (spec-03 §5).
+ * (spec-03 §5) and generate/administer a registry repo (spec-05 §1).
  *
  *   registry list            table: ns, name, url, block count, staleness
  *   registry add <@ns> <url> validates (fetch + parse the index) then writes config
  *   registry remove <@ns>    refuses while blocks[] records point at it (--force)
  *   registry ping [@ns]      fetch + validate fresh, report generatedAt/latency
+ *   registry build [dir]     the registry-JSON generator (--check = CI drift guard)
+ *   registry yank <ref>      mark a released version yanked (mutable status edit)
+ *   registry deprecate <ref> mark a released version deprecated
  *
  * All subcommands take `--json` (plain `JSON.stringify`, no styling — the
  * LLM-first DX rule). `registry add <@ns>` without a URL is the spec-08
- * directory lookup — a friendly not-yet error here. (`registry build` joins
- * this group in spec-05 — the name is reserved; do not register it here.)
+ * directory lookup — a friendly not-yet error here.
  */
 
+import { resolve } from 'node:path';
 import {
   BUILT_IN_REGISTRIES,
   ConfigError,
@@ -21,6 +24,14 @@ import {
   readConfig,
   writeConfig,
 } from '../config.js';
+import {
+  type BuildResult,
+  RegistryBuildError,
+  applyStatusEdit,
+  buildRegistry,
+  realBuildFs,
+} from '../registry/build.js';
+import { CORE_REQUIRED_MESSAGE, loadCoreValidator } from '../registry/core-loader.js';
 import {
   RegistryError,
   type ResolvedRegistry,
@@ -242,6 +253,133 @@ export async function registryRemoveCommand(
   if (dependents.length > 0) {
     log.warn(`Blocks still installed from it: ${dependents.join(', ')}`);
   }
+}
+
+// --- registry build (spec-05 §1) -------------------------------------------------
+
+export interface RegistryBuildCommandOptions extends JsonOption {
+  /** CI mode: run everything, write nothing, fail on any would-be change. */
+  check?: boolean;
+  /** Limit packing/doc regeneration to one block. */
+  block?: string;
+}
+
+/**
+ * Runs the registry generator over `dir` (default cwd). Core's strict parsers
+ * are MANDATORY here — a generator that can't validate refuses to emit.
+ * `--json` includes `packed[]` (the publish workflow attests exactly those).
+ */
+export async function registryBuildCommand(
+  dir = '.',
+  options: RegistryBuildCommandOptions = {},
+): Promise<void> {
+  const core = await loadCoreValidator();
+  if (!core) {
+    fail(CORE_REQUIRED_MESSAGE, options);
+    return;
+  }
+
+  const root = resolve(dir).split('\\').join('/');
+  const result = buildRegistry(root, {
+    fs: realBuildFs(),
+    validator: core,
+    check: options.check,
+    block: options.block,
+  });
+
+  const failed = result.refusals.length > 0 || (options.check === true && result.wrote.length > 0);
+  if (options.json) {
+    printJson({ ...result, check: options.check === true, ok: !failed });
+    if (failed) process.exitCode = 1;
+    return;
+  }
+  renderBuildResult(result, options.check === true);
+}
+
+/** Human rendering of a build (or --check) outcome; sets the exit code. */
+function renderBuildResult(result: BuildResult, check: boolean): void {
+  for (const warning of result.warnings) log.warn(warning);
+  for (const refusal of result.refusals) log.error(refusal);
+  for (const packed of result.packed) {
+    log.bullet(
+      `${c.bold(packed.name)}${c.meteor(`@${packed.version}`)} ${sym.arrow} ${c.cyan(packed.artifactPath)} ${c.dim(packed.digest)}`,
+    );
+  }
+
+  if (result.refusals.length > 0) {
+    log.error('registry build refused — nothing was written.');
+    process.exitCode = 1;
+    return;
+  }
+  if (check) {
+    renderCheckOutcome(result.wrote);
+    return;
+  }
+  if (result.wrote.length === 0) {
+    log.success('Registry is up to date — nothing to write.');
+    return;
+  }
+  for (const path of result.wrote) log.raw(`  ${sym.check} ${c.cyan(path)}`);
+  log.success(
+    `Registry built — ${result.packed.length} new artifact(s), ${result.wrote.length} file(s) written.`,
+  );
+}
+
+/** The --check verdict: any would-be change is a failure listing the files. */
+function renderCheckOutcome(wouldWrite: string[]): void {
+  if (wouldWrite.length > 0) {
+    log.error(`--check: ${wouldWrite.length} file(s) would change:`);
+    for (const path of wouldWrite) log.bullet(c.cyan(path));
+    process.exitCode = 1;
+    return;
+  }
+  log.success('Registry is up to date (nothing would change).');
+}
+
+// --- registry yank / deprecate ----------------------------------------------------
+
+export interface StatusEditCommandOptions extends JsonOption {
+  reason?: string;
+}
+
+/** Shared implementation of the two mutable-status editors. */
+async function statusEditCommand(
+  ref: string,
+  status: 'yanked' | 'deprecated',
+  options: StatusEditCommandOptions,
+): Promise<void> {
+  try {
+    const result = applyStatusEdit(process.cwd().split('\\').join('/'), ref, status, {
+      fs: realBuildFs(),
+      reason: options.reason,
+    });
+    if (options.json) {
+      printJson(result);
+      return;
+    }
+    log.success(
+      `${c.bold(`${result.name}@${result.version}`)} is now ${c.warn(status)}${options.reason ? ` (${options.reason})` : ''}`,
+    );
+    log.bullet(`latest is now ${c.cyan(result.latest)}`);
+    log.dim('  Commit and push the registry checkout to publish the status change.');
+  } catch (err) {
+    if (err instanceof RegistryBuildError) {
+      fail(err.message, options);
+      return;
+    }
+    throw err;
+  }
+}
+
+export function registryYankCommand(ref: string, options: StatusEditCommandOptions): Promise<void> {
+  return statusEditCommand(ref, 'yanked', options);
+}
+
+export function registryDeprecateCommand(
+  ref: string,
+  options: StatusEditCommandOptions,
+): Promise<void> {
+  return statusEditCommand(ref, 'deprecated', options);
 }
 
 // --- registry ping ---------------------------------------------------------------

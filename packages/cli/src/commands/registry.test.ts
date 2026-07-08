@@ -47,13 +47,19 @@ function output(): string {
   return logged.join('\n').replace(/\[[0-9;]*m/g, '');
 }
 
+/**
+ * Stubs global fetch with fixed routes. Anything un-routed — including the
+ * built-in @ion registry URL — throws like an unreachable host, so these
+ * tests never depend on the real registry.iondrive.dev (up OR down) and never
+ * touch the network.
+ */
 function stubFetch(routes: Record<string, unknown>): void {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       const body = routes[url];
-      if (body === undefined) return new Response('nope', { status: 404 });
+      if (body === undefined) throw new TypeError(`fetch failed (unstubbed: ${url})`);
       return new Response(JSON.stringify(body), { status: 200 });
     }),
   );
@@ -144,7 +150,7 @@ describe('registry list', () => {
     expect(acme?.blocks).toBe(1);
     const ion = rows.find((r) => r.namespace === '@ion');
     expect(ion?.isDefault).toBe(true);
-    expect(ion?.error).toBeDefined(); // https://registry.iondrive.dev isn't stubbed
+    expect(ion?.error).toBeDefined(); // @ion is un-routed in the stub ⇒ deterministic error row
     expect(process.exitCode).toBe(1); // an unreachable registry marks the run
   });
 });
