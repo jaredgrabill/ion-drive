@@ -1,6 +1,7 @@
 # Spec 05 — Publishing Pipeline: `registry build`, `block publish`, and the Reusable Workflow
 
-> **Status:** ✅ implemented 2026-07-08 (CLI `registry build`/`yank`/`deprecate` +
+> **Status:** ✅ implemented 2026-07-08, commits 386f5c7 (ion-drive) + f5c1ef9
+> (ion-drive-blocks) (CLI `registry build`/`yank`/`deprecate` +
 > `block publish`, blocks-repo migration to versioned paths + workflows + runbook +
 > Pages config). **AC1/AC2/AC6** verified by unit tests + the local rehearsal smoke;
 > **AC3, AC4, and AC5's live half are owner-deferred** (they need the repo on GitHub,
