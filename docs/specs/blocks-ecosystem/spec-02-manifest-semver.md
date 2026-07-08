@@ -1,5 +1,7 @@
 # Spec 02 — Manifest v1: Semver Versions, Dependency Ranges, `requires.core`
 
+> **Status:** ✅ implemented 2026-07-08, commits ea24785 (ion-drive) + d33c979 (ion-drive-blocks)
+
 **Lands in:** `jaredgrabill/ion-drive` (`packages/core`, plus CLI touch-ups) and
 `jaredgrabill/ion-drive-blocks` (migrate the official manifests).
 **Depends on:** nothing (co-first with spec-01).
