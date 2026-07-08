@@ -1,5 +1,7 @@
 # Spec 03 — CLI: Multi-Registry Config, Namespaced Refs, Resolver
 
+> **Status:** ✅ implemented 2026-07-08, commit 5144341
+
 **Lands in:** `jaredgrabill/ion-drive` (`packages/cli`).
 **Depends on:** spec-01 (protocol), spec-02 (ranges, `splitBlockRef`). Can run in
 parallel with spec-04; the two meet in `add.ts` (04 inserts digest verification into the
