@@ -346,6 +346,13 @@ export interface InstalledBlock {
   status: 'installing' | 'installed' | 'failed';
   createdObjects: string[];
   manifest: { description?: string; [key: string]: unknown };
+  /** Install provenance (spec-04) — null for bare-manifest installs. */
+  artifactDigest?: string | null;
+  sourceRegistry?: string | null;
+  sourceUrl?: string | null;
+  publisher?: string | null;
+  attested?: boolean | null;
+  trustTier?: 'official' | 'verified' | 'community' | null;
   installedAt: string;
   updatedAt: string;
 }

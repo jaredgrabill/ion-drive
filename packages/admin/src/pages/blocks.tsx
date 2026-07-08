@@ -32,6 +32,13 @@ import {
 import { ApiError, api } from '../lib/api';
 import type { InstalledBlock } from '../lib/types';
 
+/** Badge variant for a block's client-asserted trust tier (spec-04). */
+function tierVariant(tier: NonNullable<InstalledBlock['trustTier']>) {
+  if (tier === 'official') return 'info' as const;
+  if (tier === 'verified') return 'success' as const;
+  return 'outline' as const;
+}
+
 // --- Page --------------------------------------------------------------
 
 export function Blocks() {
@@ -124,11 +131,27 @@ export function Blocks() {
                   <Badge variant={block.status === 'installed' ? 'success' : 'warning'}>
                     {block.status}
                   </Badge>
+                  {block.trustTier && (
+                    <Badge
+                      variant={tierVariant(block.trustTier)}
+                      title="Trust tier reported by the installing client (claimed)"
+                    >
+                      {block.trustTier}
+                    </Badge>
+                  )}
                   <span>{block.createdObjects.length} objects</span>
                   <span className="ml-auto">
                     {format(new Date(block.installedAt), 'MMM d, yyyy')}
                   </span>
                 </div>
+                {block.artifactDigest && (
+                  <p
+                    className="truncate font-mono text-[11px] text-muted-foreground"
+                    title={block.artifactDigest}
+                  >
+                    {block.artifactDigest}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ))}

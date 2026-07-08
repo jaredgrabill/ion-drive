@@ -304,6 +304,19 @@ export interface IonBlocksTable {
   created_objects: ColumnType<string[], string, string>;
   /** Full manifest snapshot as installed, so the consumer owns their copy. */
   manifest: ColumnType<Record<string, unknown>, string, string>;
+  // Client-asserted install provenance (spec-04) — null for bare installs.
+  /** `sha256:<hex>` the installing client computed over the artifact bytes. */
+  artifact_digest: string | null;
+  /** Registry namespace the block came from (e.g. '@ion'). */
+  source_registry: string | null;
+  /** The exact artifact URL. */
+  source_url: string | null;
+  /** Publisher identity (e.g. 'github.com/jaredgrabill/ion-drive-blocks'). */
+  publisher: string | null;
+  /** Whether the installing client verified a sigstore attestation. */
+  attested: boolean | null;
+  /** Trust tier the client computed: 'official' | 'verified' | 'community'. */
+  trust_tier: string | null;
   installed_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }

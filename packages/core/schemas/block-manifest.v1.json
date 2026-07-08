@@ -556,7 +556,7 @@
           "path": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 255
+            "maxLength": 200
           },
           "contents": {
             "type": "string",

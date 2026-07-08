@@ -51,7 +51,14 @@ export class ResolveError extends Error {
 export interface ResolverIO {
   fetchIndex(reg: ResolvedRegistry): Promise<{ blocks: Record<string, unknown> }>;
   fetchBlock(reg: ResolvedRegistry, name: string): Promise<{ doc: RegistryBlockDoc; url: string }>;
-  getLocalOrUrlManifest(ref: Extract<ParsedRef, { kind: 'url' | 'local' }>): Promise<Manifest>;
+  /**
+   * Root manifests fetched/read during planning come back WITH the digest
+   * computed over the exact bytes that produced them (spec-04 C8: the verify
+   * phase must never re-fetch a URL root — the bytes could differ).
+   */
+  getLocalOrUrlManifest(
+    ref: Extract<ParsedRef, { kind: 'url' | 'local' }>,
+  ): Promise<{ manifest: Manifest; digest: string }>;
 }
 
 /** One block to install, in plan order. */
@@ -66,6 +73,19 @@ export interface PlanItem {
   registry?: string;
   /** The manifest, already in hand (local/URL items only). */
   manifest?: Manifest;
+  /**
+   * `sha256:<hex>` — the registry-declared digest (registry items, verified
+   * against the fetched bytes by spec-04), or the digest computed at planning
+   * time (local/URL items).
+   */
+  digest?: string;
+  /** Declared artifact byte size (registry items) — a pre-parse sanity check. */
+  size?: number;
+  /** Absolute sigstore-bundle URL, when the version is attested. */
+  attestationUrl?: string;
+  /** The block file's `repository` claim (what attestations must match). */
+  repository?: string;
+  publishedAt?: string;
   isDependency: boolean;
   /** Status warnings for this block (deprecated, yanked re-install, …). */
   warnings: string[];
@@ -131,7 +151,7 @@ class ClosureWalk {
   private readonly ranges = new Map<string, Requirement[]>();
   private readonly nodes = new Map<string, RegistryNode>();
   private rootName = '';
-  private rootManifest?: { manifest: Manifest; source: string; sourceUrl?: string };
+  private rootManifest?: { manifest: Manifest; source: string; sourceUrl?: string; digest: string };
   private readonly planWarnings: string[] = [];
 
   constructor(private readonly opts: ResolveOptions) {}
@@ -167,12 +187,13 @@ class ClosureWalk {
     }
     // Local/URL root: the manifest is in hand; its bare deps resolve in the
     // consumer's default registry (no source registry exists — C5).
-    const manifest = await this.opts.io.getLocalOrUrlManifest(ref);
+    const { manifest, digest } = await this.opts.io.getLocalOrUrlManifest(ref);
     this.rootName = manifest.name;
     this.rootManifest = {
       manifest,
       source: ref.kind === 'local' ? 'local' : ref.url,
       sourceUrl: ref.kind === 'url' ? ref.url : undefined,
+      digest,
     };
     return Object.entries(dependencyRecordOf(manifest)).map(([depRef, range]) =>
       this.depRequest(depRef, range, manifest.name, this.defaultNamespace()),
@@ -472,6 +493,9 @@ class ClosureWalk {
         source: this.rootManifest.source,
         sourceUrl: this.rootManifest.sourceUrl,
         manifest: this.rootManifest.manifest,
+        // Computed at planning time over the exact bytes (spec-04 C8) —
+        // the verify phase never re-fetches local/URL roots.
+        digest: this.rootManifest.digest,
         isDependency: false,
         warnings: [],
       };
@@ -485,8 +509,16 @@ class ClosureWalk {
       version: selection.version,
       source: node.namespace,
       registry: node.namespace,
-      // Artifact URLs resolve against the block file they appear in (spec-01 §2).
+      // Artifact + attestation URLs resolve against the block file they
+      // appear in (spec-01 §2).
       sourceUrl: resolveRegistryUrl(entry.artifactUrl, node.blockUrl),
+      digest: entry.digest,
+      size: entry.size,
+      attestationUrl: entry.attestationUrl
+        ? resolveRegistryUrl(entry.attestationUrl, node.blockUrl)
+        : undefined,
+      repository: node.doc.repository,
+      publishedAt: entry.publishedAt,
       isDependency: !(ref.kind === 'registry' && ref.name === name),
       warnings: selection.warnings,
     };

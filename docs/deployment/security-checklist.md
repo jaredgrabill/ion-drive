@@ -176,6 +176,14 @@ ION_METRICS_ENABLED=false   # /metrics endpoint
 Smaller surface, fewer surprises. (REST/GraphQL/MCP are the core product and
 have no off switch; they are covered by RBAC.)
 
+Block installs via `ion-drive add` are **digest-verified** (sha256 over the
+exact artifact bytes, no `--force` override), and every install records its
+provenance (digest, source registry/URL, publisher, trust tier) in the
+`_ion_blocks` ledger — so "which servers installed the bad artifact?" is
+answerable with `GET /api/v1/blocks` or `ion-drive block verify
+--against-installed`. See [Building blocks — integrity and
+trust](../concepts/building-blocks.md#integrity-and-trust).
+
 ## 12. Report vulnerabilities responsibly
 
 Found something? **Don't open a public issue.** Email

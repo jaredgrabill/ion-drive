@@ -132,6 +132,52 @@ reload the new handlers before installing the manifest — so run it with
 `npm run dev` active. `remove` uninstalls the schema and unwires the barrel,
 but never deletes `blocks/<name>/` — that code is yours now.
 
+## Integrity and trust
+
+Every registry install is **digest-verified** (spec-04): the CLI computes
+`sha256:<hex>` over the exact fetched artifact bytes and compares it with the
+registry-declared digest for that version *before* anything is parsed,
+vendored, or sent to the server. A mismatch aborts the **whole** plan with no
+`--force` override — a poisoned artifact is never "forced". Direct-URL
+installs have no declared digest; the computed one is printed once so you can
+pin it. Local paths hash the bytes the CLI itself packs. The verified digest
+is recorded in `ion.config.json` and in the server's `_ion_blocks` ledger.
+
+On top of digest integrity sits **provenance**: publishers can attach a
+[sigstore](https://sigstore.dev) attestation bundle produced by GitHub's
+artifact attestations. The CLI computes one of three trust tiers — never
+taken from the registry's self-asserted `trust` field, which is a display
+hint only (shown as "(claimed)" in `ion-drive list`):
+
+| Tier | Badge | Meaning |
+|:--|:--|:--|
+| `official` | `◆ official` | Attestation verified AND built from `jaredgrabill/ion-drive-blocks` |
+| `verified` | `✔ verified · github.com/acme/blocks` | Attestation verified against the repo the registry claims |
+| `community` | `○ community (unattested)` | No bundle, failed/unavailable verification, or local/URL source |
+
+**Attestation proves where the code was built, not that it is safe.** A
+verified badge means "these exact bytes were built by that repository's CI" —
+review the vendored code regardless (it lands readable in your tree;
+`add --show-code` lists every file with its size and sha256 before the
+confirm prompt). An *absent* bundle is a warning; a *present-but-invalid*
+bundle is a loud warning (it can indicate tampering) — `add` still proceeds
+because the digest already protects integrity, while `ion-drive block verify`
+exits non-zero. `--no-verify-provenance` skips attestation checks (e.g.
+offline environments, which otherwise degrade to `community` with a warning);
+the digest check is never skippable.
+
+Audit any published block without installing it:
+
+```bash
+ion-drive block verify crm@0.2.0            # digest + attestation + tier verdict
+ion-drive block verify crm --against-installed  # ledger digest vs registry digest
+ion-drive block verify crm --json            # machine-readable verdict
+```
+
+`--against-installed` catches "the registry mutated after I installed" and
+"someone installed different bytes on this server" by comparing the server
+ledger's recorded digest with the registry's for the installed version.
+
 ## Installing over HTTP
 
 Blocks are also a plain REST surface under **`/api/v1/blocks`** (RBAC resource
@@ -143,7 +189,7 @@ Blocks are also a plain REST surface under **`/api/v1/blocks`** (RBAC resource
 | `GET` | `/api/v1/blocks/:name` | Inspect one installed block |
 | `GET` | `/api/v1/blocks/actions` | Declared actions/hooks + registered handlers |
 | `POST` | `/api/v1/blocks/preview` | Validate + preview a manifest |
-| `POST` | `/api/v1/blocks/install` | Install a manifest (`?dryRun`, `?force`) |
+| `POST` | `/api/v1/blocks/install` | Install a manifest (`?dryRun`, `?force`; body is a bare manifest or `{ manifest, source }`) |
 | `POST` | `/api/v1/blocks/:block/actions/:action` | Invoke a block action |
 | `DELETE` | `/api/v1/blocks/:name` | Uninstall (`?dropData`) |
 
@@ -160,6 +206,11 @@ and data-loss guards are enforced server-side**, not just in the CLI:
 - `?force=true` downgrades both range failures to warnings in the install
   report (the ADR-017 force contract); `?dryRun=true` reports them as
   warnings without failing.
+- The optional `source` envelope member is **client-asserted provenance**
+  (registry, artifact URL, verified digest, attested flag, publisher, tier)
+  stored in the `_ion_blocks` ledger and returned by the `GET` endpoints —
+  audit metadata for incident response, not a server-side security control.
+  Unknown `source` keys fail `400`.
 
 Actions and inbound webhooks are documented in
 [Actions & hooks](../api/actions.md).

@@ -18,7 +18,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 
 /** Marker lines the barrel maintains its entries between. */
 const IMPORTS_MARKER = '// ion-drive:imports';
@@ -131,21 +131,64 @@ export interface VendorResult {
   skipped: string[];
 }
 
+/** Thrown when a block's code files fail the vendoring-path hardening. */
+export class VendorError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VendorError';
+  }
+}
+
+/** Caps mirroring core's manifest schema (spec-04 §5): bound files + memory. */
+const MAX_CODE_FILES = 500;
+const MAX_TOTAL_CODE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+/**
+ * Rejects a vendored code path that could escape `blocks/<name>/`.
+ * Returns the human-readable problem, or null when safe.
+ *
+ * KEEP IN SYNC with core's `codePathIssue` in
+ * `packages/core/src/blocks/block-types.ts` — same rules, deliberately
+ * duplicated so the CLI needs no runtime core dependency (the `ref.ts`
+ * vendored-copy precedent). Order matters: normalize backslashes FIRST, then
+ * validate the normalized form (never validate-then-normalize).
+ */
+function vendorPathIssue(path: string): string | null {
+  if (path.length < 1 || path.length > 200) return 'must be 1–200 characters';
+  const normalized = path.replace(/\\/g, '/');
+  if (/^[a-zA-Z]:/.test(normalized)) return 'must not be a Windows drive path';
+  if (normalized.startsWith('//')) return 'must not be a UNC path';
+  if (normalized.startsWith('/')) return 'must be relative (no leading /)';
+  for (const segment of normalized.split('/')) {
+    if (segment === '') return 'must not contain empty path segments';
+    if (segment === '.') return 'must not contain "." segments';
+    if (segment === '..') return 'must not contain ".." segments';
+  }
+  return null;
+}
+
 /**
  * Copies a block's code files into `blocks/<name>/`. Existing files are always
  * skipped and reported — re-running `add` never clobbers user edits.
+ *
+ * Defense in depth (spec-04 §5): every path is validated **before anything is
+ * written** (a malicious artifact must not plant even one file outside the
+ * block folder), the file-count/total-size caps bound memory, and the
+ * resolved target is asserted to sit strictly inside the block directory —
+ * the belt after the suspenders.
+ * @throws {VendorError} naming the offending path or exceeded cap
  */
 export function vendorBlockCode(
   blockName: string,
   files: { path: string; contents: string }[],
   dir = process.cwd(),
 ): VendorResult {
-  const blockRoot = join(resolve(dir), 'blocks', blockName);
+  const blockRoot = resolve(dir, 'blocks', blockName);
+  assertVendorable(blockName, files, blockRoot);
+
   const result: VendorResult = { written: [], skipped: [] };
   for (const file of files) {
-    // Manifest validation already rejects absolute/`..` paths; re-check cheaply.
-    if (file.path.startsWith('/') || file.path.includes('..')) continue;
-    const target = join(blockRoot, file.path);
+    const target = resolve(blockRoot, file.path.replace(/\\/g, '/'));
     const relative = `blocks/${blockName}/${file.path}`;
     if (existsSync(target)) {
       result.skipped.push(relative);
@@ -156,6 +199,41 @@ export function vendorBlockCode(
     result.written.push(relative);
   }
   return result;
+}
+
+/** Validates all files up front so a bad artifact writes nothing at all. */
+function assertVendorable(
+  blockName: string,
+  files: { path: string; contents: string }[],
+  blockRoot: string,
+): void {
+  if (files.length > MAX_CODE_FILES) {
+    throw new VendorError(
+      `Block "${blockName}" ships ${files.length} code files (max ${MAX_CODE_FILES}) — refusing to vendor.`,
+    );
+  }
+  let totalBytes = 0;
+  for (const file of files) {
+    const issue = vendorPathIssue(file.path);
+    if (issue) {
+      throw new VendorError(
+        `Block "${blockName}" declares an unsafe code path ${JSON.stringify(file.path)}: ${issue}. Nothing was vendored.`,
+      );
+    }
+    // Belt after the suspenders: the resolved target must sit inside blockRoot.
+    const target = resolve(blockRoot, file.path.replace(/\\/g, '/'));
+    if (!target.startsWith(blockRoot + sep)) {
+      throw new VendorError(
+        `Block "${blockName}" code path ${JSON.stringify(file.path)} resolves outside blocks/${blockName}/. Nothing was vendored.`,
+      );
+    }
+    totalBytes += Buffer.byteLength(file.contents, 'utf8');
+  }
+  if (totalBytes > MAX_TOTAL_CODE_BYTES) {
+    throw new VendorError(
+      `Block "${blockName}" embeds ${totalBytes} bytes of code (max ${MAX_TOTAL_CODE_BYTES}) — refusing to vendor.`,
+    );
+  }
 }
 
 /** True when the project has a vendored folder for this block. */

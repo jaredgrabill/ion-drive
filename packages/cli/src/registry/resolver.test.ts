@@ -23,6 +23,9 @@ interface VersionSpec {
   status?: 'active' | 'deprecated' | 'yanked';
   statusReason?: string;
   requiresCore?: string;
+  size?: number;
+  attestationUrl?: string;
+  publishedAt?: string;
 }
 
 /** Builds a protocol-v1 block doc from a terse version spec. */
@@ -30,12 +33,16 @@ function doc(
   name: string,
   versions: Record<string, VersionSpec>,
   latest?: string,
+  repository?: string,
 ): RegistryBlockDoc {
   const entries: Record<string, RegistryVersionEntry> = {};
   for (const [version, spec] of Object.entries(versions)) {
     entries[version] = {
       artifactUrl: `../../${name}/dist/${version}/block.json`,
       digest: `sha256:${'0'.repeat(64)}`,
+      size: spec.size,
+      attestationUrl: spec.attestationUrl,
+      publishedAt: spec.publishedAt,
       dependencies: spec.deps ?? {},
       requires: spec.requiresCore ? { core: spec.requiresCore } : {},
       status: spec.status ?? 'active',
@@ -45,7 +52,14 @@ function doc(
   }
   const sorted = Object.keys(versions).sort();
   const latestKey = latest ?? sorted[sorted.length - 1] ?? '0.0.0';
-  return { schemaVersion: 1, name, latest: latestKey, versions: entries, advisories: [] };
+  return {
+    schemaVersion: 1,
+    name,
+    repository,
+    latest: latestKey,
+    versions: entries,
+    advisories: [],
+  };
 }
 
 type FakeRegistry = Record<string, RegistryBlockDoc>;
@@ -153,6 +167,33 @@ describe('resolvePlan basics', () => {
     const registries = { [MAIN_URL]: { crm: doc('crm', { '0.2.0': {} }) } };
     const p = await plan(registryRef('crm'), registries);
     expect(p.items[0]?.sourceUrl).toBe('https://main.test/crm/dist/0.2.0/block.json');
+  });
+
+  it('threads digest/size/attestationUrl/repository/publishedAt onto plan items (spec-04)', async () => {
+    const registries = {
+      [MAIN_URL]: {
+        crm: doc(
+          'crm',
+          {
+            '0.2.0': {
+              size: 1234,
+              // Relative — must resolve against the block file URL, like artifactUrl.
+              attestationUrl: '../../crm/dist/0.2.0/block.json.sigstore.json',
+              publishedAt: '2026-07-01T00:00:00Z',
+            },
+          },
+          undefined,
+          'https://github.com/acme/blocks',
+        ),
+      },
+    };
+    const p = await plan(registryRef('crm'), registries);
+    const item = p.items[0];
+    expect(item?.digest).toBe(`sha256:${'0'.repeat(64)}`);
+    expect(item?.size).toBe(1234);
+    expect(item?.attestationUrl).toBe('https://main.test/crm/dist/0.2.0/block.json.sigstore.json');
+    expect(item?.repository).toBe('https://github.com/acme/blocks');
+    expect(item?.publishedAt).toBe('2026-07-01T00:00:00Z');
   });
 
   it('with no selector picks the registry latest, not just the highest version', async () => {
@@ -393,20 +434,29 @@ describe('requires.core and local/URL roots', () => {
       dependencies: { crm: '^0.2.0' },
       objects: [{ name: 'widgets' }],
     };
-    const io: ResolverIO = { ...fakeIO(registries), getLocalOrUrlManifest: async () => manifest };
+    const io: ResolverIO = {
+      ...fakeIO(registries),
+      getLocalOrUrlManifest: async () => ({ manifest, digest: `sha256:${'b'.repeat(64)}` }),
+    };
     const p = await plan({ kind: 'local', path: './my-block' }, registries, { io });
     expect(names(p)).toEqual(['crm', 'my_block']);
     const root = p.items.find((i) => i.name === 'my_block');
     expect(root?.source).toBe('local');
     expect(root?.manifest).toBe(manifest);
+    // The digest computed at planning time rides on the item (spec-04 C8).
+    expect(root?.digest).toBe(`sha256:${'b'.repeat(64)}`);
     expect(p.items.find((i) => i.name === 'crm')?.registry).toBe('@main');
   });
 
   it('keeps the direct URL as a URL root source', async () => {
     const manifest: Manifest = { name: 'solo', version: '2.0.0' };
-    const io: ResolverIO = { ...fakeIO({}), getLocalOrUrlManifest: async () => manifest };
+    const io: ResolverIO = {
+      ...fakeIO({}),
+      getLocalOrUrlManifest: async () => ({ manifest, digest: `sha256:${'c'.repeat(64)}` }),
+    };
     const p = await plan({ kind: 'url', url: 'https://x.test/block.json' }, {}, { io });
     expect(p.items[0]?.source).toBe('https://x.test/block.json');
     expect(p.items[0]?.sourceUrl).toBe('https://x.test/block.json');
+    expect(p.items[0]?.digest).toBe(`sha256:${'c'.repeat(64)}`);
   });
 });

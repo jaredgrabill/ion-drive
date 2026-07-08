@@ -141,6 +141,8 @@ export {
   blockManifestSchema,
   blockNameSchema,
   blockRefSchema,
+  codePathIssue,
+  installSourceSchema,
   semverRangeSchema,
   semverVersionSchema,
   splitBlockRef,
@@ -158,6 +160,7 @@ export type {
   BlockActionDeclaration,
   BlockHookDeclaration,
   BlockCodeFile,
+  BlockInstallSource,
   InstalledBlock,
   BlockInstallReport,
 } from './blocks/index.js';

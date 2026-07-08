@@ -51,6 +51,27 @@ export interface InstalledBlock {
   status: string;
   createdObjects: string[];
   installedAt: string;
+  /** Provenance columns (spec-04) — absent on pre-spec-04 servers. */
+  artifactDigest?: string | null;
+  sourceRegistry?: string | null;
+  sourceUrl?: string | null;
+  publisher?: string | null;
+  attested?: boolean | null;
+  trustTier?: string | null;
+}
+
+/**
+ * Client-asserted install provenance, POSTed alongside the manifest and
+ * stored in the server's `_ion_blocks` ledger (spec-04 §4). Audit metadata,
+ * not a server-side security control.
+ */
+export interface InstallSource {
+  registry?: string;
+  url?: string;
+  digest?: string;
+  attested?: boolean;
+  publisher?: string;
+  tier?: 'official' | 'verified' | 'community';
 }
 
 export class IonApiClient {
@@ -124,6 +145,11 @@ export class IonApiClient {
     return this.request('GET', '/api/v1/blocks');
   }
 
+  /** One installed block's ledger row (incl. provenance — spec-04). */
+  getBlock(name: string): Promise<InstalledBlock> {
+    return this.request('GET', `/api/v1/blocks/${encodeURIComponent(name)}`);
+  }
+
   /** The action/hook handlers currently registered in the running server (Phase 14). */
   async listRegisteredHandlers(): Promise<RegisteredHandlers> {
     const data = await this.request<{ registered: RegisteredHandlers }>(
@@ -135,13 +161,16 @@ export class IonApiClient {
 
   install(
     manifest: Manifest,
-    opts: { dryRun?: boolean; force?: boolean } = {},
+    opts: { dryRun?: boolean; force?: boolean; source?: InstallSource } = {},
   ): Promise<InstallReport> {
     const params = new URLSearchParams();
     if (opts.dryRun) params.set('dryRun', 'true');
     if (opts.force) params.set('force', 'true');
     const qs = params.toString() ? `?${params}` : '';
-    return this.request('POST', `/api/v1/blocks/install${qs}`, { manifest });
+    return this.request('POST', `/api/v1/blocks/install${qs}`, {
+      manifest,
+      ...(opts.source ? { source: opts.source } : {}),
+    });
   }
 
   uninstall(

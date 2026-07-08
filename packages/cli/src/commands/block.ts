@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import semver from 'semver';
 import { type Manifest, readLocalBlock } from '../registry/registry-client.js';
+import { packBytes } from '../registry/verify.js';
 import { c, log, sym } from '../ui.js';
 
 // ---------------------------------------------------------------------------
@@ -331,7 +332,9 @@ export async function blockPackCommand(dir = '.'): Promise<void> {
 
   const distPath = join(root, 'dist', 'block.json');
   mkdirSync(dirname(distPath), { recursive: true });
-  writeFileSync(distPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  // packBytes is the shared renderer (spec-04): a digest computed over a
+  // local block equals the digest of the published artifact packed from it.
+  writeFileSync(distPath, packBytes(manifest));
   log.success(
     `Packed ${c.bold(String(manifest.name))} → ${c.cyan(join(basename(root), 'dist', 'block.json'))} (${(manifest.code ?? []).length} code file(s) embedded)`,
   );

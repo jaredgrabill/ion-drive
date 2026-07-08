@@ -33,7 +33,8 @@
     "ora": "^8.1.0",
     "prompts": "^2.4.0",
     "fs-extra": "^11.2.0",
-    "semver": "^7.6.0"
+    "semver": "^7.6.0",
+    "sigstore": "^3.0.0"
   },
   "devDependencies": {
     "@ion-drive/core": "workspace:^",

@@ -137,6 +137,9 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
     },
   };
 
+  // --- Building-blocks paths (ledger + install envelope, spec-04) ---
+  addBlockPaths(paths, schemas);
+
   // --- Data object CRUD paths (per object) ---
   for (const obj of objects) {
     const schemaName = pascalCase(obj.name);
@@ -331,6 +334,7 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
     components: { schemas },
     tags: [
       { name: 'Schema', description: 'Schema management — create and modify data objects' },
+      { name: 'Blocks', description: 'Building blocks — install ledger with provenance' },
       ...objects.map((o) => ({
         name: o.displayName,
         description: o.description ?? `CRUD operations for ${o.displayName}`,
@@ -342,6 +346,137 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The static building-blocks operations (spec-04 surface parity): the ledger
+ * reads (incl. the six provenance fields) and the install envelope. Static
+ * because the block surface does not vary with the schema registry.
+ */
+function addBlockPaths(paths: Record<string, unknown>, schemas: Record<string, unknown>): void {
+  schemas.InstalledBlock = {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      version: { type: 'string' },
+      title: { type: 'string' },
+      status: { type: 'string', enum: ['installing', 'installed', 'failed'] },
+      createdObjects: { type: 'array', items: { type: 'string' } },
+      manifest: { type: 'object', description: 'The manifest snapshot as installed' },
+      artifactDigest: {
+        type: ['string', 'null'],
+        description: 'sha256:<hex> the installing client computed over the artifact bytes',
+      },
+      sourceRegistry: { type: ['string', 'null'], description: 'Registry namespace (e.g. @ion)' },
+      sourceUrl: { type: ['string', 'null'], description: 'Exact artifact URL' },
+      publisher: {
+        type: ['string', 'null'],
+        description: 'Publisher identity (e.g. github.com/jaredgrabill/ion-drive-blocks)',
+      },
+      attested: {
+        type: ['boolean', 'null'],
+        description: 'Whether the installing client verified a sigstore attestation',
+      },
+      trustTier: {
+        type: ['string', 'null'],
+        enum: ['official', 'verified', 'community', null],
+        description: 'Trust tier the installing client computed (client-asserted)',
+      },
+      installedAt: { type: 'string', format: 'date-time' },
+      updatedAt: { type: 'string', format: 'date-time' },
+    },
+  };
+  schemas.BlockInstallSource = {
+    type: 'object',
+    description:
+      'Client-asserted install provenance, stored in the ledger for audit — not a server-side security control',
+    additionalProperties: false,
+    properties: {
+      registry: { type: 'string', maxLength: 128 },
+      url: { type: 'string', format: 'uri', maxLength: 2000 },
+      digest: { type: 'string', pattern: '^sha256:[0-9a-f]{64}$' },
+      attested: { type: 'boolean' },
+      publisher: { type: 'string', maxLength: 255 },
+      tier: { type: 'string', enum: ['official', 'verified', 'community'] },
+    },
+  };
+
+  paths['/api/v1/blocks'] = {
+    get: {
+      summary: 'List installed blocks',
+      operationId: 'listBlocks',
+      tags: ['Blocks'],
+      responses: {
+        '200': {
+          description: 'The install ledger, provenance included',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  data: { type: 'array', items: { $ref: '#/components/schemas/InstalledBlock' } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  paths['/api/v1/blocks/{name}'] = {
+    get: {
+      summary: 'Get one installed block',
+      operationId: 'getBlock',
+      tags: ['Blocks'],
+      parameters: [{ name: 'name', in: 'path', required: true, schema: { type: 'string' } }],
+      responses: {
+        '200': {
+          description: 'The block ledger row',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { data: { $ref: '#/components/schemas/InstalledBlock' } },
+              },
+            },
+          },
+        },
+        '404': { description: 'Block not installed' },
+      },
+    },
+  };
+  paths['/api/v1/blocks/install'] = {
+    post: {
+      summary: 'Install a block manifest',
+      operationId: 'installBlock',
+      tags: ['Blocks'],
+      parameters: [
+        { name: 'dryRun', in: 'query', schema: { type: 'boolean' } },
+        { name: 'force', in: 'query', schema: { type: 'boolean' } },
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['manifest'],
+              properties: {
+                manifest: { type: 'object', description: 'The block manifest (v1)' },
+                source: { $ref: '#/components/schemas/BlockInstallSource' },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        '201': { description: 'Install report' },
+        '200': { description: 'Dry-run report' },
+        '400': { description: 'Invalid manifest or source envelope' },
+        '422': { description: 'Unmet or out-of-range block dependency' },
+      },
+    },
+  };
+}
 
 function generateObjectSchema(obj: DataObjectDefinition): Record<string, unknown> {
   const properties: Record<string, unknown> = {};

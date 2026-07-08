@@ -21,6 +21,7 @@ import {
   type DeclaredAction,
   mcpShapeForAction,
 } from '../blocks/action-executor.js';
+import type { InstalledBlock } from '../blocks/block-types.js';
 import type { DataService } from '../data/data-service.js';
 import { listRelationKeys } from '../data/relation-keys.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
@@ -66,6 +67,14 @@ export interface McpServerOptions {
   actions?: {
     declared: DeclaredAction[];
     executor: ActionExecutor;
+  };
+  /**
+   * Installed-block ledger access for the `list_blocks` tool (spec-04
+   * surface parity). Absent on headless setups without the block engine —
+   * the tool simply isn't registered then.
+   */
+  blocks?: {
+    listInstalled: () => Promise<InstalledBlock[]>;
   };
 }
 
@@ -785,6 +794,34 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     for (const action of declared) {
       registerActionTool(server, executor, action);
     }
+  }
+
+  // Installed-block ledger, provenance included (spec-04 surface parity with
+  // GET /api/v1/blocks). Gated on the engine being wired so headless setups
+  // (no block engine) simply lack the tool.
+  if (options.blocks) {
+    const blocks = options.blocks;
+    server.tool(
+      'list_blocks',
+      'List installed building blocks with their install provenance (version, status, trust tier, artifact digest, publisher).',
+      {},
+      async () => {
+        const installed = await blocks.listInstalled();
+        const result = installed.map((b) => ({
+          name: b.name,
+          version: b.version,
+          status: b.status,
+          title: b.title,
+          trustTier: b.trustTier,
+          artifactDigest: b.artifactDigest,
+          publisher: b.publisher,
+          installedAt: b.installedAt,
+        }));
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        };
+      },
+    );
   }
 
   return server;

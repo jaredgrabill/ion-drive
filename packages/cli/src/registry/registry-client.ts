@@ -48,6 +48,7 @@ import {
   parseIndexDoc,
   resolveRegistryUrl,
 } from './protocol.js';
+import { computeDigest } from './verify.js';
 
 // Re-exports so commands keep one import site for the registry layer.
 export { RegistryError, isPermittedRegistryUrl, resolveRegistryUrl } from './protocol.js';
@@ -251,23 +252,25 @@ export async function fetchArtifact(
 
 /**
  * Fetches and parses a manifest from a direct URL:
- * `fetchArtifact → (spec-04 verify hook slot) → JSON.parse → asManifest`.
- * Direct-URL installs have no registry-declared digest — spec-04 records the
- * *computed* digest with the URL as `source`.
+ * `fetchArtifact → computeDigest → JSON.parse → asManifest`.
+ * Direct-URL installs have no registry-declared digest to compare against —
+ * the digest is computed over the exact fetched bytes **here** (never
+ * re-fetched later, spec-04) and recorded with the URL as `source`, so the
+ * user can pin it.
  */
 export async function fetchManifestFromUrl(
   url: string,
   opts: { fetchImpl?: typeof fetch } = {},
-): Promise<Manifest> {
+): Promise<{ manifest: Manifest; digest: string }> {
   const { bytes } = await fetchArtifact(url, {}, opts);
-  // (spec-04: digest verification of `bytes` slots in here.)
+  const digest = computeDigest(bytes);
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     throw new RegistryError(`Manifest at ${url} is not JSON`);
   }
-  return asManifest(parsed, url);
+  return { manifest: asManifest(parsed, url), digest };
 }
 
 // --- Local blocks (the authoring dev loop) ------------------------------------

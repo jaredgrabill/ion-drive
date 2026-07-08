@@ -123,7 +123,9 @@ function sectionRows(section: CatalogSection, installed: Set<string>, all?: bool
   return Object.entries(section.index?.blocks ?? {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, entry]) => [
-      `${sym.orbit} ${c.bold(name)}`,
+      // The index `trust` field is a DISPLAY HINT only — real tiers are
+      // computed by the CLI at add/verify time (spec-04), hence "(claimed)".
+      `${sym.orbit} ${c.bold(name)}${entry.trust ? c.dim(` ${entry.trust} (claimed)`) : ''}`,
       c.dim(clip(entry.description ?? '', 46)),
       ...(all ? [c.plasma(section.namespace)] : []),
       c.cyan(entry.latest),

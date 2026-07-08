@@ -185,21 +185,74 @@ const subscriptionSchema = z
   .strict();
 
 /**
+ * Rejects a vendored code path that could escape `blocks/<block>/` when the
+ * CLI writes it (spec-04 §5 hardening). Returns the human-readable problem,
+ * or `null` when the path is safe. Order matters: backslashes are normalized
+ * to `/` FIRST, then the normalized form is validated (never
+ * validate-then-normalize — a `..\` would slip past a `/`-only check).
+ *
+ * KEEP IN SYNC with the CLI's `vendorPathIssue` in
+ * `packages/cli/src/project.ts` — same rules, deliberately duplicated so the
+ * CLI needs no runtime core dependency. Both test files share one
+ * attack-vector list.
+ */
+export function codePathIssue(path: string): string | null {
+  if (path.length < 1 || path.length > 200) return 'must be 1–200 characters';
+  const normalized = path.replace(/\\/g, '/');
+  if (/^[a-zA-Z]:/.test(normalized)) return 'must not be a Windows drive path';
+  if (normalized.startsWith('//')) return 'must not be a UNC path';
+  if (normalized.startsWith('/')) return 'must be relative (no leading /)';
+  for (const segment of normalized.split('/')) {
+    if (segment === '') return 'must not contain empty path segments';
+    if (segment === '.') return 'must not contain "." segments';
+    if (segment === '..') return 'must not contain ".." segments';
+  }
+  return null;
+}
+
+/** Bounds on the embedded `code[]` payload (spec-04 §5 — memory/DoS guard). */
+const MAX_CODE_FILES = 500;
+const MAX_TOTAL_CODE_BYTES = 5 * 1024 * 1024; // 5 MB across all files
+
+/**
  * A vendored code file distributed with the block (Phase 14, ADR-018). The CLI
  * copies these into the user's project at `/blocks/<block>/<path>`; the server
  * ignores them at install time (the ledger keeps the snapshot for future
- * `diff` support). Paths are relative and must stay inside the block folder.
+ * `diff` support). Paths are relative and must stay inside the block folder —
+ * {@link codePathIssue} is the full spec-04 rule set (Windows drive/UNC forms,
+ * `..`/`.`/empty segments, length), applied after the basic length bounds so
+ * the published JSON Schema keeps its `minLength`/`maxLength`.
  */
 const codeFileSchema = z
   .object({
     path: z
       .string()
       .min(1)
-      .max(255)
-      .refine((p) => !p.startsWith('/') && !p.includes('..'), 'must be a safe relative path'),
+      .max(200)
+      .refine(
+        (p) => codePathIssue(p) === null,
+        (p) => ({ message: codePathIssue(p) ?? 'must be a safe relative path' }),
+      ),
     contents: z.string().max(512_000),
   })
   .strict();
+
+/** The `code[]` array with its file-count + total-size caps (spec-04 §5). */
+const codeArraySchema = z.array(codeFileSchema).superRefine((files, ctx) => {
+  if (files.length > MAX_CODE_FILES) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `code declares ${files.length} files (max ${MAX_CODE_FILES})`,
+    });
+  }
+  const totalBytes = files.reduce((sum, f) => sum + Buffer.byteLength(f.contents, 'utf8'), 0);
+  if (totalBytes > MAX_TOTAL_CODE_BYTES) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `code embeds ${totalBytes} bytes in total (max ${MAX_TOTAL_CODE_BYTES})`,
+    });
+  }
+});
 
 /**
  * A callable action the block exposes (Phase 14). The *declaration* here is the
@@ -324,11 +377,43 @@ export const blockManifestSchema = z
     /** Runtime requirements validated at install time (Phase 14). */
     requires: requiresSchema.default({ handlers: [], plugins: [] }),
     /** Vendored code files the CLI copies into the user's `/blocks/<name>/` (Phase 14). */
-    code: z.array(codeFileSchema).default([]),
+    code: codeArraySchema.default([]),
     /** Arbitrary metadata (docs URL, icon, etc.). */
     meta: z.record(z.unknown()).default({}),
   })
   .strict();
+
+/**
+ * Client-asserted install provenance (spec-04 §4): the CLI verifies the
+ * artifact digest and attestation locally, then reports what it found in the
+ * install envelope (`POST /api/v1/blocks/install` `{ manifest, source }`).
+ * The server stores it in the `_ion_blocks` ledger for audit/ops ("which
+ * servers installed the bad digest?") — it is **not** a server-side security
+ * control (the RBAC manage-on-blocks guard is). Strict: unknown keys are
+ * rejected so typos never silently drop provenance.
+ */
+export const installSourceSchema = z
+  .object({
+    /** Registry namespace the block came from (e.g. `@ion`). */
+    registry: z.string().max(128).optional(),
+    /** The exact artifact URL. */
+    url: z.string().url().max(2000).optional(),
+    /** `sha256:<hex>` the client computed over the artifact bytes. */
+    digest: z
+      .string()
+      .regex(/^sha256:[0-9a-f]{64}$/)
+      .optional(),
+    /** Whether a sigstore attestation verified for these bytes. */
+    attested: z.boolean().optional(),
+    /** Who published it (e.g. `github.com/jaredgrabill/ion-drive-blocks`). */
+    publisher: z.string().max(255).optional(),
+    /** The trust tier the client computed (never self-asserted by registries). */
+    tier: z.enum(['official', 'verified', 'community']).optional(),
+  })
+  .strict();
+
+/** A parsed install-source envelope. */
+export type BlockInstallSource = z.infer<typeof installSourceSchema>;
 
 // ---------------------------------------------------------------------------
 // Derived TypeScript types
@@ -366,6 +451,20 @@ export interface InstalledBlock {
   createdObjects: string[];
   /** The full manifest snapshot as installed (so the consumer owns their copy). */
   manifest: BlockManifest;
+  // Provenance from the install `source` envelope (spec-04). All nullable:
+  // bare-manifest installs (curl, tests) record nothing.
+  /** `sha256:<hex>` the installing client computed over the artifact bytes. */
+  artifactDigest: string | null;
+  /** Registry namespace it came from (e.g. `@ion`). */
+  sourceRegistry: string | null;
+  /** The exact artifact URL. */
+  sourceUrl: string | null;
+  /** Who published it (e.g. `github.com/jaredgrabill/ion-drive-blocks`). */
+  publisher: string | null;
+  /** Whether the installing client verified a sigstore attestation. */
+  attested: boolean | null;
+  /** Trust tier the installing client computed (`official`/`verified`/`community`). */
+  trustTier: string | null;
   installedAt: Date;
   updatedAt: Date;
 }

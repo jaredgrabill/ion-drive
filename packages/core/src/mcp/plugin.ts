@@ -14,6 +14,7 @@
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { FastifyPluginCallback } from 'fastify';
 import type { ActionExecutor } from '../blocks/action-executor.js';
+import type { InstalledBlock } from '../blocks/block-types.js';
 import type { DataService } from '../data/data-service.js';
 import type { SchemaManager } from '../schema/schema-manager.js';
 import { createMcpServer } from './server.js';
@@ -23,6 +24,8 @@ export interface McpRoutesOptions {
   dataService: DataService;
   /** When present, installed blocks' actions are exposed as `<block>_<action>` tools (Phase 14). */
   actionExecutor?: ActionExecutor;
+  /** When present, the `list_blocks` ledger tool is exposed (spec-04 parity). */
+  blockEngine?: { listInstalled: () => Promise<InstalledBlock[]> };
 }
 
 /** JSON-RPC error returned for unsupported methods in stateless mode. */
@@ -33,7 +36,7 @@ const METHOD_NOT_ALLOWED = {
 };
 
 export function registerMcpRoutes(options: McpRoutesOptions): FastifyPluginCallback {
-  const { schemaManager, dataService, actionExecutor } = options;
+  const { schemaManager, dataService, actionExecutor, blockEngine } = options;
 
   return (fastify, _opts, done) => {
     fastify.post('/', async (request, reply) => {
@@ -42,7 +45,8 @@ export function registerMcpRoutes(options: McpRoutesOptions): FastifyPluginCallb
       const actions = actionExecutor
         ? { declared: await actionExecutor.listDeclaredActions(), executor: actionExecutor }
         : undefined;
-      const server = createMcpServer({ schemaManager, dataService, actions });
+      const blocks = blockEngine ? { listInstalled: () => blockEngine.listInstalled() } : undefined;
+      const server = createMcpServer({ schemaManager, dataService, actions, blocks });
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         // Stateless request/response: return a single JSON body rather than

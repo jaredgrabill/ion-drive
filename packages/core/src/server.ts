@@ -102,6 +102,11 @@ function resolveMasterSecret(config: IonDriveConfig, log: { warn: (msg: string) 
   return DEV_FALLBACK_KEY;
 }
 
+/** `value` when `enabled`, else undefined (keeps feature gates readable). */
+function onlyIf<T>(enabled: boolean, value: T): T | undefined {
+  return enabled ? value : undefined;
+}
+
 /**
  * Constant-time check of a `Authorization: Bearer <token>` header against the
  * configured metrics token (hashes both sides so lengths never leak).
@@ -589,9 +594,16 @@ export async function createServer(
   );
 
   // --- MCP server (Streamable HTTP, stateless) ---
-  await server.register(registerMcpRoutes({ schemaManager, dataService, actionExecutor }), {
-    prefix: '/api/v1/mcp',
-  });
+  await server.register(
+    registerMcpRoutes({
+      schemaManager,
+      dataService,
+      actionExecutor,
+      // list_blocks (ledger + provenance, spec-04) only when blocks are enabled.
+      blockEngine: onlyIf(config.blocksEnabled, blockEngine),
+    }),
+    { prefix: '/api/v1/mcp' },
+  );
 
   // --- Admin / management routes (RBAC, users, secrets, config, API keys) ---
   await server.register(

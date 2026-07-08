@@ -486,6 +486,77 @@ describe('platform lifecycle (integration)', () => {
     expect((await api('DELETE', '/api/v1/blocks/it_core_pin')).status).toBe(200);
   });
 
+  it('records install-source provenance in the ledger (spec-04 AC5)', async () => {
+    const manifest = { name: 'it_prov', version: '0.1.0', title: 'IT Provenance' };
+    const source = {
+      registry: '@ion',
+      url: 'https://registry.iondrive.dev/it_prov/dist/0.1.0/block.json',
+      digest: `sha256:${'a'.repeat(64)}`,
+      attested: true,
+      publisher: 'github.com/jaredgrabill/ion-drive-blocks',
+      tier: 'official',
+    };
+
+    // Envelope install → all six provenance columns round-trip via GET.
+    const install = await api('POST', '/api/v1/blocks/install', { manifest, source });
+    expect(install.status).toBe(201);
+    const withSource = await api('GET', '/api/v1/blocks/it_prov');
+    expect(withSource.status).toBe(200);
+    expect(withSource.body.data).toMatchObject({
+      artifactDigest: source.digest,
+      sourceRegistry: '@ion',
+      sourceUrl: source.url,
+      publisher: source.publisher,
+      attested: true,
+      trustTier: 'official',
+    });
+
+    // Unknown source key → 400 with the flat envelope + issues.
+    const badKey = await api('POST', '/api/v1/blocks/install?force=true', {
+      manifest,
+      source: { ...source, extra: 1 },
+    });
+    expect(badKey.status).toBe(400);
+    expect(badKey.body.error).toBe('Validation Error');
+    expect(Array.isArray(badKey.body.issues)).toBe(true);
+
+    // Bare-manifest reinstall keeps working and RESETS provenance to null.
+    const bare = await api('POST', '/api/v1/blocks/install?force=true', { manifest });
+    expect(bare.status).toBe(201);
+    const withoutSource = await api('GET', '/api/v1/blocks/it_prov');
+    expect(withoutSource.body.data).toMatchObject({
+      artifactDigest: null,
+      sourceRegistry: null,
+      sourceUrl: null,
+      publisher: null,
+      attested: null,
+      trustTier: null,
+    });
+
+    // OpenAPI parity: static Blocks paths + provenance-carrying components.
+    const spec = await api('GET', '/api/v1/openapi.json');
+    expect(spec.status).toBe(200);
+    const paths = spec.body.paths as Json;
+    expect(paths['/api/v1/blocks']).toBeDefined();
+    expect(paths['/api/v1/blocks/{name}']).toBeDefined();
+    expect(paths['/api/v1/blocks/install']).toBeDefined();
+    const schemas = (spec.body.components as Json).schemas as Json;
+    const installedBlockProps = ((schemas.InstalledBlock as Json).properties ?? {}) as Json;
+    for (const prop of [
+      'artifactDigest',
+      'sourceRegistry',
+      'sourceUrl',
+      'publisher',
+      'attested',
+      'trustTier',
+    ]) {
+      expect(installedBlockProps[prop]).toBeDefined();
+    }
+    expect((schemas.BlockInstallSource as Json).additionalProperties).toBe(false);
+
+    expect((await api('DELETE', '/api/v1/blocks/it_prov')).status).toBe(200);
+  });
+
   it('exposes block actions and hooks with requires validation (Phase 14)', async () => {
     if (!app) throw new Error('Server not booted');
 

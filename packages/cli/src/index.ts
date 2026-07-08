@@ -14,7 +14,7 @@
  *   remove <block>   Uninstall a block (your vendored code stays yours)
  *   dev              Run the project's server.ts (or core's, in the monorepo)
  *   schema …         Snapshot pull/diff/push + drift doctor
- *   block …          Block-authoring toolchain (new/validate/pack)
+ *   block …          Block-authoring toolchain (new/validate/pack/verify)
  *   registry …       Manage configured block registries (list/add/remove/ping)
  */
 
@@ -37,6 +37,7 @@ import {
   schemaPullCommand,
   schemaPushCommand,
 } from './commands/schema.js';
+import { blockVerifyCommand } from './commands/verify.js';
 import { banner, c, log, sym } from './ui.js';
 import { CLI_VERSION } from './version-check.js';
 
@@ -90,9 +91,11 @@ program
   .option('-d, --dry-run', 'Preview the changes without applying them')
   .option(
     '-f, --force',
-    'Reinstall an installed block, proceed through installed-version range conflicts, and force-reinstall on the server',
+    'Reinstall an installed block, proceed through installed-version range conflicts, and force-reinstall on the server (never bypasses digest verification)',
   )
   .option('--no-cache', 'Bypass the registry metadata cache')
+  .option('--show-code', 'List each vendored file (path, bytes, sha256) before confirming')
+  .option('--no-verify-provenance', 'Skip attestation checks (digest verification always runs)')
   .action((block, options) => addCommand(block, options));
 
 program
@@ -145,7 +148,7 @@ schema
 
 const block = program
   .command('block')
-  .description('Block-authoring toolchain (repo scaffold, validate, pack)');
+  .description('Block-authoring toolchain (repo scaffold, validate, pack, verify)');
 
 block
   .command('new')
@@ -164,6 +167,16 @@ block
   .argument('[dir]', 'Block repo directory (default: current)')
   .description('Emit dist/block.json with code/ embedded (the registry artifact)')
   .action((dir) => blockPackCommand(dir));
+
+block
+  .command('verify')
+  .argument('<ref>', 'Registry ref (crm, crm@0.2.0, @acme/billing@1.0.0), URL, or local path')
+  .description('Verify a published block: digest, attestation, trust tier (spec-04)')
+  .option('--against-installed', "Also compare the server ledger's digest with the registry's")
+  .option('--json', 'Plain JSON output')
+  .action((ref, options) =>
+    blockVerifyCommand(ref, { againstInstalled: options.againstInstalled, json: options.json }),
+  );
 
 // (`registry build` joins this group in spec-05 — the name is reserved.)
 const registry = program

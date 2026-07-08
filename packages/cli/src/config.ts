@@ -6,9 +6,9 @@
  * It also records which blocks the project has installed — an enriched record
  * (`name`/`version`/`digest`/`source`/`sourceUrl`/`installedAt`) that doubles
  * as the project's lockfile (ADR-022: blocks are singletons per server, so a
- * separate lockfile would carry no extra facts). The `digest` field is filled
- * by spec-04's verification hook; until then this spec records `null` so the
- * config format only changes once.
+ * separate lockfile would carry no extra facts). The `digest` field is the
+ * sha256 verified by spec-04's install gate (`null` only for records written
+ * by pre-spec-04 CLIs).
  *
  * Registries (spec-03 §1) are a namespace → URL map in the shadcn-3.0 shape:
  * a plain URL string or `{ url, headers?, params? }` for private registries.
@@ -60,7 +60,7 @@ export interface NormalizedRegistry {
 export interface InstalledBlockRecord {
   name: string;
   version: string;
-  /** `sha256:<hex>` of the installed artifact; `null` until spec-04 verifies. */
+  /** `sha256:<hex>` of the installed artifact (verified at add time, spec-04). */
   digest: string | null;
   /** Where it came from: a registry namespace (`@ion`), `local`, or a URL. */
   source: string;

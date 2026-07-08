@@ -12,9 +12,18 @@
 
 import { type Kysely, sql } from 'kysely';
 import type { IonBlock, SystemDatabase } from '../db/types.js';
-import type { BlockManifest, BlockStatus, InstalledBlock } from './block-types.js';
+import type {
+  BlockInstallSource,
+  BlockManifest,
+  BlockStatus,
+  InstalledBlock,
+} from './block-types.js';
 
-/** Creates the block ledger table if absent. Safe to call repeatedly. */
+/**
+ * Creates the block ledger table if absent, then upgrades pre-existing
+ * tables with columns added later ({@link migrateBlockTables}). Safe to call
+ * repeatedly.
+ */
 export async function bootstrapBlockTables(db: Kysely<SystemDatabase>): Promise<void> {
   await db.schema
     .createTable('_ion_blocks')
@@ -25,9 +34,31 @@ export async function bootstrapBlockTables(db: Kysely<SystemDatabase>): Promise<
     .addColumn('status', 'varchar(20)', (col) => col.notNull())
     .addColumn('created_objects', 'jsonb', (col) => col.notNull().defaultTo('[]'))
     .addColumn('manifest', 'jsonb', (col) => col.notNull().defaultTo('{}'))
+    .addColumn('artifact_digest', 'text')
+    .addColumn('source_registry', 'text')
+    .addColumn('source_url', 'text')
+    .addColumn('publisher', 'text')
+    .addColumn('attested', 'boolean')
+    .addColumn('trust_tier', 'text')
     .addColumn('installed_at', 'timestamptz', (col) => col.notNull().defaultTo(db.fn('now')))
     .addColumn('updated_at', 'timestamptz', (col) => col.notNull().defaultTo(db.fn('now')))
     .execute();
+
+  await migrateBlockTables(db);
+}
+
+/**
+ * Boot migration for ledgers created before spec-04: the six nullable
+ * provenance columns. Every statement is `ADD COLUMN IF NOT EXISTS` (the
+ * `schema/system-tables.ts` pattern), so this is a no-op on fresh installs.
+ */
+async function migrateBlockTables(db: Kysely<SystemDatabase>): Promise<void> {
+  await sql`ALTER TABLE "_ion_blocks" ADD COLUMN IF NOT EXISTS "artifact_digest" TEXT`.execute(db);
+  await sql`ALTER TABLE "_ion_blocks" ADD COLUMN IF NOT EXISTS "source_registry" TEXT`.execute(db);
+  await sql`ALTER TABLE "_ion_blocks" ADD COLUMN IF NOT EXISTS "source_url" TEXT`.execute(db);
+  await sql`ALTER TABLE "_ion_blocks" ADD COLUMN IF NOT EXISTS "publisher" TEXT`.execute(db);
+  await sql`ALTER TABLE "_ion_blocks" ADD COLUMN IF NOT EXISTS "attested" BOOLEAN`.execute(db);
+  await sql`ALTER TABLE "_ion_blocks" ADD COLUMN IF NOT EXISTS "trust_tier" TEXT`.execute(db);
 }
 
 /** Maps a raw ledger row to the API-facing {@link InstalledBlock}. */
@@ -39,6 +70,12 @@ function toInstalledBlock(row: IonBlock): InstalledBlock {
     status: row.status as BlockStatus,
     createdObjects: row.created_objects ?? [],
     manifest: row.manifest as unknown as BlockManifest,
+    artifactDigest: row.artifact_digest,
+    sourceRegistry: row.source_registry,
+    sourceUrl: row.source_url,
+    publisher: row.publisher,
+    attested: row.attested,
+    trustTier: row.trust_tier,
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
   };
@@ -87,8 +124,22 @@ export class BlockStore {
   /**
    * Records the start of an install (status `installing`). Upserts so a retried
    * install of a previously-failed block overwrites the stale row.
+   *
+   * The optional `source` envelope writes the spec-04 provenance columns —
+   * in the upsert branch too, so a bare reinstall RESETS them to null
+   * (correct for client-asserted metadata: stale provenance would be a lie).
+   * Note a *failed* install keeps the asserted source on its `failed` row —
+   * desirable for the "which servers touched the bad digest?" question.
    */
-  async begin(manifest: BlockManifest): Promise<void> {
+  async begin(manifest: BlockManifest, source?: BlockInstallSource): Promise<void> {
+    const provenance = {
+      artifact_digest: source?.digest ?? null,
+      source_registry: source?.registry ?? null,
+      source_url: source?.url ?? null,
+      publisher: source?.publisher ?? null,
+      attested: source?.attested ?? null,
+      trust_tier: source?.tier ?? null,
+    };
     await this.db
       .insertInto('_ion_blocks')
       .values({
@@ -98,6 +149,7 @@ export class BlockStore {
         status: 'installing',
         created_objects: JSON.stringify([]),
         manifest: JSON.stringify(manifest),
+        ...provenance,
       })
       .onConflict((oc) =>
         oc.column('name').doUpdateSet({
@@ -106,6 +158,7 @@ export class BlockStore {
           status: 'installing',
           created_objects: JSON.stringify([]),
           manifest: JSON.stringify(manifest),
+          ...provenance,
           updated_at: sql`now()`,
         }),
       )

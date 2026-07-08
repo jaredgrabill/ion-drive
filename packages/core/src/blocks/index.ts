@@ -28,6 +28,7 @@ import { BlockManifestError, parseManifest } from './block-manifest.js';
 import { BlockStore, bootstrapBlockTables } from './block-store.js';
 import {
   type BlockInstallReport,
+  type BlockInstallSource,
   type BlockManifest,
   type InstalledBlock,
   toSubscriptionInput,
@@ -89,6 +90,11 @@ export interface InstallBlockOptions {
   dryRun?: boolean;
   /** Re-apply even if the block is already installed. */
   force?: boolean;
+  /**
+   * Client-asserted install provenance (spec-04) recorded in the ledger.
+   * Absent for bare-manifest installs — the columns stay null.
+   */
+  source?: BlockInstallSource;
 }
 
 export interface UninstallBlockOptions {
@@ -196,7 +202,7 @@ export class BlockEngine {
 
     const outOfRange = await this.checkDependencies(manifest, options.force ?? false);
 
-    await this.store.begin(manifest);
+    await this.store.begin(manifest, options.source);
     try {
       const report = await this.installer.install(manifest, {
         dryRun: false,
@@ -337,6 +343,8 @@ export {
   blockManifestSchema,
   blockNameSchema,
   blockRefSchema,
+  codePathIssue,
+  installSourceSchema,
   semverRangeSchema,
   semverVersionSchema,
   splitBlockRef,
@@ -353,6 +361,7 @@ export type {
   BlockActionDeclaration,
   BlockHookDeclaration,
   BlockCodeFile,
+  BlockInstallSource,
   InstalledBlock,
   BlockInstallReport,
 } from './block-types.js';

@@ -25,6 +25,8 @@ import type { PermissionEngine } from '../auth/rbac/permission-engine.js';
 import type { Action } from '../auth/rbac/policy-types.js';
 import { PLATFORM_RESOURCES } from '../auth/rbac/policy-types.js';
 import { ActionError, type ActionExecutor } from '../blocks/action-executor.js';
+import type { BlockInstallSource } from '../blocks/block-types.js';
+import { installSourceSchema } from '../blocks/block-types.js';
 import { type BlockEngine, BlockEngineError } from '../blocks/index.js';
 
 export interface BlockRoutesServices {
@@ -80,6 +82,38 @@ export function sendActionError(reply: FastifyReply, err: ActionError) {
   return reply.code(status).send({ error: label, message: err.message, issues: err.issues });
 }
 
+/**
+ * Parses the optional client-asserted `source` envelope (spec-04 §4): only
+ * meaningful on envelope-form bodies (`{ manifest, source }` — a bare
+ * manifest cannot carry one). A malformed source 400s with the flat envelope
+ * + issues rather than being silently dropped.
+ */
+function parseInstallSource(
+  body: unknown,
+  reply: FastifyReply,
+): { ok: true; source?: BlockInstallSource } | { ok: false } {
+  const envelope = body as { manifest?: unknown; source?: unknown } | null;
+  if (!envelope || typeof envelope !== 'object' || envelope.manifest === undefined) {
+    return { ok: true }; // bare-manifest body — no envelope, no source
+  }
+  if (envelope.source === undefined) return { ok: true };
+  const parsed = installSourceSchema.safeParse(envelope.source);
+  if (!parsed.success) {
+    void reply.code(400).send({
+      error: 'Validation Error',
+      message: 'Invalid install source envelope',
+      issues: parsed.error.issues.map((i) => `${i.path.join('.') || 'source'}: ${i.message}`),
+    });
+    return { ok: false };
+  }
+  return { ok: true, source: parsed.data };
+}
+
+/** Interprets a boolean query flag (`?x=true` / `?x=1`). */
+function queryFlag(value: string | undefined): boolean {
+  return value === 'true' || value === '1';
+}
+
 export function registerBlockRoutes(services: BlockRoutesServices): FastifyPluginCallback {
   const { blockEngine, permissionEngine } = services;
 
@@ -96,6 +130,11 @@ export function registerBlockRoutes(services: BlockRoutesServices): FastifyPlugi
 
     // --- Preview an install (dry run; static path resolves ahead of /:name) ---
     fastify.post('/preview', { preHandler: guard('read') }, async (request, reply) => {
+      // Validate the source envelope for parity with /install (a typo'd
+      // envelope should fail the same way in both), though preview never
+      // writes the ledger, so the parsed value is unused.
+      const sourceCheck = parseInstallSource(request.body, reply);
+      if (!sourceCheck.ok) return reply;
       try {
         return {
           data: await blockEngine.preview(
@@ -109,16 +148,24 @@ export function registerBlockRoutes(services: BlockRoutesServices): FastifyPlugi
     });
 
     // --- Install a block from a submitted manifest ---
+    // Body: a bare manifest, or the envelope `{ manifest, source? }` where
+    // `source` is client-asserted provenance stored in the ledger (spec-04).
     fastify.post<{ Querystring: { dryRun?: string; force?: string } }>(
       '/install',
       { preHandler: guard('manage') },
       async (request, reply) => {
         const body = request.body as { manifest?: unknown };
         const manifest = body?.manifest ?? request.body;
-        const dryRun = request.query.dryRun === 'true' || request.query.dryRun === '1';
-        const force = request.query.force === 'true' || request.query.force === '1';
+        const dryRun = queryFlag(request.query.dryRun);
+        const force = queryFlag(request.query.force);
+        const sourceCheck = parseInstallSource(request.body, reply);
+        if (!sourceCheck.ok) return reply;
         try {
-          const report = await blockEngine.install(manifest, { dryRun, force });
+          const report = await blockEngine.install(manifest, {
+            dryRun,
+            force,
+            source: sourceCheck.source,
+          });
           return reply.code(dryRun ? 200 : 201).send({ data: report });
         } catch (err) {
           if (err instanceof BlockEngineError) return sendEngineError(reply, err);
@@ -230,7 +277,7 @@ export function registerBlockRoutes(services: BlockRoutesServices): FastifyPlugi
       '/:name',
       { preHandler: guard('manage') },
       async (request, reply) => {
-        const dropData = request.query.dropData === 'true' || request.query.dropData === '1';
+        const dropData = queryFlag(request.query.dropData);
         try {
           const result = await blockEngine.uninstall(request.params.name, { dropData });
           return reply.code(200).send({ data: result });
