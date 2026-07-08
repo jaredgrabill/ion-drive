@@ -1,5 +1,7 @@
 # Spec 01 — Registry Protocol v1
 
+> **Status:** ✅ implemented 2026-07-08, commit af5dc64
+
 **Lands in:** `jaredgrabill/ion-drive` (JSON Schemas + types) and
 `jaredgrabill/ion-drive-blocks` (reference layout).
 **Depends on:** nothing. Spec-02 (manifest v1) defines the artifact's *contents*; this
