@@ -145,6 +145,9 @@ Tenant provisioning/lifecycle APIs on the system DB, request→tenant routing (h
 ### Phase 17 — Authorization depth
 Field-level RBAC (column masking on read, reject on write), row-level policies (owner scoping via actor identity from Phase 12), policy editor in admin. (F12)
 
+### Phase 18 — Blocks registry ecosystem (specced 2026-07-08, ADR-022)
+The shadcn-style distribution ecosystem: registry protocol v1 (static files, split index, per-version sha256 digests, immutability), manifest v1 (strict semver + dependency ranges + `requires.core`), multi-registry namespaces (`@ion` default, private registries via `${ENV}` auth), digest verification + sigstore attestations + official/verified/community trust tiers, `registry build`/`block publish` + a reusable GitHub Actions publish workflow, `block test`/`audit`, `diff`/`update` (closes the slipped Phase-14 stretch item), the M2 registry site/search/MCP, and the M3 hosted write API (draft). **Fully specced, one implementation agent per spec:** `docs/specs/blocks-ecosystem/` (9 specs + overview; milestone/dependency map in its README). Sequencing: M1 starts right after F23's owner-run first publish.
+
 ### Continuous (no phase)
 ~~External plugin packages (F19)~~ (✅ 2026-07-07), complexity-warning cleanup, remaining admin polish (§1.5), performance benchmarks. Plugin follow-ups if demanded: SMTP provider, RabbitMQ bus, a Redis-backed realtime bridge (the SSE stream stays outbox-only when the Redis bus is active).
 
