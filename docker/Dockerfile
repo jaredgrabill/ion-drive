@@ -24,8 +24,13 @@ RUN pnpm install --frozen-lockfile
 # Copy source
 COPY . .
 
-# Build all packages
-RUN pnpm run build
+# Build all packages. Concurrency is capped to 1: the multi-platform CI build
+# runs this under QEMU emulation for arm64, and full parallelism there hits a
+# race where a package's tsc process starts before its just-installed
+# node_modules (or a just-built workspace dependency) is fully visible on the
+# emulated filesystem — reproduces only under emulation, not on a native
+# single-platform build.
+RUN pnpm exec turbo run build --concurrency=1
 
 # --- Stage 2: Production ---
 FROM node:22-alpine AS production
