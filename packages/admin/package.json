@@ -1,6 +1,6 @@
 {
   "name": "@ion-drive/admin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Ion Drive admin console — configuration, monitoring, and data management UI",
   "license": "Apache-2.0",
   "author": "IonShift Technologies LLC",
@@ -11,7 +11,10 @@
     "directory": "packages/admin"
   },
   "type": "module",
-  "files": ["dist", "NOTICE"],
+  "files": [
+    "dist",
+    "NOTICE"
+  ],
   "publishConfig": {
     "access": "public"
   },

@@ -1,5 +1,20 @@
 # @ion-drive/core
 
+## 0.3.0
+
+### Minor Changes
+
+- Storage port + first-party plugin groundwork: new `StorageProvider` port with a
+  filesystem `LocalStorage` default registered under `STORAGE_SERVICE`
+  (`ION_STORAGE_DIR`, default `.ion-storage/`); `recordEventPublished`/
+  `recordEventDelivery` and `ION_ATTR` are now public exports so external bus
+  implementations keep `ion.event.*` telemetry parity; `PluginContext.bus`
+  re-resolves live so plugins loading after a bus swap see the replacement.
+
+### Patch Changes
+
+- @ion-drive/admin@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes

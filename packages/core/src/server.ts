@@ -64,6 +64,7 @@ import { ServiceRegistry, loadPlugins } from './runtime/index.js';
 import type { IonPlugin, PluginContext } from './runtime/index.js';
 import { SchemaDoctor } from './schema/doctor.js';
 import { SchemaManager } from './schema/index.js';
+import { LocalStorage, STORAGE_SERVICE } from './storage/index.js';
 import { TaskEngine } from './tasks/index.js';
 import type { TaskLogger } from './tasks/index.js';
 import {
@@ -336,6 +337,7 @@ export async function createServer(
   registry.set(LOGGER_SERVICE, logger);
   registry.set(CACHE_SERVICE, new MemoryCache());
   registry.set(EMAIL_SERVICE, new LogEmailProvider(logger));
+  registry.set(STORAGE_SERVICE, new LocalStorage(config.storageDir));
 
   // The default bus is the Postgres transactional outbox (co-located with the
   // tenant data so publishes are atomic with writes). Disabled → a no-op bus.
@@ -365,7 +367,11 @@ export async function createServer(
     registry,
     config,
     logger,
-    bus: registry.require(MESSAGE_BUS),
+    // Live lookup: a plugin that swaps MESSAGE_BUS (e.g. plugin-redis) must be
+    // visible to plugins loading after it, so `bus` re-resolves per access.
+    get bus() {
+      return registry.require(MESSAGE_BUS);
+    },
     actions: actionRegistry,
   };
   const loadedPlugins = await loadPlugins({

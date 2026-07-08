@@ -21,15 +21,37 @@ a default implementation, registered in a **service registry** under a typed
 token. A plugin overrides a service by registering a different implementation
 under the same token — last write wins.
 
-| Token | Port | Default | Example plugin |
+| Token | Port | Default | First-party plugin |
 |---|---|---|---|
-| `CACHE_SERVICE` | `CacheProvider` | in-memory `MemoryCache` | Redis |
-| `EMAIL_SERVICE` | `EmailProvider` | `LogEmailProvider` (logs only) | SendGrid / SMTP |
-| `MESSAGE_BUS` | `MessageBus` | Postgres outbox `OutboxBus` | Redis Streams |
+| `CACHE_SERVICE` | `CacheProvider` | in-memory `MemoryCache` | [`@ion-drive/plugin-redis`](../../packages/plugin-redis/README.md) |
+| `EMAIL_SERVICE` | `EmailProvider` | `LogEmailProvider` (logs only) | [`@ion-drive/plugin-sendgrid`](../../packages/plugin-sendgrid/README.md) |
+| `MESSAGE_BUS` | `MessageBus` | Postgres outbox `OutboxBus` | [`@ion-drive/plugin-redis`](../../packages/plugin-redis/README.md) (opt-in) |
+| `STORAGE_SERVICE` | `StorageProvider` | filesystem `LocalStorage` (`ION_STORAGE_DIR`) | [`@ion-drive/plugin-storage-s3`](../../packages/plugin-storage-s3/README.md) |
 | `LOGGER_SERVICE` | `LoggerProvider` | pino + OpenTelemetry | — |
 
 Anywhere in core or a block that needs a service resolves it from the registry,
 so it transparently uses whatever a plugin installed.
+
+## First-party plugins
+
+Three official plugins ship from the Ion Drive monorepo (ADR-021):
+
+- **`@ion-drive/plugin-redis`** — Redis cache (default on) and an opt-in Redis
+  Streams message bus. The bus swap trades the transactional outbox's
+  publish-atomic-with-commit guarantee and the `/api/v1/events` ledger/realtime
+  surfaces for broker-based delivery; webhooks, block subscriptions, the retry
+  schedule, and `ion.event.*` telemetry are all preserved. Read the package
+  README's trade-off table before setting `ION_REDIS_BUS=true`.
+- **`@ion-drive/plugin-sendgrid`** — real outbound email via the SendGrid v3
+  API (zero-dependency fetch transport). `SENDGRID_API_KEY` + optional
+  `SENDGRID_FROM`.
+- **`@ion-drive/plugin-storage-s3`** — S3-compatible blob storage (AWS S3,
+  MinIO, Cloudflare R2) with pre-signed download URLs, replacing the local
+  filesystem store.
+
+Each exposes an options factory (`redisPlugin({...})`, `sendgridPlugin({...})`,
+`s3StoragePlugin({...})`) for programmatic composition plus an env-driven
+default export for `ION_PLUGINS`.
 
 ## Writing a plugin
 

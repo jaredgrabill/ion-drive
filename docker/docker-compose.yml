@@ -25,6 +25,37 @@ services:
       timeout: 5s
       retries: 5
 
+  # --- Redis (optional — for @ion-drive/plugin-redis) ---
+  # Uncomment when developing against the Redis cache/bus plugin.
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: ion-drive-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 5
+
+  # --- MinIO (optional — S3-compatible target for @ion-drive/plugin-storage-s3) ---
+  # Console at http://localhost:9001 (minioadmin/minioadmin). Create a bucket,
+  # then set ION_S3_BUCKET + ION_S3_ENDPOINT=http://localhost:9000.
+  # minio:
+  #   image: minio/minio
+  #   container_name: ion-drive-minio
+  #   restart: unless-stopped
+  #   command: server /data --console-address ":9001"
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"
+  #   environment:
+  #     MINIO_ROOT_USER: minioadmin
+  #     MINIO_ROOT_PASSWORD: minioadmin
+  #   volumes:
+  #     - miniodata:/data
+
   # --- Ion Drive Core (dev mode — use local source) ---
   # Uncomment to run Ion Drive in Docker instead of locally
   # ion-drive:
@@ -46,3 +77,5 @@ services:
 volumes:
   pgdata:
     driver: local
+  # miniodata: # uncomment together with the minio service
+  #   driver: local

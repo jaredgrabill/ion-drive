@@ -87,7 +87,7 @@ jobs:
 
       - name: Copy LICENSE and NOTICE into publish packages
         run: |
-          for pkg in core admin cli client; do
+          for pkg in core admin cli client plugin-redis plugin-sendgrid plugin-storage-s3; do
             cp LICENSE NOTICE "packages/$pkg/"
           done
 
@@ -100,7 +100,7 @@ jobs:
       - name: Publish to npm (OIDC${{ github.event_name == 'workflow_dispatch' && ', dry run' || '' }})
         run: |
           DRY_RUN="${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}"
-          for pkg in client admin core cli; do
+          for pkg in client admin core cli plugin-redis plugin-sendgrid plugin-storage-s3; do
             NAME="$(node -p "require('./packages/$pkg/package.json').name")"
             VERSION="$(node -p "require('./packages/$pkg/package.json').version")"
             if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then

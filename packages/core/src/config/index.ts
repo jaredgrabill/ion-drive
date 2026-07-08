@@ -180,6 +180,13 @@ const configSchema = z.object({
             .filter(Boolean),
     ),
 
+  /**
+   * Root directory for the default filesystem blob store (the
+   * {@link StorageProvider} port's `LocalStorage`). Relative paths resolve
+   * against the working directory. An S3 plugin makes this irrelevant.
+   */
+  storageDir: z.string().default('.ion-storage'),
+
   /** Enable the message bus and CRUD change events (outbox + dispatcher). */
   eventsEnabled: envBoolean(true),
 
@@ -234,6 +241,7 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     adminDistPath: process.env.ION_ADMIN_DIST,
     blocksEnabled: process.env.ION_BLOCKS_ENABLED,
     plugins: process.env.ION_PLUGINS,
+    storageDir: process.env.ION_STORAGE_DIR,
     eventsEnabled: process.env.ION_EVENTS_ENABLED,
     eventsPollIntervalMs: process.env.ION_EVENTS_POLL_INTERVAL_MS,
   };

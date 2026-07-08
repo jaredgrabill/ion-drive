@@ -40,6 +40,9 @@ logs/
 # Docker
 docker/volumes/
 
+# Default local blob store (StorageProvider LocalStorage)
+.ion-storage/
+
 # Temporary
 tmp/
 temp/

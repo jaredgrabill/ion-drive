@@ -90,6 +90,11 @@ export {
   createOtelLogStream,
   recordSchemaChange,
   recordTaskRun,
+  // Event-bus metric helpers + attribute keys — exported so an external bus
+  // implementation (e.g. @ion-drive/plugin-redis) keeps `ion.event.*` parity.
+  recordEventPublished,
+  recordEventDelivery,
+  ION_ATTR,
   LogBuffer,
   createLogBufferStream,
   TrafficStats,
@@ -194,6 +199,20 @@ export { EMAIL_SERVICE, LogEmailProvider } from './email/index.js';
 export type { EmailProvider, EmailMessage, EmailResult } from './email/index.js';
 export { LOGGER_SERVICE, PinoLoggerProvider } from './logging/index.js';
 export type { LoggerProvider, LogFields } from './logging/index.js';
+export {
+  STORAGE_SERVICE,
+  LocalStorage,
+  StorageError,
+  normalizeStorageKey,
+} from './storage/index.js';
+export type {
+  StorageProvider,
+  StorageObject,
+  StorageObjectInfo,
+  StoragePutOptions,
+  StorageListOptions,
+  StorageSignedUrlOptions,
+} from './storage/index.js';
 
 // Message bus (Phase 9)
 export {
@@ -233,6 +252,9 @@ export type {
   Subscription,
   BusHandler,
   EventContext,
+  EventHandlerFn,
+  SubscribeOptions,
+  BusTransaction,
   RecordWriter,
   DeliveryRow,
   RetryBackoff,

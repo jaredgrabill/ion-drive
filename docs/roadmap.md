@@ -53,10 +53,10 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 | F13 | ✅ **No rate limiting / brute-force protection** | Fixed 2026-07-06: `@fastify/rate-limit`, config-gated `ION_RATE_LIMIT_*` (default on: 300/min global per IP, 20/min on `/api/auth/*` via an independent keyed bucket), `/health`+`/metrics` exempt. Live-smoked against Postgres. |
 | F14 | ✅ **No realtime** | Fixed 2026-07-06 (Phase 12): `GET /api/v1/events/stream` (SSE, per-event RBAC) via `RealtimeBridge`; client SDK `ion.events.stream()`; admin live feed. GraphQL `Subscription.events` landed 2026-07-07 (Phase 13) over the same bridge. |
 | F15 | ✅ **No outbound webhooks** | Fixed 2026-07-06 (Phase 12): `_ion_webhooks` + `WebhookManager` projecting webhooks onto dispatcher consumer groups (`webhook:<id>`); HMAC-signed payloads (`x-ion-signature`), exponential retry backoff, ledger as delivery log; REST CRUD + test-fire, admin page, block-manifest `webhooks`. |
-| F16 | **No file/blob storage** | "Self-hosted Firebase" implies a storage story. Nothing exists — needs a `StorageProvider` port (Phase 9 pattern), a local-disk default, an S3-compatible plugin, and a `file` field type. |
+| F16 | ✅/🟡 **No file/blob storage** | Infrastructure half shipped 2026-07-07 (ADR-021): `StorageProvider` port + filesystem `LocalStorage` default in core (`STORAGE_SERVICE`, `ION_STORAGE_DIR`) + `@ion-drive/plugin-storage-s3` (AWS/MinIO/R2, pre-signed URLs). Remaining = Phase 15 proper: `file`/`image` field type, upload/download REST endpoints, signed-URL fallback, admin grid file cells. |
 | F17 | ✅ **`removeRelationship` missing** | Fixed 2026-07-07 (Phase 13 / ADR-020): preview-first `removeRelationship` (data-loss warnings, block protection + force), `DELETE /api/v1/schema/objects/:name/relationships/:relName`, MCP `remove_relationship` (+ `add_relationship`, which was also missing), snapshot `--prune` removes relationships, admin delete dialog. |
 | F18 | ✅ **Delivery DLQ has no surface** | Fixed 2026-07-06 (Phase 12): `GET /api/v1/events[,/deliveries]` (status/consumer/`dead=true`) + `POST /deliveries/retry`; admin Events page with retry. Alerting still open (a webhook on failure topics, or Prometheus rules over `ion.event.deliveries`). |
-| F19 | **External plugin packages don't exist yet** | The ports (cache/email/bus) are proven with in-core defaults; `@ion-drive/plugin-redis`, `plugin-sendgrid`/SMTP, `plugin-rabbitmq` are still to be built as separate repos/packages. |
+| F19 | ✅ **External plugin packages don't exist yet** | Shipped 2026-07-07 (ADR-021) as monorepo packages (owner declined separate repos): `@ion-drive/plugin-redis` (cache + opt-in Streams bus), `@ion-drive/plugin-sendgrid`, `@ion-drive/plugin-storage-s3`. Independently versioned (outside the fixed group); each needs a one-time npm Trusted Publisher registration before first publish. SMTP/RabbitMQ remain build-on-demand. |
 
 ### 1.4 CLI & end-user developer experience ✅ (Phase 14, 2026-07-06)
 
@@ -137,7 +137,7 @@ Absorbed **F20, F21, F22, F24**; F23 remains 🟡 pending the owner-run first pu
 - Force-reinstall re-runs `seed` (documented "re-apply" semantics — revisit if it bites).
 
 ### Phase 15 — File storage
-`StorageProvider` port + local-disk default + S3 plugin; `file`/`image` field type storing object keys; upload/download REST endpoints + signed URLs; admin grid file cells. (F16)
+~~`StorageProvider` port + local-disk default + S3 plugin~~ (✅ 2026-07-07, ADR-021). Remaining: `file`/`image` field type storing object keys; upload/download REST endpoints + signed URLs; admin grid file cells. (F16)
 
 ### Phase 16 — Multi-tenancy management
 Tenant provisioning/lifecycle APIs on the system DB, request→tenant routing (header/subdomain), per-tenant migrations at boot, schema-per-tenant lighter mode, tenant-aware CLI. Big; needs its own plan + ADR. (F10)
@@ -146,7 +146,9 @@ Tenant provisioning/lifecycle APIs on the system DB, request→tenant routing (h
 Field-level RBAC (column masking on read, reject on write), row-level policies (owner scoping via actor identity from Phase 12), policy editor in admin. (F12)
 
 ### Continuous (no phase)
-External plugin packages (F19), complexity-warning cleanup, remaining admin polish (§1.5), performance benchmarks.
+~~External plugin packages (F19)~~ (✅ 2026-07-07), complexity-warning cleanup, remaining admin polish (§1.5), performance benchmarks. Plugin follow-ups if demanded: SMTP provider, RabbitMQ bus, a Redis-backed realtime bridge (the SSE stream stays outbox-only when the Redis bus is active).
+
+**TODO — codify the plugin-redis live smoke as an integration test** (deferred 2026-07-07, owner-approved for later): add a Redis service container to `ci.yml`'s integration job and a `redis.integration.test.ts` in `packages/plugin-redis` (skip cleanly when `ION_REDIS_URL` is unset) covering the real-ioredis adapter (KV/TTL/SCAN, stream groups/PEL/claim), a `createServer` boot with `redisPlugin({ bus: true })`, event publish → webhook delivery through the Redis dispatcher, and the outbox-surface-off assertion. The 34-check ad-hoc smoke from the ADR-021 session is the spec.
 
 ---
 
