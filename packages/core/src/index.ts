@@ -155,6 +155,30 @@ export type {
 } from './blocks/index.js';
 export { registerBlockRoutes } from './api/block-routes.js';
 
+// Block registry protocol v1 (ADR-022 / spec-01)
+export {
+  registryIndexSchema,
+  registryBlockSchema,
+  registriesDirectorySchema,
+  parseRegistryIndex,
+  parseRegistryBlock,
+  parseRegistriesDirectory,
+  RegistryParseError,
+  resolveRegistryUrl,
+  isPermittedRegistryUrl,
+} from './blocks/index.js';
+export type {
+  RegistryIndex,
+  RegistryIndexEntry,
+  RegistryBlock,
+  RegistryVersionEntry,
+  RegistryVersionStatus,
+  RegistryAdvisory,
+  AdvisorySeverity,
+  RegistriesDirectory,
+  RegistryDirectoryEntry,
+} from './blocks/index.js';
+
 // Block actions + hooks — the vendored-logic seam (Phase 14)
 export { ActionRegistry, ACTION_REGISTRY, ActionExecutor, ActionError } from './blocks/index.js';
 export type {

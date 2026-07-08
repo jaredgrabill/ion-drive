@@ -287,3 +287,27 @@ export type {
   DeclaredAction,
   HookDelivery,
 } from './action-executor.js';
+
+// Block registry protocol v1 (ADR-022 / spec-01)
+export {
+  registryIndexSchema,
+  registryBlockSchema,
+  registriesDirectorySchema,
+  parseRegistryIndex,
+  parseRegistryBlock,
+  parseRegistriesDirectory,
+  RegistryParseError,
+  resolveRegistryUrl,
+  isPermittedRegistryUrl,
+} from './registry-types.js';
+export type {
+  RegistryIndex,
+  RegistryIndexEntry,
+  RegistryBlock,
+  RegistryVersionEntry,
+  RegistryVersionStatus,
+  RegistryAdvisory,
+  AdvisorySeverity,
+  RegistriesDirectory,
+  RegistryDirectoryEntry,
+} from './registry-types.js';

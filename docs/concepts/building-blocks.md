@@ -58,6 +58,9 @@ Dependencies are resolved recursively (topological order, already-installed
 blocks pruned) before anything is applied. Override the registry with the
 `ION_DRIVE_REGISTRY` env var or `registryUrl` in `ion.config.json`.
 
+> The registry wire format is moving to **protocol v1** (versioned, digest-verified,
+> multi-registry — ADR-022): see [Block Registries](block-registries.md).
+
 ## Installing with the CLI
 
 ```bash

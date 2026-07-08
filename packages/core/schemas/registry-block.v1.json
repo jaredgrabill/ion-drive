@@ -1,0 +1,168 @@
+{
+  "$id": "https://ion-drive.dev/schemas/registry-block.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "repository": {
+      "type": "string",
+      "format": "uri"
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri"
+    },
+    "latest": {
+      "type": "string"
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "artifactUrl": {
+            "type": "string",
+            "minLength": 1
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dependencies": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z][a-z0-9_-]*$"
+            }
+          },
+          "requires": {
+            "type": "object",
+            "properties": {
+              "core": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {}
+          },
+          "attestationUrl": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deprecated",
+              "yanked"
+            ]
+          },
+          "statusReason": {
+            "type": "string"
+          },
+          "yankedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "artifactUrl",
+          "digest",
+          "size",
+          "publishedAt",
+          "dependencies",
+          "requires",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "advisories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "moderate",
+              "high",
+              "critical"
+            ]
+          },
+          "affectedVersions": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "affectedVersions",
+          "description",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "default": []
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "name",
+    "latest",
+    "versions"
+  ],
+  "additionalProperties": false
+}

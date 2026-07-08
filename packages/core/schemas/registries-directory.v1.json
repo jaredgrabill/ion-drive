@@ -1,0 +1,57 @@
+{
+  "$id": "https://ion-drive.dev/schemas/registries-directory.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "registries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "pattern": "^@[a-z][a-z0-9-]*$"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string",
+            "format": "uri"
+          },
+          "trust": {
+            "type": "string",
+            "enum": [
+              "official",
+              "listed"
+            ]
+          }
+        },
+        "required": [
+          "namespace",
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "registries"
+  ],
+  "additionalProperties": false
+}

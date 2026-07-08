@@ -1,0 +1,76 @@
+{
+  "$id": "https://ion-drive.dev/schemas/registry-index.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "homepage": {
+      "type": "string"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "blocks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "latest": {
+            "type": "string"
+          },
+          "blockUrl": {
+            "type": "string",
+            "minLength": 1
+          },
+          "trust": {
+            "type": "string",
+            "const": "official"
+          }
+        },
+        "required": [
+          "latest",
+          "blockUrl"
+        ],
+        "additionalProperties": false
+      },
+      "propertyNames": {
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[a-z][a-z0-9_-]*$"
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "name",
+    "generatedAt",
+    "blocks"
+  ],
+  "additionalProperties": false
+}
