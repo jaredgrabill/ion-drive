@@ -1,28 +1,58 @@
 /**
- * Registry client — resolves block manifests from a source (Phase 14 Tier 4).
+ * Registry client — protocol-v1 fetch layer for block registries (spec-03 §3).
  *
- * Three sources are supported, mirroring shadcn's registry model (ADR-018
- * amendment — blocks live in their own repos, not bundled with the CLI):
+ * Four sources are supported, mirroring shadcn's registry model (ADR-022):
  *
- *  - **registry name** — `crm` or `crm@0.2.0`: looked up in the registry
- *    **index**, a flat JSON file mapping names → versions → artifact URLs.
- *    Default index: the `jaredgrabill/ion-drive-blocks` repo; override with
- *    the `ION_DRIVE_REGISTRY` env var or `registryUrl` in `ion.config.json`.
- *  - **direct URL** — any `http(s)://…/block.json`, so third-party/self-hosted
- *    blocks work without a registry entry.
+ *  - **registry ref** — `crm`, `crm@^0.2.0`, `@acme/billing@1.x`: resolved in
+ *    a configured registry ({@link resolveRegistry}) via its `index.json` →
+ *    `blocks/<name>.json` → immutable versioned artifact.
+ *  - **direct URL** — any `http(s)://…/block.json`, so one-off blocks work
+ *    without a registry entry.
  *  - **local path** — `ion-drive add ../block-crm`: reads `block.json` (and a
  *    sibling `code/` directory when the manifest doesn't embed its files).
  *    This is the dev loop for authoring blocks.
  *
- * The fetched index is cached (in-process + a short-TTL disk cache) so `list`
- * and dependency resolution don't refetch. The client stays dumb about
- * *installing* — the server performs the authoritative validation.
+ * Fetch rules: every URL passes {@link isPermittedRegistryUrl} (`https:`
+ * always, `http:` only on localhost); registry metadata goes through the
+ * per-registry disk cache (`cache.ts`, 5-min TTL, `--no-cache` bypasses
+ * reads) plus an in-process memo; **artifacts are never cached** and are
+ * fetched as **raw bytes** ({@link fetchArtifact}) — spec-04 hashes those
+ * exact bytes before anything parses them. Auth headers/params come from the
+ * registry's config entry with `${VAR}` env expansion at fetch time.
+ *
+ * The client stays dumb about *installing* — the server performs the
+ * authoritative validation.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { readConfig } from '../config.js';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
+import {
+  type IonProjectConfig,
+  defaultRegistryNamespace,
+  effectiveRegistries,
+  expandEnvPlaceholders,
+} from '../config.js';
+import {
+  type CacheOptions,
+  readCachedBlock,
+  readCachedIndex,
+  writeCachedBlock,
+  writeCachedIndex,
+} from './cache.js';
+import {
+  type RegistryBlockDoc,
+  RegistryError,
+  type RegistryIndexDoc,
+  isPermittedRegistryUrl,
+  parseBlockDoc,
+  parseIndexDoc,
+  resolveRegistryUrl,
+} from './protocol.js';
+
+// Re-exports so commands keep one import site for the registry layer.
+export { RegistryError, isPermittedRegistryUrl, resolveRegistryUrl } from './protocol.js';
+export type { RegistryBlockDoc, RegistryIndexDoc, RegistryVersionEntry } from './protocol.js';
+export { isLocalPath, isUrl } from './ref.js';
 
 /** A manifest is an opaque object here; the server validates it on install. */
 export type Manifest = Record<string, unknown> & {
@@ -32,125 +62,215 @@ export type Manifest = Record<string, unknown> & {
   code?: { path: string; contents: string }[];
 };
 
-/** Summary of a registry entry (for `ion-drive list`). */
-export interface BlockSummary {
-  name: string;
-  title: string;
-  description: string;
-  version: string;
-  categories: string[];
-  dependencies: string[];
+/** A namespace resolved to a fetchable registry (headers/params env-expanded). */
+export interface ResolvedRegistry {
+  namespace: string;
+  url: string;
+  headers: Record<string, string>;
+  params: Record<string, string>;
 }
 
-/** One block's entry in the registry index. */
-interface RegistryIndexEntry {
-  title?: string;
-  description?: string;
-  categories?: string[];
-  dependencies?: string[];
-  latest: string;
-  /** version → artifact (block.json) URL */
-  versions: Record<string, string>;
-}
-
-interface RegistryIndex {
-  blocks: Record<string, RegistryIndexEntry>;
-}
-
-export class RegistryError extends Error {}
-
-export const DEFAULT_REGISTRY_URL =
-  'https://raw.githubusercontent.com/jaredgrabill/ion-drive-blocks/main/registry/index.json';
-
-/** Where the index disk cache lives; TTL keeps `add` after `list` instant. */
-const CACHE_DIR = join(homedir(), '.ion-drive');
-const CACHE_FILE = join(CACHE_DIR, 'registry-cache.json');
-const CACHE_TTL_MS = 5 * 60 * 1000;
-
-/** The registry index URL for this invocation (env > project config > default). */
-export function registryUrl(dir = process.cwd()): string {
-  if (process.env.ION_DRIVE_REGISTRY) return process.env.ION_DRIVE_REGISTRY;
-  const config = readConfig(dir);
-  return config.registryUrl ?? DEFAULT_REGISTRY_URL;
-}
-
-let indexCache: { url: string; index: RegistryIndex } | undefined;
-
-/** Fetches (and caches) the registry index. */
-export async function fetchIndex(url = registryUrl()): Promise<RegistryIndex> {
-  if (indexCache?.url === url) return indexCache.index;
-
-  const disk = readDiskCache(url);
-  if (disk) {
-    indexCache = { url, index: disk };
-    return disk;
-  }
-
-  const index = validateIndex(await fetchJson(url), url);
-  indexCache = { url, index };
-  writeDiskCache(url, index);
-  return index;
-}
-
-/** Lists the registry's blocks (for `ion-drive list`). */
-export async function listAvailable(): Promise<BlockSummary[]> {
-  const index = await fetchIndex();
-  return Object.entries(index.blocks)
-    .map(([name, entry]) => ({
-      name,
-      title: entry.title ?? name,
-      description: entry.description ?? '',
-      version: entry.latest,
-      categories: entry.categories ?? [],
-      dependencies: entry.dependencies ?? [],
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/** True when `ref` looks like a remote registry URL rather than a bare name. */
-export function isUrl(ref: string): boolean {
-  return /^https?:\/\//i.test(ref);
-}
-
-/** True when `ref` points at a local block directory (the block-dev loop). */
-export function isLocalPath(ref: string): boolean {
-  if (ref.startsWith('.') || isAbsolute(ref) || ref.includes(sep) || ref.includes('/')) {
-    return existsSync(join(resolve(ref), 'block.json'));
-  }
-  return false;
+/** Options threaded through the fetch layer. */
+export interface FetchOptions extends CacheOptions {
+  /** Bypass cache reads (still writes — the next command benefits). */
+  noCache?: boolean;
+  /** Fetch override (tests / fixture servers). */
+  fetchImpl?: typeof fetch;
 }
 
 /**
- * Resolves a single manifest by registry name (`crm`, `crm@0.2.0`), direct
- * URL, or local path.
+ * Resolves a namespace (or the default when `undefined`) to a fetchable
+ * registry. `${VAR}` placeholders in headers/params are expanded **here** —
+ * before any network call — so an unset variable fails fast with its name.
+ * @throws {RegistryError} for an unconfigured namespace
+ * @throws {ConfigError} for an unset `${VAR}`
  */
-export async function getManifest(ref: string): Promise<Manifest> {
-  if (isUrl(ref)) return asManifest(await fetchJson(ref), ref);
-  if (isLocalPath(ref)) return readLocalBlock(ref);
-
-  const [name, version] = splitNameVersion(ref);
-  const index = await fetchIndex();
-  const entry = index.blocks[name];
+export function resolveRegistry(
+  namespace: string | undefined,
+  config: IonProjectConfig,
+  env: Record<string, string | undefined> = process.env,
+): ResolvedRegistry {
+  const registries = effectiveRegistries(config, env);
+  const ns = namespace ?? defaultRegistryNamespace(config);
+  const entry = registries[ns];
   if (!entry) {
-    const known = Object.keys(index.blocks).sort().join(', ') || '(registry is empty)';
-    throw new RegistryError(`Unknown block "${name}". Available: ${known}`);
-  }
-  const wanted = version ?? entry.latest;
-  const artifactUrl = entry.versions[wanted];
-  if (!artifactUrl) {
     throw new RegistryError(
-      `Block "${name}" has no version ${wanted}. Available: ${Object.keys(entry.versions).join(', ')}`,
+      `Unknown registry "${ns}" — add ${ns} to registries in ion.config.json`,
     );
   }
-  return asManifest(await fetchJson(artifactUrl), artifactUrl);
+  const expand = (values: Record<string, string>): Record<string, string> =>
+    Object.fromEntries(
+      Object.entries(values).map(([key, value]) => [key, expandEnvPlaceholders(value, env, ns)]),
+    );
+  return {
+    namespace: ns,
+    url: entry.url,
+    headers: expand(entry.headers),
+    params: expand(entry.params),
+  };
 }
 
-/** Splits `crm@0.2.0` into name + optional version. */
-function splitNameVersion(ref: string): [string, string | undefined] {
-  const at = ref.indexOf('@', 1);
-  if (at === -1) return [ref, undefined];
-  return [ref.slice(0, at), ref.slice(at + 1)];
+// --- In-process memo (one command = one process; avoids re-reading disk) -----
+
+const memo = new Map<string, { index?: RegistryIndexDoc; blocks: Map<string, RegistryBlockDoc> }>();
+
+function memoFor(url: string) {
+  let entry = memo.get(url);
+  if (!entry) {
+    entry = { blocks: new Map() };
+    memo.set(url, entry);
+  }
+  return entry;
 }
+
+/** Test hook: clears the in-process memo layer. */
+export function resetRegistryCache(): void {
+  memo.clear();
+}
+
+// --- Fetch plumbing -----------------------------------------------------------
+
+/** Appends a registry's `params` to a URL (private-registry query tokens). */
+export function withParams(url: string, params: Record<string, string>): string {
+  const entries = Object.entries(params);
+  if (entries.length === 0) return url;
+  const parsed = new URL(url);
+  for (const [key, value] of entries) parsed.searchParams.set(key, value);
+  return parsed.toString();
+}
+
+/** Guards every outbound URL: https always, http only on localhost (spec-01 §1). */
+function assertPermitted(url: string): void {
+  if (!isPermittedRegistryUrl(url)) {
+    throw new RegistryError(
+      `Refusing to fetch ${url} — registries must be https (http is allowed only for localhost/127.0.0.1)`,
+    );
+  }
+}
+
+async function fetchJson(
+  url: string,
+  reg: Pick<ResolvedRegistry, 'headers' | 'params'>,
+  opts: FetchOptions,
+): Promise<unknown> {
+  const target = withParams(url, reg.params);
+  assertPermitted(target);
+  const doFetch = opts.fetchImpl ?? fetch;
+  let res: Response;
+  try {
+    res = await doFetch(target, { headers: reg.headers });
+  } catch (err) {
+    throw new RegistryError(`Could not reach ${url}: ${(err as Error).message}`);
+  }
+  if (!res.ok) throw new RegistryError(`Registry returned ${res.status} for ${url}`);
+  try {
+    return await res.json();
+  } catch {
+    throw new RegistryError(`Registry response at ${url} is not JSON`);
+  }
+}
+
+/** Fetches (and caches) a registry's `index.json`, validated per protocol v1. */
+export async function fetchIndex(
+  reg: ResolvedRegistry,
+  opts: FetchOptions = {},
+): Promise<RegistryIndexDoc> {
+  const slot = memoFor(reg.url);
+  if (!opts.noCache) {
+    if (slot.index) return slot.index;
+    const cached = readCachedIndex(reg.url, opts);
+    if (cached !== null) {
+      const index = parseIndexDoc(cached, reg.url);
+      slot.index = index;
+      return index;
+    }
+  }
+  const index = parseIndexDoc(await fetchJson(reg.url, reg, opts), reg.url);
+  slot.index = index;
+  writeCachedIndex(reg.url, index, opts);
+  return index;
+}
+
+/**
+ * Fetches (and caches) a block's `blocks/<name>.json` version history. The
+ * block file's URL comes from the index entry's `blockUrl`, resolved relative
+ * to the **index** URL (spec-01 §2); the returned `url` is what version
+ * entries' `artifactUrl`s resolve against.
+ */
+export async function fetchBlock(
+  reg: ResolvedRegistry,
+  name: string,
+  opts: FetchOptions = {},
+): Promise<{ doc: RegistryBlockDoc; url: string }> {
+  const index = await fetchIndex(reg, opts);
+  const entry = index.blocks[name];
+  if (!entry) {
+    throw new RegistryError(`Registry ${reg.namespace} (${reg.url}) has no block "${name}"`);
+  }
+  const url = resolveRegistryUrl(entry.blockUrl, reg.url);
+
+  const slot = memoFor(reg.url);
+  if (!opts.noCache) {
+    const memoized = slot.blocks.get(name);
+    if (memoized) return { doc: memoized, url };
+    const cached = readCachedBlock(reg.url, name, opts);
+    if (cached !== null) {
+      const doc = parseBlockDoc(cached, url);
+      slot.blocks.set(name, doc);
+      return { doc, url };
+    }
+  }
+  const doc = parseBlockDoc(await fetchJson(url, reg, opts), url);
+  slot.blocks.set(name, doc);
+  writeCachedBlock(reg.url, name, doc, opts);
+  return { doc, url };
+}
+
+/**
+ * Fetches an artifact (or any registry-served file) as **raw bytes** plus the
+ * URL it came from. Returning bytes — not parsed JSON — is deliberate: this
+ * is the seam spec-04's digest verification hooks into (it hashes these exact
+ * bytes before anything parses them). Artifacts are never cached.
+ */
+export async function fetchArtifact(
+  url: string,
+  headers: Record<string, string> = {},
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<{ bytes: Uint8Array; url: string }> {
+  assertPermitted(url);
+  const doFetch = opts.fetchImpl ?? fetch;
+  let res: Response;
+  try {
+    res = await doFetch(url, { headers });
+  } catch (err) {
+    throw new RegistryError(`Could not reach ${url}: ${(err as Error).message}`);
+  }
+  if (!res.ok) throw new RegistryError(`Registry returned ${res.status} for ${url}`);
+  return { bytes: new Uint8Array(await res.arrayBuffer()), url };
+}
+
+/**
+ * Fetches and parses a manifest from a direct URL:
+ * `fetchArtifact → (spec-04 verify hook slot) → JSON.parse → asManifest`.
+ * Direct-URL installs have no registry-declared digest — spec-04 records the
+ * *computed* digest with the URL as `source`.
+ */
+export async function fetchManifestFromUrl(
+  url: string,
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<Manifest> {
+  const { bytes } = await fetchArtifact(url, {}, opts);
+  // (spec-04: digest verification of `bytes` slots in here.)
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new RegistryError(`Manifest at ${url} is not JSON`);
+  }
+  return asManifest(parsed, url);
+}
+
+// --- Local blocks (the authoring dev loop) ------------------------------------
 
 /**
  * Reads a block from a local directory: `block.json` plus, when the manifest
@@ -174,7 +294,7 @@ export function readLocalBlock(path: string): Manifest {
 }
 
 /** Recursively reads a `code/` directory into embedded manifest entries. */
-function readCodeDir(codeDir: string): { path: string; contents: string }[] {
+export function readCodeDir(codeDir: string): { path: string; contents: string }[] {
   const files: { path: string; contents: string }[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
@@ -193,6 +313,17 @@ function readCodeDir(codeDir: string): { path: string; contents: string }[] {
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
+// --- Manifest helpers ----------------------------------------------------------
+
+/** Narrow structural check — the server does the authoritative validation. */
+export function asManifest(value: unknown, source: string): Manifest {
+  const manifest = value as Manifest | null;
+  if (!manifest || typeof manifest !== 'object' || typeof manifest.name !== 'string') {
+    throw new RegistryError(`Manifest at ${source} is missing a "name"`);
+  }
+  return manifest;
+}
+
 /**
  * Block refs a manifest depends on — the keys of its v1 name → semver-range
  * record. Only the record form counts: the legacy array (or any non-object)
@@ -205,65 +336,9 @@ export function dependenciesOf(manifest: Manifest): string[] {
   return Object.keys(deps);
 }
 
-// ---------------------------------------------------------------------------
-// Fetch + cache plumbing
-// ---------------------------------------------------------------------------
-
-async function fetchJson(url: string): Promise<unknown> {
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch (err) {
-    throw new RegistryError(`Could not reach ${url}: ${(err as Error).message}`);
-  }
-  if (!res.ok) throw new RegistryError(`Registry returned ${res.status} for ${url}`);
-  try {
-    return await res.json();
-  } catch {
-    throw new RegistryError(`Registry response at ${url} is not JSON`);
-  }
-}
-
-function asManifest(value: unknown, source: string): Manifest {
-  const manifest = value as Manifest | null;
-  if (!manifest || typeof manifest !== 'object' || typeof manifest.name !== 'string') {
-    throw new RegistryError(`Manifest at ${source} is missing a "name"`);
-  }
-  return manifest;
-}
-
-function validateIndex(value: unknown, url: string): RegistryIndex {
-  const index = value as RegistryIndex | null;
-  if (!index || typeof index !== 'object' || typeof index.blocks !== 'object') {
-    throw new RegistryError(`Registry index at ${url} is malformed (expected { blocks: {…} })`);
-  }
-  return index;
-}
-
-function readDiskCache(url: string): RegistryIndex | null {
-  try {
-    const raw = JSON.parse(readFileSync(CACHE_FILE, 'utf8')) as {
-      url: string;
-      fetchedAt: number;
-      index: RegistryIndex;
-    };
-    if (raw.url !== url || Date.now() - raw.fetchedAt > CACHE_TTL_MS) return null;
-    return raw.index;
-  } catch {
-    return null;
-  }
-}
-
-function writeDiskCache(url: string, index: RegistryIndex): void {
-  try {
-    mkdirSync(CACHE_DIR, { recursive: true });
-    writeFileSync(CACHE_FILE, JSON.stringify({ url, fetchedAt: Date.now(), index }), 'utf8');
-  } catch {
-    /* cache is best-effort */
-  }
-}
-
-/** Test hook: clears the in-process index cache. */
-export function resetRegistryCache(): void {
-  indexCache = undefined;
+/** The manifest's dependency record in normalized form (`{}` for legacy/absent). */
+export function dependencyRecordOf(manifest: Manifest): Record<string, string> {
+  const deps: unknown = manifest.dependencies;
+  if (deps === null || typeof deps !== 'object' || Array.isArray(deps)) return {};
+  return deps as Record<string, string>;
 }

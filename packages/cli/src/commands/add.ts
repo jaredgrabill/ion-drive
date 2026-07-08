@@ -1,30 +1,66 @@
 /**
- * `ion-drive add <block>` — resolves a block (and its dependencies) and installs
+ * `ion-drive add <ref>` — resolves a block (and its dependencies) and installs
  * them into the configured server.
  *
- * The shadcn `add` analog: resolve the dependency closure, order it
- * dependencies-first, preview the plan, then POST each manifest to the server —
- * which validates and applies it. Progress is shown with an orbit spinner and a
- * per-block report; the local `ion.config.json` records what was installed.
+ * The shadcn `add` analog, spec-03 edition: parse the ref (`crm`,
+ * `crm@^0.2.0`, `@acme/billing@1.x`, a block.json URL, or a local path),
+ * resolve the dependency closure across configured registries (ranges
+ * collected, highest-satisfying selection, same-registry rule), preview the
+ * plan, then install each item in order. Registry items are fetched as **raw
+ * artifact bytes** at install time — the seam spec-04's digest verification
+ * hooks into — then parsed and POSTed to the server, which validates and
+ * applies. The local `ion.config.json` records what was installed
+ * (name/version/digest/source/sourceUrl; digest is `null` until spec-04).
  */
 
 import ora from 'ora';
 import prompts from 'prompts';
 import { ApiError, type InstallReport, IonApiClient } from '../api-client.js';
-import { readConfig, recordInstalled, writeConfig } from '../config.js';
+import {
+  ConfigError,
+  type IonProjectConfig,
+  readConfig,
+  recordInstalled,
+  writeConfig,
+} from '../config.js';
 import { BarrelError, addToBarrel, vendorBlockCode } from '../project.js';
-import { type Manifest, RegistryError } from '../registry/registry-client.js';
-import { ResolveError, resolvePlan } from '../registry/resolver.js';
+import { RefError, parseRef } from '../registry/ref.js';
+import {
+  type Manifest,
+  RegistryError,
+  asManifest,
+  fetchArtifact,
+  fetchBlock,
+  fetchIndex,
+  fetchManifestFromUrl,
+  readLocalBlock,
+  resolveRegistry,
+  withParams,
+} from '../registry/registry-client.js';
+import {
+  type InstallPlan,
+  type PlanItem,
+  ResolveError,
+  type ResolverIO,
+  resolvePlan,
+} from '../registry/resolver.js';
 import { box, c, gradient, log, orbitSpinner, sym } from '../ui.js';
 import { warnOnVersionSkew } from '../version-check.js';
 
 export interface AddOptions {
   yes?: boolean;
   dryRun?: boolean;
+  /**
+   * One flag, three effects (C10): the server force-reinstalls, the resolver
+   * proceeds through installed-version conflicts, and an already-installed
+   * root is planned as a reinstall instead of "nothing to do".
+   */
   force?: boolean;
+  /** Commander's `--no-cache` negation: `cache === false` bypasses cache reads. */
+  cache?: boolean;
 }
 
-/** Object names a manifest declares (for the preview). */
+/** Object names a manifest declares (for local/URL plan lines). */
 function objectNames(manifest: Manifest): string[] {
   const objects = manifest.objects as { name?: string }[] | undefined;
   return (objects ?? []).map((o) => o.name ?? '?');
@@ -34,34 +70,62 @@ export async function addCommand(target: string, options: AddOptions): Promise<v
   const config = readConfig();
   const client = new IonApiClient(config.serverUrl, config.apiKey);
 
-  const plan = await resolveTarget(client, target);
+  const plan = await resolveTarget(client, config, target, options);
   if (!plan) return;
-  if (plan.order.length === 0) {
+  if (plan.items.length === 0) {
     log.info(`${c.bold(target)} is already installed. Nothing to do.`);
     return;
   }
 
   renderPlan(target, config.serverUrl, plan, options);
 
-  if (!(await confirmInstall(plan.order.length, options))) return;
+  if (!(await confirmInstall(plan.items.length, options))) return;
 
-  await runInstalls(client, config, plan.order, options);
+  await runInstalls(client, config, plan.items, options);
 }
 
-/** Verifies connectivity and resolves the dependency plan. Returns null on failure. */
+/** Verifies connectivity and resolves the install plan. Returns null on failure. */
 async function resolveTarget(
   client: IonApiClient,
+  config: IonProjectConfig,
   target: string,
-): Promise<Awaited<ReturnType<typeof resolvePlan>> | null> {
+  options: AddOptions,
+): Promise<InstallPlan | null> {
+  const noCache = options.cache === false;
+  const io: ResolverIO = {
+    fetchIndex: (reg) => fetchIndex(reg, { noCache }),
+    fetchBlock: (reg, name) => fetchBlock(reg, name, { noCache }),
+    getLocalOrUrlManifest: (ref) =>
+      ref.kind === 'local'
+        ? Promise.resolve(readLocalBlock(ref.path))
+        : fetchManifestFromUrl(ref.url),
+  };
+
   try {
+    const ref = parseRef(target);
     const health = await client.health();
     warnOnVersionSkew(health.version);
-    const installedNames = new Set(
-      (await client.listInstalled()).filter((b) => b.status === 'installed').map((b) => b.name),
+    const installed = new Map(
+      (await client.listInstalled())
+        .filter((b) => b.status === 'installed')
+        .map((b) => [b.name, b.version] as const),
     );
-    return await resolvePlan(target, installedNames);
+    return await resolvePlan(ref, {
+      config,
+      installed,
+      recordedBlocks: config.blocks,
+      serverCoreVersion: health.version,
+      force: options.force,
+      io,
+    });
   } catch (err) {
-    if (err instanceof ApiError || err instanceof RegistryError || err instanceof ResolveError) {
+    if (
+      err instanceof ApiError ||
+      err instanceof RegistryError ||
+      err instanceof ResolveError ||
+      err instanceof RefError ||
+      err instanceof ConfigError
+    ) {
       log.error(err.message);
       process.exitCode = 1;
       return null;
@@ -70,20 +134,33 @@ async function resolveTarget(
   }
 }
 
+/** One plan line: `1. crm@0.2.0 · @ion` for registry items; object list for local/URL. */
+function planLine(item: PlanItem, index: number): string {
+  const tag = item.isDependency ? c.plasma(' (dependency)') : '';
+  const label = `${c.meteor(`${index + 1}.`)} ${c.bold(item.name)}${c.meteor(`@${item.version}`)}${tag}`;
+  if (item.manifest) {
+    const objects = objectNames(item.manifest);
+    return `${label} ${c.meteor(`(${item.source})`)}  ${c.dim(`→ ${objects.join(', ') || '(no objects)'}`)}`;
+  }
+  return `${label} ${c.meteor('·')} ${c.cyan(item.source)}`;
+}
+
 /** Prints the install plan preview box. */
 function renderPlan(
   target: string,
   serverUrl: string,
-  plan: Awaited<ReturnType<typeof resolvePlan>>,
+  plan: InstallPlan,
   options: AddOptions,
 ): void {
-  const planLines = plan.order.map((m, i) => {
-    const tag = m.name !== target ? c.plasma(' (dependency)') : '';
-    return `${c.meteor(`${i + 1}.`)} ${c.bold(String(m.name))}${tag}  ${c.dim(`→ ${objectNames(m).join(', ')}`)}`;
+  const planLines: string[] = [];
+  plan.items.forEach((item, i) => {
+    planLines.push(planLine(item, i));
+    for (const w of item.warnings) planLines.push(`   ${sym.warn} ${c.warn(w)}`);
   });
-  if (plan.alreadyInstalled.length > 0) {
-    planLines.push(c.meteor(`   satisfied: ${plan.alreadyInstalled.join(', ')}`));
+  if (plan.satisfied.length > 0) {
+    planLines.push(c.meteor(`   satisfied: ${plan.satisfied.join(', ')}`));
   }
+  for (const w of plan.warnings) planLines.push(`${sym.warn} ${c.warn(w)}`);
   log.raw();
   console.log(
     box(options.dryRun ? 'Install plan (dry run)' : 'Install plan', [
@@ -108,16 +185,58 @@ async function confirmInstall(count: number, options: AddOptions): Promise<boole
   return Boolean(go);
 }
 
-/** Installs each manifest in order, updating the local config and printing a summary. */
+/**
+ * Fetches a plan item's manifest. Registry items pull the immutable artifact
+ * as raw bytes with the registry's auth headers/params —
+ * `fetchArtifact → (spec-04 digest verification slots in here) → JSON.parse
+ * → asManifest`. Local/URL items already carry their manifest.
+ */
+async function manifestFor(item: PlanItem, config: IonProjectConfig): Promise<Manifest> {
+  if (item.manifest) return item.manifest;
+  if (!item.registry || !item.sourceUrl) {
+    throw new RegistryError(`Plan item "${item.name}" has no manifest source`); // unreachable
+  }
+  const reg = resolveRegistry(item.registry, config);
+  const { bytes } = await fetchArtifact(withParams(item.sourceUrl, reg.params), reg.headers);
+  // (spec-04: verify sha256(bytes) against the registry-declared digest here,
+  // before anything parses them. Hard fail on mismatch, no --force.)
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new RegistryError(`Artifact at ${item.sourceUrl} is not JSON`);
+  }
+  return asManifest(parsed, item.sourceUrl);
+}
+
+/** {@link manifestFor} with friendly failure: logs registry errors, returns null. */
+async function safeManifestFor(item: PlanItem, config: IonProjectConfig): Promise<Manifest | null> {
+  try {
+    return await manifestFor(item, config);
+  } catch (err) {
+    if (err instanceof RegistryError || err instanceof ConfigError) {
+      log.error(err.message);
+      return null;
+    }
+    throw err;
+  }
+}
+
+/** Installs each item in order, updating the local config and printing a summary. */
 async function runInstalls(
   client: IonApiClient,
-  config: ReturnType<typeof readConfig>,
-  order: Manifest[],
+  config: IonProjectConfig,
+  items: PlanItem[],
   options: AddOptions,
 ): Promise<void> {
   log.raw();
   let updatedConfig = config;
-  for (const manifest of order) {
+  for (const item of items) {
+    const manifest = await safeManifestFor(item, config);
+    if (!manifest) {
+      process.exitCode = 1;
+      return;
+    }
     if (!options.dryRun && !(await vendorStep(client, manifest))) {
       process.exitCode = 1;
       return;
@@ -128,11 +247,13 @@ async function runInstalls(
       return;
     }
     if (!options.dryRun) {
-      updatedConfig = recordInstalled(
-        updatedConfig,
-        String(manifest.name),
-        String(manifest.version ?? '0.1.0'),
-      );
+      updatedConfig = recordInstalled(updatedConfig, {
+        name: item.name,
+        version: item.version,
+        digest: null, // spec-04 fills this with the verified sha256
+        source: item.source,
+        sourceUrl: item.sourceUrl,
+      });
     }
   }
 
@@ -142,8 +263,8 @@ async function runInstalls(
   log.success(
     gradient(
       options.dryRun
-        ? `Dry run complete — ${order.length} block(s) would be installed. ${sym.sparkle}`
-        : `Liftoff! ${order.length} block(s) installed. ${sym.rocket}`,
+        ? `Dry run complete — ${items.length} block(s) would be installed. ${sym.sparkle}`
+        : `Liftoff! ${items.length} block(s) installed. ${sym.rocket}`,
     ),
   );
 }

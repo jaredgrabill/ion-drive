@@ -1,8 +1,10 @@
 # Block Registries (protocol v1)
 
 > **Status:** the wire format below (spec-01 of the blocks-ecosystem suite, ADR-022) is
-> implemented in `@ion-drive/core`; publishing tooling (`ion-drive registry build`,
-> `block publish`) and full publish/consume documentation ship with spec-05.
+> implemented in `@ion-drive/core`, and the CLI consume side (spec-03: multi-registry
+> config, namespaced refs, the range resolver, `ion-drive registry …`) is implemented;
+> digest verification/trust badges (spec-04) and publishing tooling
+> (`ion-drive registry build`, `block publish`, spec-05) ship next.
 
 A **registry** is nothing more than a set of static JSON files served over HTTPS —
 GitHub Pages, S3, Cloudflare Pages, or plain nginx all qualify. No server-side code is
@@ -105,12 +107,59 @@ registry is host-portable — move the tree, nothing inside changes.
   404s) — but must simultaneously mark the version `yanked` and publish an advisory, so
   consumers get a loud, explicable failure instead of silently installing malware.
 
+## Consuming registries (spec-03)
+
+Projects declare registries as **namespaces** in `ion.config.json` — a plain URL
+string, or the object form for private registries:
+
+```json
+{
+  "registries": {
+    "@ion": "https://registry.iondrive.dev/registry/index.json",
+    "@acme": {
+      "url": "https://blocks.acme.internal/registry/index.json",
+      "headers": { "Authorization": "Bearer ${ACME_REGISTRY_TOKEN}" },
+      "params": { "token": "${ACME_REGISTRY_TOKEN}" }
+    }
+  },
+  "defaultRegistry": "@ion"
+}
+```
+
+- **`@ion` is built in** (present even with no `registries` key) and overridable by
+  declaring it. `defaultRegistry` defaults to `@ion`; bare refs resolve there. The
+  `ION_DRIVE_REGISTRY` env var overrides the default registry's URL for one invocation.
+- **`${VAR}` auth**: `headers`/`params` values expand from the environment **at fetch
+  time**; an unset variable is a hard, named error before any network call. `params`
+  are appended to every request to that registry (the query-token pattern). Never put
+  literal secrets in the file — it gets committed (the CLI warns).
+- **Ref grammar**: `crm`, `crm@0.2.0`, `crm@^0.2`, `@acme/billing@1.x` — plus direct
+  `https://…/block.json` URLs and local paths, unchanged.
+- **The same-registry rule**: a block's bare dependency names resolve in the registry
+  *that block* was resolved from — never the consumer's default, with no silent
+  cross-registry fallback (the anti-dependency-confusion rule). `@ns/…` dependencies
+  require `@ns` in your config. Two registries supplying the same bare name in one
+  install plan is a hard error (blocks are singletons per server).
+- **Resolution**: semver ranges are collected across the whole dependency closure
+  (your CLI selector counts, as `required by you`) and the highest version with
+  `status: active` satisfying **every** range is selected. `deprecated` installs with
+  a warning; `yanked` is never auto-selected (an exact re-install of a version already
+  recorded in `ion.config.json.blocks[]` stays allowed, loudly).
+- **Commands**: `ion-drive registry list` (namespaces, block counts, staleness),
+  `registry add <@ns> <url>` (validates the index before writing config),
+  `registry remove <@ns>` (refuses while installed blocks came from it; `--force`),
+  `registry ping [@ns]` — all with `--json`.
+
 ## Caching
 
 - `index.json` and `blocks/<name>.json` are mutable: clients cache them with a short
-  TTL (CLI default 5 minutes, `--no-cache` to bypass).
+  TTL (CLI default 5 minutes, `--no-cache` on `add`/`list` to bypass). The CLI keeps
+  one file per registry at `~/.ion-drive/registry-cache/<sha256(indexUrl)>.json`
+  (relocatable via `ION_DRIVE_CACHE_DIR`); auth headers/params are never written to
+  disk.
 - Artifacts and attestation bundles are immutable: cacheable forever once the digest
-  verifies. Hosts should serve them with
+  verifies (the CLI does not cache them — they are verified-then-used in-process).
+  Hosts should serve them with
   `cache-control: public, max-age=31536000, immutable`.
 
 ## Validating registry files

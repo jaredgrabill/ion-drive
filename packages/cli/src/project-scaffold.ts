@@ -266,7 +266,9 @@ description: Install an Ion Drive building block (schema and/or vendored logic) 
 
 # Add an Ion Drive building block
 
-1. Discover: \`ion-drive list\` (registry catalog) — or a URL / local path to a block.
+1. Discover: \`ion-drive list\` (default registry catalog) or \`ion-drive registry list\`
+   (all configured registries). Refs may be namespaced and range-pinned —
+   \`crm\`, \`crm@^0.2.0\`, \`@acme/billing@1.x\` — or a URL / local path to a block.
 2. Preview: \`ion-drive add <name> --dry-run\` shows objects, dependencies, and requirements.
 3. Install: \`ion-drive add <name>\`. For blocks with vendored code this (a) copies the code
    to \`blocks/<name>/\`, (b) wires it into \`blocks/index.ts\`, then (c) installs the manifest

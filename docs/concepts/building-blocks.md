@@ -39,13 +39,14 @@ Installing is a **two-part operation** (ADR-018):
 The **block runtime** in `@ion-drive/core` is *content-agnostic* — it
 installs any validated manifest it's handed.
 
-## Official catalog & the registry
+## Official catalog & registries
 
 Official blocks live in the separate
 [`jaredgrabill/ion-drive-blocks`](https://github.com/jaredgrabill/ion-drive-blocks) repository — one
 directory per block, distributed through the exact same pipeline a third-party
-block uses: a flat **registry index** (`registry/index.json`) maps
-`name → version → artifact URL`.
+block uses: a **protocol-v1 registry** (static JSON — a small `index.json`
+directory plus one `blocks/<name>.json` version history per block; see
+[Block Registries](block-registries.md)).
 
 | Block | Contents | Depends on | Logic |
 |:---|:---|:---|:---|
@@ -55,12 +56,30 @@ block uses: a flat **registry index** (`registry/index.json`) maps
 | `communications` | Message log, templates, campaigns | — | — |
 | `audit` | `audit_log` fed by the message bus | — | — |
 
-Dependencies are resolved recursively (topological order, already-installed
-blocks pruned) before anything is applied. Override the registry with the
-`ION_DRIVE_REGISTRY` env var or `registryUrl` in `ion.config.json`.
+Projects configure registries as **namespaces** in `ion.config.json`
+(spec-03); the official registry `@ion` is built in and is the default for
+bare refs:
 
-> The registry wire format is moving to **protocol v1** (versioned, digest-verified,
-> multi-registry — ADR-022): see [Block Registries](block-registries.md).
+```json
+{
+  "registries": {
+    "@acme": {
+      "url": "https://blocks.acme.internal/registry/index.json",
+      "headers": { "Authorization": "Bearer ${ACME_REGISTRY_TOKEN}" }
+    }
+  },
+  "defaultRegistry": "@ion"
+}
+```
+
+Dependencies are resolved recursively across registries — semver ranges are
+collected over the whole closure and the **highest version satisfying every
+range** is picked; the plan is applied in topological order with
+already-installed blocks pruned. A block's bare dependency names resolve in
+the registry *that block* came from, never your default (the
+anti-dependency-confusion rule). `ION_DRIVE_REGISTRY` still overrides the
+default registry's URL for one invocation. (The legacy `registryUrl` config
+field is no longer read — declare the URL under `registries` instead.)
 
 ## Manifest versioning
 
@@ -83,20 +102,30 @@ checks, never an npm-style multi-version solver problem.
 ## Installing with the CLI
 
 ```bash
-npx ion-drive list                    # the registry catalog
-npx ion-drive add crm                 # by name (resolves the registry index)
-npx ion-drive add crm@0.1.0           # pinned version
+npx ion-drive list                    # the default registry's catalog
+npx ion-drive list --all              # every configured registry
+npx ion-drive add crm                 # bare ref → the default registry's latest
+npx ion-drive add crm@0.1.0           # exact version
+npx ion-drive add crm@^0.2            # semver range (highest satisfying wins)
+npx ion-drive add @acme/billing@1.x   # namespaced ref → the @acme registry
 npx ion-drive add https://…/block.json  # direct URL
 npx ion-drive add ../blocks/invoicing # local path (the block-dev loop)
 npx ion-drive remove invoicing        # uninstall (your vendored code stays)
+npx ion-drive registry list           # configured registries + staleness
 ```
 
 Useful flags:
 
 - `--dry-run` — preview the changes without applying them.
 - `--force` — reinstall even if already present (idempotent: existing objects,
-  relationships, and files are skipped; ledger ownership is preserved).
+  relationships, and files are skipped; ledger ownership is preserved), and
+  proceed through installed-version range conflicts.
+- `--no-cache` — bypass the 5-minute registry metadata cache.
 - `remove --drop-data` — also drop tables that still have rows.
+
+Each install is recorded in `ion.config.json`'s `blocks[]`
+(`name`/`version`/`digest`/`source`/`sourceUrl`/`installedAt`) — the
+project's lockfile-equivalent.
 
 For a block with vendored code, `add` waits for your dev server (tsx watch) to
 reload the new handlers before installing the manifest — so run it with

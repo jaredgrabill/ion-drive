@@ -1,0 +1,290 @@
+/**
+ * `ion-drive registry …` — manage the project's configured block registries
+ * (spec-03 §5).
+ *
+ *   registry list            table: ns, name, url, block count, staleness
+ *   registry add <@ns> <url> validates (fetch + parse the index) then writes config
+ *   registry remove <@ns>    refuses while blocks[] records point at it (--force)
+ *   registry ping [@ns]      fetch + validate fresh, report generatedAt/latency
+ *
+ * All subcommands take `--json` (plain `JSON.stringify`, no styling — the
+ * LLM-first DX rule). `registry add <@ns>` without a URL is the spec-08
+ * directory lookup — a friendly not-yet error here. (`registry build` joins
+ * this group in spec-05 — the name is reserved; do not register it here.)
+ */
+
+import {
+  BUILT_IN_REGISTRIES,
+  ConfigError,
+  defaultRegistryNamespace,
+  effectiveRegistries,
+  readConfig,
+  writeConfig,
+} from '../config.js';
+import {
+  RegistryError,
+  type ResolvedRegistry,
+  fetchIndex,
+  isPermittedRegistryUrl,
+  resolveRegistry,
+} from '../registry/registry-client.js';
+import { c, log, sym, table } from '../ui.js';
+
+/** The namespace grammar (`@acme`) — matches core's directory-entry rule. */
+const NAMESPACE_RE = /^@[a-z][a-z0-9-]*$/;
+
+interface JsonOption {
+  json?: boolean;
+}
+
+/** Prints a payload as plain JSON (the `--json` contract: no chalk, no box). */
+function printJson(payload: unknown): void {
+  console.log(JSON.stringify(payload, null, 2));
+}
+
+/** Uniform failure exit: JSON `{ error }` in --json mode, styled line otherwise. */
+function fail(message: string, options: JsonOption): void {
+  if (options.json) printJson({ error: message });
+  else log.error(message);
+  process.exitCode = 1;
+}
+
+/** Humanizes how long ago an ISO timestamp was ("3m ago", "2h ago", "5d ago"). */
+function ago(iso: string): string {
+  const ms = Date.now() - Date.parse(iso);
+  if (Number.isNaN(ms)) return '—';
+  const minutes = Math.max(0, Math.round(ms / 60_000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+// --- registry list ------------------------------------------------------------
+
+export interface RegistryListOptions extends JsonOption {
+  /** Commander's `--no-cache` negation: `cache === false` means bypass reads. */
+  cache?: boolean;
+}
+
+export async function registryListCommand(options: RegistryListOptions): Promise<void> {
+  const config = readConfig();
+  const registries = effectiveRegistries(config);
+  const defaultNs = safeDefaultNamespace();
+  const noCache = options.cache === false;
+
+  // Per-registry fetch failures are error rows, never an abort (spec §5).
+  const rows: {
+    namespace: string;
+    url: string;
+    isDefault: boolean;
+    name?: string;
+    blocks?: number;
+    generatedAt?: string;
+    error?: string;
+  }[] = [];
+  for (const namespace of Object.keys(registries)) {
+    const row = {
+      namespace,
+      url: registries[namespace]?.url ?? '',
+      isDefault: namespace === defaultNs,
+    };
+    try {
+      const reg = resolveRegistry(namespace, config);
+      const index = await fetchIndex(reg, { noCache });
+      rows.push({
+        ...row,
+        name: index.name,
+        blocks: Object.keys(index.blocks).length,
+        generatedAt: index.generatedAt,
+      });
+    } catch (err) {
+      rows.push({ ...row, error: (err as Error).message });
+    }
+  }
+
+  if (options.json) {
+    printJson(rows);
+    if (rows.some((r) => r.error)) process.exitCode = 1;
+    return;
+  }
+
+  log.heading(`${sym.satellite}  Block Registries`);
+  console.log(
+    table(
+      ['Registry', 'Name', 'URL', 'Blocks', 'Updated'],
+      rows.map((r) => [
+        `${c.bold(r.namespace)}${r.isDefault ? c.meteor(' (default)') : ''}`,
+        r.error ? c.danger('unreachable') : c.cyan(r.name ?? ''),
+        c.dim(r.url),
+        r.error ? c.meteor('—') : String(r.blocks ?? 0),
+        r.error ? c.meteor('—') : c.meteor(r.generatedAt ? ago(r.generatedAt) : '—'),
+      ]),
+    ),
+  );
+  for (const r of rows.filter((row) => row.error)) {
+    log.warn(`${r.namespace}: ${r.error}`);
+  }
+  log.raw();
+  log.dim(`  Add one with  ${c.star('ion-drive registry add <@ns> <url>')}`);
+  if (rows.some((r) => r.error)) process.exitCode = 1;
+}
+
+/** The default namespace, tolerating a broken `defaultRegistry` for display. */
+function safeDefaultNamespace(): string | undefined {
+  try {
+    return defaultRegistryNamespace(readConfig());
+  } catch {
+    return undefined;
+  }
+}
+
+// --- registry add ---------------------------------------------------------------
+
+export async function registryAddCommand(
+  namespace: string,
+  url: string | undefined,
+  options: JsonOption,
+): Promise<void> {
+  if (!NAMESPACE_RE.test(namespace)) {
+    fail(`Invalid namespace "${namespace}" — expected a lowercase handle like "@acme".`, options);
+    return;
+  }
+  if (url === undefined) {
+    // The main registry's registries.json directory lookup is spec-08 (M2).
+    fail(
+      `Looking up ${namespace} in the registries directory ships in a later release (spec-08) — pass its index URL: ion-drive registry add ${namespace} <url>`,
+      options,
+    );
+    return;
+  }
+  if (!isPermittedRegistryUrl(url)) {
+    fail(
+      `Refusing ${url} — registries must be https (http is allowed only for localhost/127.0.0.1).`,
+      options,
+    );
+    return;
+  }
+
+  // Validate before writing anything: fetch + parse the index. A legacy
+  // (unversioned) index surfaces spec-01's "pre-release format" error here.
+  const probe: ResolvedRegistry = { namespace, url, headers: {}, params: {} };
+  let indexName: string;
+  let blockCount: number;
+  try {
+    const index = await fetchIndex(probe, { noCache: true });
+    indexName = index.name;
+    blockCount = Object.keys(index.blocks).length;
+  } catch (err) {
+    fail((err as Error).message, options);
+    return;
+  }
+
+  const config = readConfig();
+  const registries = { ...config.registries, [namespace]: url };
+  writeConfig({ ...config, registries });
+
+  if (options.json) {
+    printJson({ namespace, url, name: indexName, blocks: blockCount });
+    return;
+  }
+  log.success(
+    `Added ${c.bold(namespace)} ${sym.arrow} ${c.cyan(indexName)} (${blockCount} block${blockCount === 1 ? '' : 's'})`,
+  );
+  log.dim(`  Install from it with  ion-drive add ${namespace}/<block>`);
+}
+
+// --- registry remove ---------------------------------------------------------------
+
+export interface RegistryRemoveOptions extends JsonOption {
+  force?: boolean;
+}
+
+export async function registryRemoveCommand(
+  namespace: string,
+  options: RegistryRemoveOptions,
+): Promise<void> {
+  const config = readConfig();
+  const configured = config.registries !== undefined && namespace in config.registries;
+  const builtIn = namespace in BUILT_IN_REGISTRIES;
+
+  if (!configured) {
+    fail(
+      builtIn
+        ? `${namespace} is built in — only a configured override can be removed (declaring ${namespace} under registries overrides it).`
+        : `${namespace} is not configured in ion.config.json.`,
+      options,
+    );
+    return;
+  }
+
+  // The guard: installed blocks that came from this registry would lose
+  // their update/audit source. --force overrides.
+  const dependents = config.blocks.filter((b) => b.source === namespace).map((b) => b.name);
+  if (dependents.length > 0 && !options.force) {
+    fail(
+      `Cannot remove ${namespace}: installed block${dependents.length === 1 ? '' : 's'} ${dependents.join(', ')} came from it. Remove them first, or pass --force to drop the registry anyway.`,
+      options,
+    );
+    return;
+  }
+
+  const registries = { ...config.registries };
+  delete registries[namespace];
+  writeConfig({ ...config, registries });
+
+  const reverted = builtIn ? ' (reverted to the built-in URL)' : '';
+  if (options.json) {
+    printJson({ namespace, removed: true, revertedToBuiltIn: builtIn });
+    return;
+  }
+  log.success(`Removed ${c.bold(namespace)}${reverted}`);
+  if (dependents.length > 0) {
+    log.warn(`Blocks still installed from it: ${dependents.join(', ')}`);
+  }
+}
+
+// --- registry ping ---------------------------------------------------------------
+
+export async function registryPingCommand(
+  namespace: string | undefined,
+  options: JsonOption,
+): Promise<void> {
+  const config = readConfig();
+  let reg: ResolvedRegistry;
+  try {
+    reg = resolveRegistry(namespace, config);
+  } catch (err) {
+    if (err instanceof RegistryError || err instanceof ConfigError) {
+      fail(err.message, options);
+      return;
+    }
+    throw err;
+  }
+
+  const started = Date.now();
+  try {
+    // Ping always hits the network — the point is "is it up right now" (C4).
+    const index = await fetchIndex(reg, { noCache: true });
+    const latencyMs = Date.now() - started;
+    const blocks = Object.keys(index.blocks).length;
+    if (options.json) {
+      printJson({
+        namespace: reg.namespace,
+        url: reg.url,
+        name: index.name,
+        generatedAt: index.generatedAt,
+        blocks,
+        latencyMs,
+      });
+      return;
+    }
+    log.success(`${c.bold(reg.namespace)} ${sym.arrow} ${c.cyan(index.name)}`);
+    log.bullet(`url        ${c.dim(reg.url)}`);
+    log.bullet(`generated  ${index.generatedAt} ${c.meteor(`(${ago(index.generatedAt)})`)}`);
+    log.bullet(`blocks     ${blocks}`);
+    log.bullet(`latency    ${latencyMs}ms`);
+  } catch (err) {
+    fail((err as Error).message, options);
+  }
+}

@@ -9,12 +9,13 @@
  *
  * Commands:
  *   init [dir]       Scaffold a user-owned framework project (Phase 14)
- *   list             List blocks available in the registry
- *   add <block>      Vendor a block's code + install it (deps resolved)
+ *   list             List a registry's block catalog (--registry/--all)
+ *   add <ref>        Vendor a block's code + install it (deps resolved)
  *   remove <block>   Uninstall a block (your vendored code stays yours)
  *   dev              Run the project's server.ts (or core's, in the monorepo)
  *   schema …         Snapshot pull/diff/push + drift doctor
  *   block …          Block-authoring toolchain (new/validate/pack)
+ *   registry …       Manage configured block registries (list/add/remove/ping)
  */
 
 import { Command } from 'commander';
@@ -23,6 +24,12 @@ import { blockNewCommand, blockPackCommand, blockValidateCommand } from './comma
 import { devCommand } from './commands/dev.js';
 import { initCommand } from './commands/init.js';
 import { listCommand } from './commands/list.js';
+import {
+  registryAddCommand,
+  registryListCommand,
+  registryPingCommand,
+  registryRemoveCommand,
+} from './commands/registry.js';
 import { removeCommand } from './commands/remove.js';
 import {
   schemaDiffCommand,
@@ -31,13 +38,14 @@ import {
   schemaPushCommand,
 } from './commands/schema.js';
 import { banner, c, log, sym } from './ui.js';
+import { CLI_VERSION } from './version-check.js';
 
 const program = new Command();
 
 program
   .name('ion-drive')
   .description('Ion Drive CLI — accelerated business software development')
-  .version('0.1.0')
+  .version(CLI_VERSION)
   .addHelpText('beforeAll', banner())
   .configureOutput({
     outputError: (str, write) => write(`${sym.cross} ${c.danger(str.trim())}\n`),
@@ -65,16 +73,26 @@ program
 program
   .command('list')
   .alias('ls')
-  .description('List available building blocks')
-  .action(() => listCommand());
+  .description('List available building blocks (default registry unless --registry/--all)')
+  .option('-r, --registry <@ns>', 'List a specific configured registry')
+  .option('-a, --all', 'List every configured registry')
+  .option('--no-cache', 'Bypass the registry metadata cache')
+  .action((options) => listCommand(options));
 
 program
   .command('add')
-  .argument('<block>', 'Block name (crm, crm@0.2.0), a block.json URL, or a local block path')
+  .argument(
+    '<ref>',
+    'Block ref (crm, crm@^0.2.0, @acme/billing@1.x), a block.json URL, or a local block path',
+  )
   .description('Install a building block and its dependencies')
   .option('-y, --yes', 'Skip the confirmation prompt')
   .option('-d, --dry-run', 'Preview the changes without applying them')
-  .option('-f, --force', 'Reinstall even if already installed')
+  .option(
+    '-f, --force',
+    'Reinstall an installed block, proceed through installed-version range conflicts, and force-reinstall on the server',
+  )
+  .option('--no-cache', 'Bypass the registry metadata cache')
   .action((block, options) => addCommand(block, options));
 
 program
@@ -146,6 +164,42 @@ block
   .argument('[dir]', 'Block repo directory (default: current)')
   .description('Emit dist/block.json with code/ embedded (the registry artifact)')
   .action((dir) => blockPackCommand(dir));
+
+// (`registry build` joins this group in spec-05 — the name is reserved.)
+const registry = program
+  .command('registry')
+  .description('Manage configured block registries (spec-03)');
+
+registry
+  .command('list')
+  .description('Show configured registries with block counts and staleness')
+  .option('--json', 'Plain JSON output')
+  .option('--no-cache', 'Bypass the registry metadata cache')
+  .action((options) => registryListCommand(options));
+
+registry
+  .command('add')
+  .argument('<namespace>', 'Registry namespace, e.g. @acme')
+  .argument('[url]', "URL of the registry's index.json")
+  .description('Validate a registry and add it to ion.config.json')
+  .option('--json', 'Plain JSON output')
+  .action((namespace, url, options) => registryAddCommand(namespace, url, options));
+
+registry
+  .command('remove')
+  .alias('rm')
+  .argument('<namespace>', 'Registry namespace, e.g. @acme')
+  .description('Remove a configured registry (refuses while installed blocks came from it)')
+  .option('-f, --force', 'Remove even while installed blocks reference it')
+  .option('--json', 'Plain JSON output')
+  .action((namespace, options) => registryRemoveCommand(namespace, options));
+
+registry
+  .command('ping')
+  .argument('[namespace]', 'Registry namespace (default: the default registry)')
+  .description('Fetch + validate a registry index fresh, reporting latency')
+  .option('--json', 'Plain JSON output')
+  .action((namespace, options) => registryPingCommand(namespace, options));
 
 program.parseAsync().catch((err) => {
   log.error(err instanceof Error ? err.message : String(err));
