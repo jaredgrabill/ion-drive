@@ -1,5 +1,7 @@
 # Spec 04 — Integrity, Provenance, and Trust Tiers
 
+> **Status:** ✅ implemented 2026-07-08, commit 930b66c
+
 **Lands in:** `jaredgrabill/ion-drive` (`packages/cli` + `packages/core`).
 **Depends on:** spec-01 (digest/attestation fields), spec-02 (manifest v1). Runs in
 parallel with spec-03; the integration point is the `fetchArtifact → verify → parse`
