@@ -11,10 +11,7 @@
     "directory": "packages/admin"
   },
   "type": "module",
-  "files": [
-    "dist",
-    "NOTICE"
-  ],
+  "files": ["dist", "NOTICE"],
   "publishConfig": {
     "access": "public"
   },

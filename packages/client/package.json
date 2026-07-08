@@ -19,10 +19,7 @@
       "default": "./dist/index.js"
     }
   },
-  "files": [
-    "dist",
-    "NOTICE"
-  ],
+  "files": ["dist", "NOTICE"],
   "publishConfig": {
     "access": "public"
   },
@@ -33,13 +30,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist *.tsbuildinfo"
   },
-  "keywords": [
-    "ion-drive",
-    "client",
-    "sdk",
-    "query-builder",
-    "rest"
-  ],
+  "keywords": ["ion-drive", "client", "sdk", "query-builder", "rest"],
   "devDependencies": {
     "@types/node": "^22.10.0",
     "vitest": "^3.0.0",

@@ -19,10 +19,7 @@
       "default": "./dist/index.js"
     }
   },
-  "files": [
-    "dist",
-    "NOTICE"
-  ],
+  "files": ["dist", "NOTICE"],
   "publishConfig": {
     "access": "public"
   },
@@ -33,12 +30,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist *.tsbuildinfo"
   },
-  "keywords": [
-    "ion-drive",
-    "plugin",
-    "sendgrid",
-    "email"
-  ],
+  "keywords": ["ion-drive", "plugin", "sendgrid", "email"],
   "peerDependencies": {
     "@ion-drive/core": ">=0.2.0 <1.0.0"
   },
