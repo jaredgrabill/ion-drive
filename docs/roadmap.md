@@ -157,8 +157,14 @@ Remaining:
 - **Owner-run activation** (blocked on F23): push + tag the blocks repo, Pages/DNS for
   `registry.iondrive.dev`, dry-run + first attested publish, third-party-flow rehearsal,
   real sigstore fixtures — exact commands in `docs/specs/blocks-ecosystem/OWNER-TODO.md`.
-- **M2 — registry site/search/MCP tools** (spec-08, not started).
-- **M3 — hosted write API** (spec-09, draft; re-spec after M2).
+- **M2 — registry site/search/MCP tools** (spec-08, not started; in-repo `/site`
+  confirmed by ADR-023).
+- **M3 — hosted write API** (spec-09, draft; re-spec after M2; new repo
+  `ion-drive-registry` → Render web service at `api.registry.iondrive.dev`, ADR-023).
+- **Project page** (spec-10, new — ADR-023): `iondrive.dev` procured; new repo
+  `jaredgrabill/iondrive.dev` on Render (static); includes the pre-publish
+  **domain-unification warm-up** (all hyphenated `ion-drive.dev` placeholders →
+  `iondrive.dev`: schema $ids, manifest $schema, scaffold, blocks repo re-pack).
 - Deferred small items: admin Blocks "update available" hint (needs M2's site/search
   infra); `update --json` diff payload could embed the rendered previews verbatim;
   streaming download cap in `fetchArtifact` (size is checked pre-parse, post-download).

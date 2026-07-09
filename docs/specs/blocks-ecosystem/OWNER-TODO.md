@@ -12,6 +12,19 @@ runs its live verify) → §5 (third-party flow) → spec-06 §1–2 (blocks CI 
 the published-CLI dogfood loop). Both repos' Phase 18 commits are already made
 locally; nothing has been pushed.
 
+## From ADR-023 (domain + hosting, 2026-07-09)
+
+1. **DNS for the apex + www** (domain `iondrive.dev` is procured): after the
+   project-page repo (`jaredgrabill/iondrive.dev`, spec-10) is pushed and connected
+   to Render as a **static site** (build command + publish dir per its README):
+   apex `A`/`ALIAS` records → Render, `www` CNAME → Render (the `render.yaml`
+   redirects www → apex). Sanity: `curl -fsSI https://iondrive.dev` → 200;
+   `curl -fsS https://iondrive.dev/schemas/registry-index.v1.json | jq '.["$id"]'`.
+2. **`registry` CNAME → GitHub Pages** — unchanged, already item 2 under
+   "From spec-05" below.
+3. **`api.registry` CNAME → Render** — only when M3 (spec-09) ships its service
+   from `jaredgrabill/ion-drive-registry`; nothing to do until then.
+
 ## From spec-04 (integrity, provenance, trust)
 
 1. **Generate real attestation fixtures.** The spec-04 test suite exercises the

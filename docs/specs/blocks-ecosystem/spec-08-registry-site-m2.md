@@ -1,9 +1,16 @@
 # Spec 08 — Registry Site, Search, Directory, and Registry MCP (M2)
 
-**Lands in:** `jaredgrabill/ion-drive-blocks` (`/site`, or a dedicated repo if the owner
-prefers — default: in-repo, it deploys with the same Pages site as the registry) + small
-CLI additions.
-**Depends on:** spec-01 (protocol), spec-05 (live registry + Pages).
+> **ADR-023 (2026-07-09):** the in-repo `/site` option is **confirmed** — the site is a
+> pure function of the registry JSON and must regenerate atomically with every publish.
+> Domain note: the canonical schema `$id`s move to `https://iondrive.dev/schemas/*`
+> (domain-unification warm-up); this site links to them and to the `iondrive.dev`
+> project page (spec-10).
+
+**Lands in:** `jaredgrabill/ion-drive-blocks` (`/site` — in-repo, deploys with the same
+Pages site as the registry; confirmed by ADR-023) + small CLI additions.
+**Depends on:** spec-01 (protocol), spec-05 (live registry + Pages — the *serving* half
+is owner-gated on F23; the generator, search, MCP tools, and CLI additions are all
+buildable and testable against the local registry tree).
 
 ## Scope
 

@@ -2,7 +2,17 @@
 
 **Status:** Accepted for implementation (2026-07-08). Decision record: ADR-022 in
 `docs/research/architecture-decisions.md`. Research basis:
-`docs/research/blocks-registry-ecosystem.md`.
+`docs/research/blocks-registry-ecosystem.md`. **M1 + M1.5 (specs 01–07) shipped
+2026-07-08** — each spec carries its status stamp + commit hash.
+
+**2026-07-09 — ADR-023 (domain + hosting):** the owner procured **`iondrive.dev`**.
+All hyphenated `ion-drive.dev` placeholder URLs in this suite and the code (schema
+`$id`s, manifest `$schema`, scaffold) migrate to `iondrive.dev` as a pre-publish
+clean-break warm-up. Hosting topology: `iondrive.dev` = project page (new repo,
+Render static, spec-10) + canonical `/schemas/*`; `registry.iondrive.dev` = protocol
+files + M2 site, static forever (GitHub Pages from ion-drive-blocks, generator
+in-repo at `/site`); `api.registry.iondrive.dev` = the M3 write service (new repo
+`ion-drive-registry`, Render web service, reads never depend on it).
 
 This suite specifies the shadcn-style distribution ecosystem for Ion Drive blocks: a main
 hosted registry run by us, third-party self-hosted registries (public or private), CLI
@@ -46,8 +56,9 @@ generates static files.
 | 05 | [Publishing pipeline](spec-05-publishing-pipeline.md) — `registry build`, `block publish`, reusable publish workflow (attest + immutability guard), official-repo flow, `registry.iondrive.dev` serving | ion-drive cli + ion-drive-blocks | 01, 02, 04 |
 | 06 | [Block test + CI](spec-06-block-test-and-ci.md) — `block test` (ephemeral server), regenerated `block new` scaffold, `ion-drive audit` | ion-drive cli | 02, 05 |
 | 07 | [Diff + update](spec-07-diff-and-update.md) — `ion-drive diff`/`update`, installer upgrade mode, `.new`-file convention | ion-drive cli + core | 02, 04 |
-| 08 | [Registry site (M2)](spec-08-registry-site-m2.md) — static directory/block pages, search index + `ion-drive search`, registries directory, registry MCP tools | site (ion-drive-blocks `/site` or own repo) | 01, 05 |
-| 09 | [Hosted registry (M3) — DRAFT](spec-09-hosted-registry-m3.md) — accounts, name policy, publish API, OIDC trusted publishing, yank/takedown, verified-mark issuance | new service repo | 05, 08 |
+| 08 | [Registry site (M2)](spec-08-registry-site-m2.md) — static directory/block pages, search index + `ion-drive search`, registries directory, registry MCP tools | ion-drive-blocks `/site` (confirmed in-repo, ADR-023) | 01, 05 |
+| 09 | [Hosted registry (M3) — DRAFT](spec-09-hosted-registry-m3.md) — accounts, name policy, publish API, OIDC trusted publishing, yank/takedown, verified-mark issuance | new repo `ion-drive-registry` → Render web service at `api.registry.iondrive.dev` (ADR-023) | 05, 08 |
+| 10 | [Project page](spec-10-project-site.md) — developer-first static site at `iondrive.dev` (Render), canonical `/schemas/*` hosting, redirects | new repo `iondrive.dev` | ADR-023 domain warm-up |
 
 ## Milestones
 

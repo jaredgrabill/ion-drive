@@ -5,7 +5,10 @@ re-specced to full detail after M2 ships, with real usage data. It exists now so
 earlier spec can be checked against it (nothing in M1/M2 may paint M3 into a corner) and
 so the end-state is visible to contributors.
 
-**Lands in:** a new repo (service). **Depends on:** specs 05, 08.
+**Lands in:** a new repo — **`jaredgrabill/ion-drive-registry`**, an `ion-drive init`
+framework project deployed as a Render **web service** at `api.registry.iondrive.dev`
+(ADR-023; the read host `registry.iondrive.dev` stays static and never depends on it).
+**Depends on:** specs 05, 08.
 
 ## Scope (target state)
 
