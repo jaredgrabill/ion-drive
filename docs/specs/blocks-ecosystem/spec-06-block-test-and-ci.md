@@ -1,6 +1,6 @@
 # Spec 06 — `block test`, the Regenerated Scaffold, and `ion-drive audit`
 
-> **Status:** ✅ implemented 2026-07-08 (uncommitted in both working trees at hand-off):
+> **Status:** ✅ implemented 2026-07-08, commits c156f0f (ion-drive) + d2f897e (ion-drive-blocks):
 > CLI `block test` (ephemeral scratch-DB server + `--server` mode + `--deps-from` offline
 > resolution + fixtures + `tsx --test` env contract), the regenerated `block new` scaffold
 > (test/, CI with a Postgres service + `block test`, publish.yml thin caller, README,
