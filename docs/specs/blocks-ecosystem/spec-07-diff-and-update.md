@@ -194,7 +194,7 @@ Approved deviations from the design text above, decided at implementation time:
 
 ## Status
 
-**Implemented 2026-07-08** (core installer upgrade mode + engine gates +
+**Implemented 2026-07-08, commit a6764d9** (core installer upgrade mode + engine gates +
 `ion-drive diff`/`update`). Verified by: core unit suites
 (`manifest-diff.test.ts`, `block-installer-upgrade.test.ts`,
 `block-engine-upgrade.test.ts`), the server-side integration suite
