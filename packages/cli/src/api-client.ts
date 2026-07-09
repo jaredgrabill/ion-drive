@@ -35,6 +35,14 @@ export interface InstallReport {
   /** Actions/hooks exposed by the block (Phase 14; absent on older servers). */
   actionsExposed?: string[];
   hooksExposed?: string[];
+  /** Bus subscriptions registered (Phase 9; absent on older servers). */
+  subscriptionsRegistered?: string[];
+  /**
+   * Outbound webhooks provisioned, `name → once-only signing secret`
+   * (Phase 12; absent on older servers).
+   */
+  webhooksCreated?: Record<string, string>;
+  webhooksSkipped?: string[];
   warnings: string[];
 }
 
@@ -179,6 +187,71 @@ export class IonApiClient {
   ): Promise<{ removedObjects: string[] }> {
     const qs = opts.dropData ? '?dropData=true' : '';
     return this.request('DELETE', `/api/v1/blocks/${encodeURIComponent(name)}${qs}`);
+  }
+
+  // --- Data + action surface (used by `ion-drive block test`, spec-06) ---
+
+  /**
+   * Lists an object's records. Fetched raw (not through {@link request})
+   * because the data envelope carries `pagination` beside `data` and the
+   * generic unwrap would drop the total count.
+   */
+  async listData(object: string): Promise<{ rows: Record<string, unknown>[]; totalCount: number }> {
+    const url = `${this.baseUrl.replace(/\/$/, '')}/api/v1/data/${encodeURIComponent(object)}`;
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: this.headers(false) });
+    } catch (err) {
+      throw new ApiError(
+        `Cannot reach Ion Drive at ${this.baseUrl} — is the server running? (${(err as Error).message})`,
+        0,
+      );
+    }
+    const payload = (await res.json().catch(() => ({}))) as {
+      data?: Record<string, unknown>[];
+      pagination?: { totalCount?: number };
+      error?: string;
+      message?: string;
+    };
+    if (!res.ok) {
+      throw new ApiError(
+        payload.message || payload.error || `Request failed (${res.status})`,
+        res.status,
+      );
+    }
+    const rows = payload.data ?? [];
+    return { rows, totalCount: payload.pagination?.totalCount ?? rows.length };
+  }
+
+  /**
+   * Invokes a block action, returning the raw status + parsed body instead of
+   * throwing on non-2xx — `block test` classifies 400s ("wired, input
+   * rejected") differently from 404s ("not wired") and 5xx ("handler blew up").
+   * Only a network failure throws.
+   */
+  async invokeAction(
+    block: string,
+    action: string,
+    input: Record<string, unknown>,
+  ): Promise<{ status: number; message?: string }> {
+    const url = `${this.baseUrl.replace(/\/$/, '')}/api/v1/blocks/${encodeURIComponent(
+      block,
+    )}/actions/${encodeURIComponent(action)}`;
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: this.headers(true),
+        body: JSON.stringify(input),
+      });
+    } catch (err) {
+      throw new ApiError(
+        `Cannot reach Ion Drive at ${this.baseUrl} — is the server running? (${(err as Error).message})`,
+        0,
+      );
+    }
+    const payload = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+    return { status: res.status, message: payload.message ?? payload.error };
   }
 
   // --- Schema snapshot & drift doctor (Phase 10) ---

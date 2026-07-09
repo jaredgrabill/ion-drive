@@ -163,6 +163,34 @@ dist/
 *.log
 `;
 
+/**
+ * Project CI (spec-06 §3): typecheck plus `ion-drive audit` — the ecosystem's
+ * Dependabot-lite. The weekly schedule re-checks installed blocks against
+ * their registries even when nobody is pushing (advisories/yanks land on the
+ * registry side, not in this repo).
+ */
+const PROJECT_CI = `name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+  schedule:
+    # Weekly audit: advisories, yanks, and registry drift surface over time.
+    - cron: '0 7 * * 1'
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      # Audits ion.config.json's installed blocks against their registries:
+      # exit 1 on advisories, yanked versions, or digest/ledger drift.
+      - run: npx ion-drive audit
+`;
+
 /** Project README — the ten-minute loop, verbatim. */
 function readme(name: string): string {
   return `# ${name}
@@ -238,6 +266,8 @@ requires \`?force=true\` and is usually the wrong move — extend with new field
   inbound webhooks at \`/api/v1/hooks/<block>/<hook>\`.
 - Server-side state (objects, tasks, roles, subscriptions) comes from the block's manifest —
   installed via \`ion-drive add\`, inspected via \`GET /api/v1/blocks\`.
+- \`ion-drive audit\` checks installed blocks against their registries (advisories, yanked
+  versions, digest/ledger drift) — CI runs it on every push and weekly.
 `;
 
 const SKILL_SCHEMA_CHANGE = `---
@@ -308,6 +338,7 @@ export function scaffoldProject(dir: string): ProjectScaffoldResult {
     { path: '.env.example', contents: ENV_EXAMPLE },
     { path: 'docker-compose.yml', contents: DOCKER_COMPOSE },
     { path: '.gitignore', contents: GITIGNORE },
+    { path: '.github/workflows/ci.yml', contents: PROJECT_CI },
     { path: 'README.md', contents: readme(name) },
     { path: 'AGENTS.md', contents: AGENTS_MD },
     { path: '.claude/skills/ion-schema-change/SKILL.md', contents: SKILL_SCHEMA_CHANGE },

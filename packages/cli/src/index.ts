@@ -13,14 +13,17 @@
  *   add <ref>        Vendor a block's code + install it (deps resolved)
  *   remove <block>   Uninstall a block (your vendored code stays yours)
  *   dev              Run the project's server.ts (or core's, in the monorepo)
+ *   audit            Check installed blocks against registries (advisories/yanks/drift)
  *   schema …         Snapshot pull/diff/push + drift doctor
- *   block …          Block-authoring toolchain (new/validate/pack/verify/publish)
+ *   block …          Block-authoring toolchain (new/validate/pack/test/verify/publish)
  *   registry …       Configured registries (list/add/remove/ping) + the
  *                    registry-repo generator/admin loop (build/yank/deprecate)
  */
 
 import { Command } from 'commander';
+import { blockTestCommand } from './block-test/runner.js';
 import { addCommand } from './commands/add.js';
+import { auditCommand } from './commands/audit.js';
 import {
   blockNewCommand,
   blockPackCommand,
@@ -122,6 +125,13 @@ program
   .option('-p, --port <port>', 'Port to run the server on')
   .action((options) => devCommand(options));
 
+program
+  .command('audit')
+  .description('Check installed blocks against their registries (advisories, yanks, drift)')
+  .option('--json', 'Plain JSON output')
+  .option('--no-cache', 'Bypass the registry metadata cache')
+  .action((options) => auditCommand({ json: options.json, cache: options.cache }));
+
 const schema = program
   .command('schema')
   .description('Schema sync & drift tools (pull/diff/push/doctor)');
@@ -193,6 +203,35 @@ block
       direct: options.direct,
       dryRun: options.dryRun,
       json: options.json,
+    }),
+  );
+
+block
+  .command('test')
+  .argument('[dir]', 'Block repo directory (default: current)')
+  .description('Boot an ephemeral server, install the block for real, and run the assertion suite')
+  .option('--server <url>', 'Test against an existing server instead of booting one')
+  .option(
+    '--database-url <dsn>',
+    'Postgres connection point for the scratch database (default: ION_DATABASE_URL)',
+  )
+  .option(
+    '--deps-from <dir>',
+    'Resolve dependencies from local sibling block directories (offline)',
+  )
+  .option('--keep', 'Keep the temp project + scratch database for debugging')
+  .option('-f, --force', 'Proceed against a --server instance that reports user objects')
+  .option('--json', 'Plain JSON output')
+  .option('--no-cache', 'Bypass the registry metadata cache')
+  .action((dir, options) =>
+    blockTestCommand(dir, {
+      server: options.server,
+      databaseUrl: options.databaseUrl,
+      depsFrom: options.depsFrom,
+      keep: options.keep,
+      force: options.force,
+      json: options.json,
+      cache: options.cache,
     }),
   );
 

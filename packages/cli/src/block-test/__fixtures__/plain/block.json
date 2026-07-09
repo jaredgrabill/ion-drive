@@ -1,0 +1,19 @@
+{
+  "name": "plain",
+  "version": "0.1.0",
+  "title": "Plain",
+  "description": "Schema-only fixture block (no code) for the block-test integration suite.",
+  "objects": [
+    {
+      "name": "plain_notes",
+      "displayName": "Plain Notes",
+      "fields": [
+        { "name": "title", "displayName": "Title", "columnType": "text", "isRequired": true }
+      ]
+    }
+  ],
+  "seed": {
+    "plain_notes": [{ "title": "hello" }, { "title": "world" }]
+  },
+  "requires": { "core": ">=0.2.0 <1.0.0" }
+}

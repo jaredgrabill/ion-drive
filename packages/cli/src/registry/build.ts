@@ -300,6 +300,8 @@ export function buildRegistry(root: string, opts: BuildOptions): BuildResult {
     return result;
   }
 
+  warnOnMissingGitattributes(fs, root, result);
+
   const names = discoverBlocks(fs, root);
   if (opts.block !== undefined && !names.includes(opts.block)) {
     result.refusals.push(
@@ -726,6 +728,36 @@ function indexMateriallyChanged(
   const normalize = (doc: Record<string, unknown>) =>
     serializeDoc({ ...doc, generatedAt: 'normalized' });
   return normalize(existing) !== normalize(index);
+}
+
+// ---------------------------------------------------------------------------
+// .gitattributes (spec-06 §2 / the spec-05 carry-over)
+// ---------------------------------------------------------------------------
+
+/**
+ * Warns when the registry root has no `.gitattributes` covering `dist` —
+ * sha256 digests are computed over exact bytes, and a Windows checkout with
+ * `core.autocrlf` would serve CRLF-mangled artifacts that fail every
+ * consumer's digest verification. A warning, not a refusal: the generator
+ * cannot know how the repo is checked out or served.
+ */
+function warnOnMissingGitattributes(fs: BuildFs, root: string, result: BuildResult): void {
+  const advice =
+    'add a .gitattributes with `dist/** -text` (and `*.sigstore.json -text`) — sha256 digests are over exact bytes and autocrlf checkouts corrupt released artifacts';
+  const path = joinPath(root, '.gitattributes');
+  if (!fs.exists(path)) {
+    result.warnings.push(`no .gitattributes at the registry root — ${advice}`);
+    return;
+  }
+  const coversDist = readText(fs, path)
+    .split('\n')
+    .some((line) => {
+      const trimmed = line.trim();
+      return !trimmed.startsWith('#') && trimmed.includes('dist');
+    });
+  if (!coversDist) {
+    result.warnings.push(`.gitattributes does not cover dist/ artifacts — ${advice}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

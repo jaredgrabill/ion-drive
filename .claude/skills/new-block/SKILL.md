@@ -38,12 +38,18 @@ Official blocks live in the **separate `jaredgrabill/ion-drive-blocks` repo** (l
 1. **Scaffold**: `ion-drive block new <name>` (or copy an existing dir in `jaredgrabill/ion-drive-blocks`).
 2. **Author** `block.json` (+ `code/` if logic). Cross-block needs → `dependencies`.
 3. **Validate**: `ion-drive block validate <dir>` (platform Zod schema + code checks).
-4. **Pack**: `ion-drive block pack <dir>` → commit `dist/block.json` (CI drift-guards it).
-5. **Register**: add/update the entry in `registry/index.json` (title, description,
-   categories, dependencies, `latest`, version→artifact URL).
-6. **Docs**: update the catalog tables in `docs/concepts/building-blocks.md` and, if
+4. **Block test (required before any registry entry)**: `ion-drive block test <dir>
+   --deps-from I:\ion-shift\blocks` (spec-06) — boots an ephemeral server on a scratch DB,
+   installs for real, asserts (install report, data endpoints, action reachability,
+   uninstall-leaves-no-residue), and runs the block's own `test/*.test.ts` under the
+   `ION_TEST_SERVER_URL`/`ION_TEST_API_KEY` env contract. Add `test/fixtures.json` action
+   inputs/seed checks where useful. Must be green; the blocks-repo CI runs the same loop.
+5. **Pack**: `ion-drive block pack <dir>` → commit `dist/<version>/block.json` (CI drift-guards it).
+6. **Register**: `ion-drive registry build` in the blocks repo regenerates
+   `registry/blocks/<name>.json` + `registry/index.json` (append-only; spec-05).
+7. **Docs**: update the catalog tables in `docs/concepts/building-blocks.md` and, if
    user-facing, `README.md` + `docs/getting-started.md` in the platform repo.
-7. **Live verify** from a scaffolded project (`ion-drive init`, `npm run dev` running):
+8. **Live verify** from a scaffolded project (`ion-drive init`, `npm run dev` running):
    - `ion-drive add ../blocks/<name>` (local path — the block-dev loop). For logic blocks,
      confirm: code vendored to `blocks/<name>/`, barrel wired, handlers awaited, install
      passes `requires` validation.
@@ -54,5 +60,6 @@ Official blocks live in the **separate `jaredgrabill/ion-drive-blocks` repo** (l
 
 ## Definition of done
 
-Validate + pack green, registry index updated, docs mention it, and the full local-path
-add → invoke → remove cycle passed against a scaffolded project.
+Validate + **block test** + pack green, registry JSON regenerated, docs mention it, and
+the full local-path add → invoke → remove cycle passed against a scaffolded project.
+No block enters the registry without a green `ion-drive block test`.

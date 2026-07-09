@@ -5,5 +5,7 @@
     "rootDir": "./src"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  // __fixtures__ blocks are vendored INTO temp test projects at runtime (they
+  // import @ion-drive/core from there) — never compiled as CLI sources.
+  "exclude": ["node_modules", "dist", "src/block-test/__fixtures__"]
 }

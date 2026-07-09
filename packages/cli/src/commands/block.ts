@@ -28,106 +28,22 @@ import { buildRegistry, realBuildFs } from '../registry/build.js';
 import { CORE_REQUIRED_MESSAGE, loadCoreValidator } from '../registry/core-loader.js';
 import { type Manifest, readLocalBlock } from '../registry/registry-client.js';
 import { computeDigest, packBytes } from '../registry/verify.js';
+import {
+  BLOCK_GITATTRIBUTES,
+  BLOCK_GITIGNORE,
+  FIXTURES_SKELETON,
+  blockCi,
+  blockPublishWorkflow,
+  blockReadme,
+  codeIndexSkeleton,
+  manifestSkeleton,
+  smokeTestSkeleton,
+} from '../templates/block-scaffold.js';
 import { c, log, sym } from '../ui.js';
 
 // ---------------------------------------------------------------------------
-// block new
+// block new (templates live in ../templates/block-scaffold.ts — spec-06 §2)
 // ---------------------------------------------------------------------------
-
-/** Manifest skeleton for a freshly scaffolded block. */
-function manifestSkeleton(name: string): string {
-  return `${JSON.stringify(
-    {
-      $schema: 'https://ion-drive.dev/schemas/block-manifest.v1.json',
-      name,
-      version: '0.1.0',
-      title: titleCase(name),
-      description: `The ${name} building block.`,
-      categories: [],
-      dependencies: {},
-      objects: [
-        {
-          name: `${name.replace(/-/g, '_')}_items`,
-          displayName: `${titleCase(name)} Items`,
-          fields: [{ name: 'title', displayName: 'Title', columnType: 'text', isRequired: true }],
-        },
-      ],
-      actions: [],
-      hooks: [],
-      requires: { handlers: [], plugins: [] },
-    },
-    null,
-    2,
-  )}\n`;
-}
-
-function codeIndexSkeleton(name: string): string {
-  return `/**
- * ${titleCase(name)} block — vendored logic entry point.
- *
- * This file is copied into consuming projects at blocks/${name}/index.ts and
- * loaded through the plugin host. Register the handlers your block.json
- * declares (actions/hooks) in \`setup\`; install fails with a clear error if a
- * declared handler is missing.
- */
-import { definePlugin } from '@ion-drive/core';
-
-export default definePlugin({
-  name: '${name}',
-  setup(ctx) {
-    // Example action — declare it in block.json under "actions" to expose it:
-    // ctx.actions.registerAction({
-    //   block: '${name}',
-    //   name: 'ping',
-    //   handler: async () => ({ pong: true }),
-    // });
-    ctx.logger.info('${name} block loaded');
-  },
-});
-`;
-}
-
-function blockReadme(name: string): string {
-  return `# block-${name}
-
-An [Ion Drive](https://github.com/jaredgrabill/ion-drive) building block.
-
-- \`block.json\` — the manifest (objects, actions, hooks, requirements)
-- \`code/\` — vendored TypeScript copied into consuming projects at \`blocks/${name}/\`
-- \`dist/<version>/block.json\` — the immutable distributable artifact (\`ion-drive block pack\`)
-
-## Develop
-
-\`\`\`bash
-ion-drive block validate    # manifest + code checks
-ion-drive block pack        # emit dist/<version>/block.json (embeds code/)
-\`\`\`
-
-Test against a local project: \`ion-drive add ../block-${name}\` from a scaffolded
-Ion Drive project (\`ion-drive init\`).
-`;
-}
-
-const BLOCK_CI = `name: ci
-on:
-  push: { branches: [main] }
-  pull_request:
-
-jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install -g @ion-drive/cli @ion-drive/core
-      - run: ion-drive block validate
-      - run: ion-drive block pack
-      # Committed artifacts must match the sources (emit drift guard) — a
-      # modified tracked artifact or an uncommitted new one both fail.
-      - run: git diff --exit-code -- 'dist/'
-      - run: test -z "$(git ls-files --others --exclude-standard -- dist/)"
-`;
 
 export async function blockNewCommand(name: string): Promise<void> {
   const safe = name.replace(/^block-/, '');
@@ -146,9 +62,13 @@ export async function blockNewCommand(name: string): Promise<void> {
   const files: [string, string][] = [
     ['block.json', manifestSkeleton(safe)],
     ['code/index.ts', codeIndexSkeleton(safe)],
+    ['test/fixtures.json', FIXTURES_SKELETON],
+    ['test/smoke.test.ts', smokeTestSkeleton(safe)],
     ['README.md', blockReadme(safe)],
-    ['.github/workflows/ci.yml', BLOCK_CI],
-    ['.gitignore', 'node_modules/\n'],
+    ['.github/workflows/ci.yml', blockCi()],
+    ['.github/workflows/publish.yml', blockPublishWorkflow(safe)],
+    ['.gitignore', BLOCK_GITIGNORE],
+    ['.gitattributes', BLOCK_GITATTRIBUTES],
   ];
   for (const [path, contents] of files) {
     const target = join(dir, path);
@@ -699,11 +619,4 @@ function reportPublish(
   log.bullet(`size    ${outcome.size} bytes`);
   log.raw();
   log.warn(PROVENANCE_NOTE);
-}
-
-function titleCase(name: string): string {
-  return name
-    .split(/[-_]/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
 }

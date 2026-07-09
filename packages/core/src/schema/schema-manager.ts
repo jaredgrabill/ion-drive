@@ -213,8 +213,17 @@ export class SchemaManager {
       return { preview, success: false };
     }
 
-    // Execute DDL
-    const sqlStatements = await this.ddlExecutor.dropTable(obj.tableName);
+    // Execute DDL. Many-to-many junction tables touching this object are
+    // dropped first — they are real tables but not data objects, so the
+    // object's own DROP … CASCADE only severs their FKs and would leave them
+    // orphaned (surfaced by `block test`'s doctor assertion, spec-06).
+    const sqlStatements: string[] = [];
+    for (const rel of this.registry.getRelationships(name)) {
+      if (rel.type === 'many_to_many' && rel.junctionTable) {
+        sqlStatements.push(...(await this.ddlExecutor.dropTable(rel.junctionTable)));
+      }
+    }
+    sqlStatements.push(...(await this.ddlExecutor.dropTable(obj.tableName)));
 
     // Remove metadata (cascading deletes handle fields, relationships, indexes)
     await this.metadataStore.deleteObject(name);

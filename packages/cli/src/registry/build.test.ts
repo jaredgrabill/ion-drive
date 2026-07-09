@@ -423,3 +423,29 @@ describe('applyStatusEdit (registry yank / deprecate — AC6 writer half)', () =
     );
   });
 });
+
+describe('gitattributes guard (spec-06 §2 — the spec-05 carry-over)', () => {
+  it('warns when the registry root has no .gitattributes at all', () => {
+    const { fs } = freshRepo();
+    const result = buildRegistry('repo', { fs, validator, now: T1 });
+    expect(result.refusals).toEqual([]);
+    expect(result.warnings.some((w) => /no \.gitattributes.*dist\/\*\* -text/.test(w))).toBe(true);
+  });
+
+  it('warns when .gitattributes exists but does not cover dist', () => {
+    const { fs } = freshRepo();
+    fs.writeFile(
+      'repo/.gitattributes',
+      encoder.encode('# dist note in a comment only\n*.md text\n'),
+    );
+    const result = buildRegistry('repo', { fs, validator, now: T1 });
+    expect(result.warnings.some((w) => /does not cover dist/.test(w))).toBe(true);
+  });
+
+  it('stays quiet when dist artifacts are covered', () => {
+    const { fs } = freshRepo();
+    fs.writeFile('repo/.gitattributes', encoder.encode('dist/** -text\n*.sigstore.json -text\n'));
+    const result = buildRegistry('repo', { fs, validator, now: T1 });
+    expect(result.warnings.filter((w) => w.includes('.gitattributes'))).toEqual([]);
+  });
+});

@@ -1,5 +1,33 @@
 # Spec 06 — `block test`, the Regenerated Scaffold, and `ion-drive audit`
 
+> **Status:** ✅ implemented 2026-07-08 (uncommitted in both working trees at hand-off):
+> CLI `block test` (ephemeral scratch-DB server + `--server` mode + `--deps-from` offline
+> resolution + fixtures + `tsx --test` env contract), the regenerated `block new` scaffold
+> (test/, CI with a Postgres service + `block test`, publish.yml thin caller, README,
+> `.gitattributes`), `ion-drive audit` (+ the scaffolded *project* CI audit step with a
+> weekly cron), and the blocks-repo CI adoption + runbook section.
+> **AC1's Windows leg** verified live: all five official blocks green in ephemeral mode
+> against a bare Postgres (the crm run surfaced and fixed a real core gap —
+> `SchemaManager.deleteObject` orphaned m2m junction tables, caught by the doctor
+> assertion). **AC2/AC3/AC4** covered by the new CLI integration suite
+> (`packages/cli/src/block-test/block-test.integration.test.ts`, `pnpm --filter
+> @ion-drive/cli test:integration`, wired into root CI); **AC5** by the audit unit matrix.
+> **Owner-deferred:** AC1's Linux leg (the blocks-repo CI run) and AC6's
+> published-CLI dogfood — they need F23's first npm publish; a full local rehearsal of
+> AC6 (scaffold → validate → pack → `block test --json` → byte-identical repack) was run
+> with the built CLI and recorded in the implementation report. See
+> [`OWNER-TODO.md`](OWNER-TODO.md) §"From spec-06".
+>
+> **Implementation notes vs. the text below:** (1) block-local tests run under
+> `tsx --test` (the CLI's own tsx, now a runtime dependency) rather than bare
+> `node --test` — same node:test runner, TypeScript just works; (2) the ephemeral server
+> is a generated `server-boot.ts` composition root in a junction-linked temp project
+> (`@ion-drive/core`/`tsx`/`zod` resolved project-first), booted with `ION_REQUIRE_AUTH`
+> on and a run-scoped admin API key; (3) `evaluateInstallReport` treats an item named by
+> a report warning as "explainably skipped"; (4) audit's ledger drift also covers
+> "recorded locally but missing on the server", and an installed version missing from
+> the registry reports as digest drift (loud).
+
 **Lands in:** `jaredgrabill/ion-drive` (`packages/cli`) + `jaredgrabill/ion-drive-blocks`
 (CI adoption).
 **Depends on:** spec-02 (manifest v1); spec-05 (publish workflow templates referenced by

@@ -26,6 +26,33 @@ Prune entries as they are done.
    the verdict (digest OK, attestation OK, tier `official`) as part of
    spec-05's exit criteria. *(Folded into "From spec-05" item 4 below.)*
 
+## From spec-06 (block test + CI)
+
+Prereq: **F23's first npm publish** (the workflows install
+`@ion-drive/cli@^0.3 @ion-drive/core@^0.3` from npm) and the blocks repo
+pushed to GitHub (spec-05 item 1).
+
+1. **AC1 Linux leg — blocks-repo CI goes green.** After pushing
+   `jaredgrabill/ion-drive-blocks`, its `ci.yml` now runs `ion-drive block
+   test <dir> --deps-from .` for every block against a Postgres 17 service
+   container. The first post-F23 CI run on `main` must be green for all five
+   blocks (the Windows leg was rehearsed locally on 2026-07-08 — 5/5 green).
+
+2. **AC6 — the dogfood loop with the published CLI.** In a scratch repo:
+
+   ```bash
+   npm i -g @ion-drive/cli @ion-drive/core
+   ion-drive block new demo && cd block-demo
+   git init && git add -A && git commit -m init
+   # then run the scaffolded .github/workflows/ci.yml on GitHub (or its steps
+   # by hand): block validate . / block pack . /
+   # block test . --json --database-url … / the dist/ drift guard
+   ```
+
+   Must pass green end-to-end with the *published* packages (the same loop was
+   rehearsed locally with the built CLI on 2026-07-08 — validate/pack/test
+   green, repack byte-identical).
+
 ## From spec-05 (publishing pipeline)
 
 Prereq for all of these: **F23's first npm publish** (`@ion-drive/cli` +

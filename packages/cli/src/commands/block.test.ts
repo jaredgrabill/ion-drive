@@ -118,3 +118,73 @@ describe('blockPackCommand (spec-05 D8: versioned artifact path)', () => {
     }
   });
 });
+
+describe('blockNewCommand (spec-06 §2: the regenerated scaffold)', () => {
+  it('writes the full SDLC file set with version-derived presets', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ion-block-new-'));
+    const previousCwd = process.cwd();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      process.chdir(dir);
+      const { blockNewCommand } = await import('./block.js');
+      await blockNewCommand('billing');
+      expect(process.exitCode).toBeUndefined();
+
+      const root = join(dir, 'block-billing');
+      for (const path of [
+        'block.json',
+        'code/index.ts',
+        'test/fixtures.json',
+        'test/smoke.test.ts',
+        'README.md',
+        '.github/workflows/ci.yml',
+        '.github/workflows/publish.yml',
+        '.gitignore',
+        '.gitattributes',
+      ]) {
+        expect(existsSync(join(root, path)), path).toBe(true);
+      }
+
+      const manifest = JSON.parse(readFileSync(join(root, 'block.json'), 'utf8')) as {
+        name: string;
+        version: string;
+        requires: { core: string };
+      };
+      expect(manifest.name).toBe('billing');
+      expect(manifest.version).toBe('0.1.0');
+      // requires.core preset derives from the CLI's own major.minor.
+      expect(manifest.requires.core).toMatch(/^>=\d+\.\d+\.0 <1\.0\.0$/);
+
+      const ci = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+      expect(ci).toContain('postgres:17');
+      expect(ci).toMatch(/npm install -g @ion-drive\/cli@\^\d+\.\d+ @ion-drive\/core@\^\d+\.\d+/);
+      expect(ci).toContain('ion-drive block validate .');
+      expect(ci).toContain('ion-drive block pack .');
+      expect(ci).toContain('ion-drive block test . --json');
+      expect(ci).toContain('--database-url postgresql://postgres:postgres@localhost:5432/postgres');
+      expect(ci).toContain("git diff --exit-code -- 'dist/'");
+
+      const publish = readFileSync(join(root, '.github/workflows/publish.yml'), 'utf8');
+      expect(publish).toContain(
+        'jaredgrabill/ion-drive-blocks/.github/workflows/publish-block.yml@v1',
+      );
+      expect(publish).toContain('ion-drive block publish --registry-repo');
+      expect(publish).toContain('default: true'); // dispatch dry-run default
+
+      const gitattributes = readFileSync(join(root, '.gitattributes'), 'utf8');
+      expect(gitattributes).toContain('dist/** -text');
+      expect(gitattributes).toContain('*.sigstore.json -text');
+
+      const smoke = readFileSync(join(root, 'test/smoke.test.ts'), 'utf8');
+      expect(smoke).toContain('ION_TEST_SERVER_URL');
+      expect(smoke).toContain('ION_TEST_API_KEY');
+      expect(smoke).toContain('billing_items');
+      expect(readFileSync(join(root, 'test/fixtures.json'), 'utf8')).toContain('"seedChecks"');
+    } finally {
+      process.chdir(previousCwd);
+      vi.restoreAllMocks();
+      rmSync(dir, { recursive: true, force: true });
+      process.exitCode = undefined;
+    }
+  });
+});

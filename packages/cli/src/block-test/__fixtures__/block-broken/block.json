@@ -1,0 +1,17 @@
+{
+  "name": "broken",
+  "version": "0.1.0",
+  "title": "Broken",
+  "description": "Deliberately broken fixture: declares an action whose handler is never registered.",
+  "objects": [
+    {
+      "name": "broken_items",
+      "displayName": "Broken Items",
+      "fields": [
+        { "name": "label", "displayName": "Label", "columnType": "text", "isRequired": true }
+      ]
+    }
+  ],
+  "actions": [{ "name": "ping", "description": "Declared but never registered." }],
+  "requires": { "core": ">=0.2.0 <1.0.0" }
+}

@@ -35,6 +35,7 @@ describe('scaffoldProject', () => {
         '.env.example',
         'docker-compose.yml',
         '.gitignore',
+        '.github/workflows/ci.yml',
         'README.md',
         'AGENTS.md',
         '.claude/skills/ion-schema-change/SKILL.md',
@@ -58,6 +59,16 @@ describe('scaffoldProject', () => {
     };
     expect(pkg.dependencies['@ion-drive/core']).toMatch(/^\^\d+\.\d+\.\d+$/);
     expect(pkg.dependencies['@ion-drive/admin']).toBe(pkg.dependencies['@ion-drive/core']);
+  });
+
+  it('scaffolds project CI with the audit step and a weekly schedule (spec-06)', () => {
+    scaffoldProject(dir);
+    const ci = readFileSync(join(dir, '.github', 'workflows', 'ci.yml'), 'utf8');
+    expect(ci).toContain('npx ion-drive audit');
+    expect(ci).toContain('npx tsc --noEmit');
+    expect(ci).toMatch(/schedule:\n\s+#[^\n]*\n\s+- cron:/);
+    // AGENTS.md teaches agents the audit loop too.
+    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toContain('ion-drive audit');
   });
 
   it('writes a barrel with the add/remove markers', () => {

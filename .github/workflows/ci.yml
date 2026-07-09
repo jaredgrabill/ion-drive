@@ -84,3 +84,12 @@ jobs:
         run: pnpm --filter @ion-drive/core test:integration
         env:
           ION_DATABASE_URL: postgresql://ion:ion@localhost:5432/ion_drive
+
+      # `block test`'s ephemeral server imports core's built dist/.
+      - name: Build core (for the CLI's ephemeral server)
+        run: pnpm --filter @ion-drive/core build
+
+      - name: CLI integration tests (block test, spec-06)
+        run: pnpm --filter @ion-drive/cli test:integration
+        env:
+          ION_DATABASE_URL: postgresql://ion:ion@localhost:5432/ion_drive

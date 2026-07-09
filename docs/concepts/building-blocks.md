@@ -247,6 +247,82 @@ install fails with an actionable error otherwise. Keep vendored code **thin
 and heavily commented**: call `DataService`/`SecretsManager`/platform APIs,
 never re-implement plumbing. LLM legibility is a product goal.
 
+## Testing a block
+
+`ion-drive block test` is the install-and-run loop nothing else covers
+(spec-06): it boots a **real** ephemeral Ion Drive server — a throwaway temp
+project with your block's code vendored, on a scratch database created for
+the run — installs the block for real, asserts, and tears everything down:
+
+```bash
+ion-drive block test [dir]                 # ephemeral mode (the default)
+  --database-url <dsn>                     # Postgres connection point
+                                           # (or ION_DATABASE_URL; the scratch
+                                           # ion_blocktest_* DB is created/dropped)
+  --deps-from <dir>                        # resolve deps from local sibling
+                                           # block directories — offline, the
+                                           # co-developed/monorepo loop
+  --server <url>                           # run against an existing server
+  --keep --force --json --no-cache
+```
+
+The built-in assertion suite checks that: the manifest parses (core's strict
+schema), dependencies install, the **install report is clean** (everything
+declared — objects, relationships, tasks, roles, subscriptions, webhooks,
+actions, hooks — was created or explainably skipped), every object answers
+`GET /api/v1/data/<object>` with at least its seeded rows, every action is
+**reachable** at its endpoint (a 400 from the action's own validation counts
+as "wired" for a blank probe — the check is reachability, not business
+correctness), and **uninstall leaves zero residue** (ledger empty, schema
+doctor finds no orphan tables in the block's footprint).
+
+If the block has a `test/` directory, its `*.test.ts` files then run under
+`tsx --test` (plain `node:test` — zero framework lock-in) with two env vars:
+`ION_TEST_SERVER_URL` and `ION_TEST_API_KEY` (an admin-role key minted for the
+run). An optional `test/fixtures.json` feeds the built-in suite:
+
+```json
+{
+  "actions":    { "create_thing": { "input": { "name": "x" }, "expectStatus": 200 } },
+  "seedChecks": { "things": 3 }
+}
+```
+
+`--server <url>` skips the ephemeral boot and runs the same loop against a
+running server — the CI-service-container mode, and the fastest inner loop
+against `ion-drive dev`. It **refuses** a server that reports existing user
+objects unless `--force`, and finally-guards its uninstalls so even a failing
+run leaves no residue. Dependencies resolve through your configured registries
+by default (the spec-04 digest gate applies) — `--deps-from` keeps everything
+local. The scaffolded block CI (`block new`) runs
+`validate → pack → block test → dist drift guard` against a Postgres service
+container; a green `block test` is required before a block enters the official
+registry.
+
+## Auditing installs
+
+`ion-drive audit` is the ecosystem's Dependabot-lite: it reads your project's
+installed-block records (`ion.config.json.blocks[]`) and checks each
+registry-sourced block against its registry's *current* metadata:
+
+- **advisories** whose `affectedVersions` range matches your installed version
+  (an invalid range fails **closed** — treated as affected, with a warning);
+- **status** — your installed version is now `yanked` or `deprecated`;
+- **digest drift** — the registry now serves a different digest for your
+  installed version (a released version was mutated — loud);
+- **ledger drift** — when your server is reachable, its `_ion_blocks` ledger
+  must still match the config record (version + artifact digest); an
+  unreachable server degrades to a config-only audit with one notice;
+- **updates** — a newer active version exists (informational only).
+
+Exit codes are CI-friendly: `0` clean, `1` on any advisory/yank/deprecation/
+drift finding; `--json` emits the stable `{ clean, blocks, unauditable,
+notices }` shape. Local-path and URL-sourced blocks are listed as
+"unauditable source" (no registry can vouch for them) — informational, never
+a failure. Projects scaffolded by `ion-drive init` run `ion-drive audit` in
+CI on every push **and on a weekly schedule**, because advisories and yanks
+land on the registry side while your repo sits still.
+
 ## Publishing a block
 
 A registry is a **git repo of block directories plus generated protocol-v1

@@ -1,0 +1,8 @@
+{
+  "actions": {
+    "ping": { "input": {}, "expectStatus": 200 }
+  },
+  "seedChecks": {
+    "testable_items": 2
+  }
+}

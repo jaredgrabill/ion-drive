@@ -1,0 +1,21 @@
+{
+  "name": "testable",
+  "version": "0.1.0",
+  "title": "Testable",
+  "description": "Fixture block with a dependency, seed data, an action, and block-local tests.",
+  "dependencies": { "plain": "^0.1.0" },
+  "objects": [
+    {
+      "name": "testable_items",
+      "displayName": "Testable Items",
+      "fields": [
+        { "name": "label", "displayName": "Label", "columnType": "text", "isRequired": true }
+      ]
+    }
+  ],
+  "seed": {
+    "testable_items": [{ "label": "one" }, { "label": "two" }]
+  },
+  "actions": [{ "name": "ping", "description": "Answers { pong: true }." }],
+  "requires": { "core": ">=0.2.0 <1.0.0" }
+}
