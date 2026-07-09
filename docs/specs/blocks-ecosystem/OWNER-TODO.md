@@ -14,14 +14,17 @@ locally; nothing has been pushed.
 
 ## From ADR-023 as amended (domain + hosting, 2026-07-09)
 
-1. **Connect the site to Render + DNS for apex/www** (domain `iondrive.dev` is
-   procured; the site lives in the ion-drive monorepo at `site/`, spec-10): create a
-   Render **static site** from the `ion-drive` repo (root directory / build command /
-   publish dir / path filters per `site/render.yaml` and the site README), then apex
-   `A`/`ALIAS` records → Render and `www` CNAME → Render (the config redirects
-   www → apex). Sanity: `curl -fsSI https://iondrive.dev` → 200;
+1. **Enable Pages for the site + DNS for apex/www** (domain `iondrive.dev` is
+   procured; the site lives in the ion-drive monorepo at `site/`, spec-10, deployed
+   by `.github/workflows/site-deploy.yml`): ion-drive repo Settings → Pages →
+   Source "GitHub Actions"; run the site-deploy workflow once; set custom domain
+   `iondrive.dev`; DNS: apex `A`/`AAAA` records → GitHub Pages IPs + `www` CNAME →
+   `jaredgrabill.github.io` (Pages auto-redirects apex↔www); enforce HTTPS. Sanity:
+   `curl -fsSI https://iondrive.dev` → 200;
    `curl -fsS https://iondrive.dev/schemas/registry-index.v1.json | jq '.["$id"]'`;
    open `/blocks` and confirm the browser renders the live registry.
+   *(Optional alternative: connect the repo to Render as a static site per
+   `site/render.yaml` — gains custom headers + PR previews.)*
 2. **`registry` CNAME → GitHub Pages** — unchanged, already item 2 under
    "From spec-05" below. (`registry.iondrive.dev` serves JSON/artifacts only —
    no site to set up there; `api.registry` was dropped with spec-09's withdrawal.)

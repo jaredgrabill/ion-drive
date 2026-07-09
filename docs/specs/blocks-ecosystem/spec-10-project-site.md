@@ -117,10 +117,16 @@ at runtime (CORS: GH Pages serves `access-control-allow-origin: *`):
   `check` tasks), Biome per repo conventions, excluded from changesets/publish and
   from the Docker image. Root `pnpm build`/`lint`/`typecheck` must stay green and
   reasonably fast (site build cacheable by turbo).
-- Render: static site, root directory `site/` (or repo root with `render.yaml`
-  `rootDir`), build filters so only `site/**`, `docs/**`, `packages/core/schemas/**`
-  changes trigger deploys; `www.iondrive.dev` → apex redirect; long-cache headers for
-  hashed assets. Everything Render-specific isolated to `render.yaml`.
+- **Deployment — GitHub Pages primary** (owner decision 2026-07-09; the ion-drive
+  repo's Pages slot is free — the registry uses the *blocks* repo's): ship
+  `.github/workflows/site-deploy.yml` (path-filtered to `site/**`, `docs/**`,
+  `packages/core/schemas/**`; build `site/` → `actions/upload-pages-artifact` →
+  `actions/deploy-pages`; `permissions: pages: write, id-token: write`). Apex via
+  A/AAAA records; Pages auto-redirects apex↔www when both DNS records exist; accept
+  Pages' default cache headers (same posture as the registry host). **Render remains
+  the documented optional alternative**: keep `site/render.yaml` (static site config,
+  www→apex redirect, long-cache headers) so switching is a connect-the-repo away —
+  everything host-specific stays isolated to that file and the workflow.
 
 ## Implementation notes
 
@@ -154,8 +160,9 @@ at runtime (CORS: GH Pages serves `access-control-allow-origin: *`):
    Lighthouse ≥ 95 (perf/a11y/best-practices/SEO) on landing + one docs page; dark
    and light pass contrast AA; reduced motion disables the hero animation.
 7. Root `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test` stay green with the
-   new workspace package; Render setup + DNS recorded in OWNER-TODO with exact
-   settings.
+   new workspace package; the Pages deploy workflow is in-repo and coherent (verifier
+   reads it line by line — running it is owner-gated); Pages enablement + DNS (and
+   the optional Render alternative) recorded in OWNER-TODO with exact settings.
 
 ## Test plan
 
