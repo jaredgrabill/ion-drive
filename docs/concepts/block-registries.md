@@ -29,7 +29,7 @@ Small on purpose: one summary entry per block, no version lists, no digests.
 
 ```json
 {
-  "$schema": "https://ion-drive.dev/schemas/registry-index.v1.json",
+  "$schema": "https://iondrive.dev/schemas/registry-index.v1.json",
   "schemaVersion": 1,
   "name": "Ion Drive Official Blocks",
   "generatedAt": "2026-07-08T00:00:00Z",
@@ -59,7 +59,7 @@ without fetching a single artifact — plus an optional `attestationUrl` and a
 
 ```json
 {
-  "$schema": "https://ion-drive.dev/schemas/registry-block.v1.json",
+  "$schema": "https://iondrive.dev/schemas/registry-block.v1.json",
   "schemaVersion": 1,
   "name": "crm",
   "latest": "0.2.0",
@@ -170,9 +170,9 @@ string, or the object form for private registries:
 `RegistryParseError` with aggregated issues) — plus `resolveRegistryUrl` and
 `isPermittedRegistryUrl`. Matching JSON Schema documents are declared at:
 
-- `https://ion-drive.dev/schemas/registry-index.v1.json`
-- `https://ion-drive.dev/schemas/registry-block.v1.json`
-- `https://ion-drive.dev/schemas/registries-directory.v1.json`
+- `https://iondrive.dev/schemas/registry-index.v1.json`
+- `https://iondrive.dev/schemas/registry-block.v1.json`
+- `https://iondrive.dev/schemas/registries-directory.v1.json`
 
 These `$schema` URLs are declared-but-unresolvable until spec-05's Pages setup serves
 them; the files are generated from the Zod schemas

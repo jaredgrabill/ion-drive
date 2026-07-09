@@ -564,7 +564,7 @@ function assembleBlockDoc(
 
   const meta = (manifest.meta as Record<string, unknown> | undefined) ?? {};
   const doc: BlockDoc = {
-    $schema: 'https://ion-drive.dev/schemas/registry-block.v1.json',
+    $schema: 'https://iondrive.dev/schemas/registry-block.v1.json',
     schemaVersion: 1,
     name,
     ...optional('title', manifest.title),
@@ -670,7 +670,7 @@ function buildIndex(ctx: IndexBuildContext): Record<string, unknown> | null {
   }
 
   const index: Record<string, unknown> = {
-    $schema: 'https://ion-drive.dev/schemas/registry-index.v1.json',
+    $schema: 'https://iondrive.dev/schemas/registry-index.v1.json',
     schemaVersion: 1,
     name: config.name,
     ...optional('description', config.description),

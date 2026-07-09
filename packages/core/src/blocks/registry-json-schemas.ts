@@ -3,7 +3,7 @@
  * (ADR-022 / spec-01 §8 / spec-02).
  *
  * Generates the JSON Schema documents published at
- * `https://ion-drive.dev/schemas/*.v1.json` — the three registry wire formats
+ * `https://iondrive.dev/schemas/*.v1.json` — the three registry wire formats
  * (from `registry-types.ts`) plus the block manifest itself (from
  * `block-types.ts`) — so each format has exactly one source of truth.
  * The committed files under `packages/core/schemas/` are written by
@@ -24,7 +24,7 @@ import {
 } from './registry-types.js';
 
 /** Where the schemas are published once spec-05's Pages setup serves them. */
-const SCHEMA_ID_BASE = 'https://ion-drive.dev/schemas/';
+const SCHEMA_ID_BASE = 'https://iondrive.dev/schemas/';
 
 /** Basename → Zod source for each published schema document. */
 const SCHEMA_SOURCES: Record<string, z.ZodTypeAny> = {

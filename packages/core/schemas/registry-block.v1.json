@@ -1,5 +1,5 @@
 {
-  "$id": "https://ion-drive.dev/schemas/registry-block.v1.json",
+  "$id": "https://iondrive.dev/schemas/registry-block.v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {

@@ -25,7 +25,7 @@ const DIGEST_C = `sha256:${'ef56'.repeat(16)}`;
 // --- Spec examples (AC5) — §3/§4/§6 verbatim except the digest substitution ---
 
 const specIndexExample = {
-  $schema: 'https://ion-drive.dev/schemas/registry-index.v1.json',
+  $schema: 'https://iondrive.dev/schemas/registry-index.v1.json',
   schemaVersion: 1,
   name: 'Ion Drive Official Blocks',
   description: 'The main Ion Drive block registry.',
@@ -44,7 +44,7 @@ const specIndexExample = {
 };
 
 const specBlockExample = {
-  $schema: 'https://ion-drive.dev/schemas/registry-block.v1.json',
+  $schema: 'https://iondrive.dev/schemas/registry-block.v1.json',
   schemaVersion: 1,
   name: 'crm',
   title: 'CRM',
@@ -79,7 +79,7 @@ const specBlockExample = {
 };
 
 const specDirectoryExample = {
-  $schema: 'https://ion-drive.dev/schemas/registries-directory.v1.json',
+  $schema: 'https://iondrive.dev/schemas/registries-directory.v1.json',
   schemaVersion: 1,
   registries: [
     {
@@ -103,7 +103,7 @@ const specDirectoryExample = {
 // --- Full fixture registry (AC3) — exercises every field ---
 
 const fullBlockFixture = {
-  $schema: 'https://ion-drive.dev/schemas/registry-block.v1.json',
+  $schema: 'https://iondrive.dev/schemas/registry-block.v1.json',
   schemaVersion: 1,
   name: 'invoicing',
   title: 'Invoicing',
@@ -458,7 +458,7 @@ describe('published JSON Schemas (drift guard)', () => {
   it('each schema is valid JSON with the right $id, 2020-12 $schema, and version pin', () => {
     for (const [basename, text] of Object.entries(rendered)) {
       const doc = JSON.parse(text);
-      expect(doc.$id).toBe(`https://ion-drive.dev/schemas/${basename}`);
+      expect(doc.$id).toBe(`https://iondrive.dev/schemas/${basename}`);
       expect(doc.$schema).toBe('https://json-schema.org/draft/2020-12/schema');
       // Registry wire files pin `schemaVersion: 1`; the manifest schema is
       // versioned by its filename/$id instead (spec-02).

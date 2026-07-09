@@ -48,7 +48,7 @@ export function scaffoldObjectName(name: string): string {
 export function manifestSkeleton(name: string): string {
   return `${JSON.stringify(
     {
-      $schema: 'https://ion-drive.dev/schemas/block-manifest.v1.json',
+      $schema: 'https://iondrive.dev/schemas/block-manifest.v1.json',
       name,
       version: '0.1.0',
       title: titleCase(name),

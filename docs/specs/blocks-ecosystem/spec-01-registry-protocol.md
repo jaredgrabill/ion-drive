@@ -60,7 +60,7 @@ host-portable: move the tree, nothing inside changes.
 
 ```json
 {
-  "$schema": "https://ion-drive.dev/schemas/registry-index.v1.json",
+  "$schema": "https://iondrive.dev/schemas/registry-index.v1.json",
   "schemaVersion": 1,
   "name": "Ion Drive Official Blocks",
   "description": "The main Ion Drive block registry.",
@@ -99,7 +99,7 @@ host-portable: move the tree, nothing inside changes.
 
 ```json
 {
-  "$schema": "https://ion-drive.dev/schemas/registry-block.v1.json",
+  "$schema": "https://iondrive.dev/schemas/registry-block.v1.json",
   "schemaVersion": 1,
   "name": "crm",
   "title": "CRM",
@@ -193,7 +193,7 @@ by `ion-drive audit` (spec-06) and the resolver's warnings (spec-03).
 
 ```json
 {
-  "$schema": "https://ion-drive.dev/schemas/registries-directory.v1.json",
+  "$schema": "https://iondrive.dev/schemas/registries-directory.v1.json",
   "schemaVersion": 1,
   "registries": [
     {
@@ -234,9 +234,9 @@ gate; disputes are resolved by the maintainers (M3 formalizes a name policy).
 
 Three 2020-12 JSON Schemas, authored in the ion-drive repo and published at:
 
-- `https://ion-drive.dev/schemas/registry-index.v1.json`
-- `https://ion-drive.dev/schemas/registry-block.v1.json`
-- `https://ion-drive.dev/schemas/registries-directory.v1.json`
+- `https://iondrive.dev/schemas/registry-index.v1.json`
+- `https://iondrive.dev/schemas/registry-block.v1.json`
+- `https://iondrive.dev/schemas/registries-directory.v1.json`
 
 (Manifest schema `block-manifest.v1.json` ships with spec-02.) Until the domain serves
 them, the `$schema` URLs are declared-but-unresolvable (same as today's manifest
