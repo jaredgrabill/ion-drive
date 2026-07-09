@@ -3,6 +3,15 @@
 Items only the repo owner can complete (secrets, real CI runs, live publishes).
 Prune entries as they are done.
 
+**Sequencing (finalized 2026-07-08, M1+M1.5 shipped):** everything below is gated
+on roadmap **F23** — the first npm publish of `@ion-drive/{core,cli,client,admin}`
+(`NPM_TOKEN` secret + `v0.x` tag → `release.yml`). Then, in order:
+spec-05 §1 (push + tag the blocks repo) → §2 (Pages + DNS) → §3 (dry-run
+dispatch) → §4 (first attested publish — also closes spec-04's fixture item and
+runs its live verify) → §5 (third-party flow) → spec-06 §1–2 (blocks CI green +
+the published-CLI dogfood loop). Both repos' Phase 18 commits are already made
+locally; nothing has been pushed.
+
 ## From spec-04 (integrity, provenance, trust)
 
 1. **Generate real attestation fixtures.** The spec-04 test suite exercises the
@@ -61,12 +70,11 @@ Prereq for all of these: **F23's first npm publish** (`@ion-drive/cli` +
 
 1. **Push the migrated blocks repo + tag the reusable workflow.** The
    migration (versioned `dist/<version>/` artifacts, protocol-v1
-   `registry/`, workflows, runbook, schemas, `.nojekyll`) sits uncommitted in
-   `I:\ion-shift\blocks`:
+   `registry/`, workflows, runbook, schemas, `.nojekyll`) is committed locally
+   in `I:\ion-shift\blocks` (commits `f5c1ef9` spec-05 + `d2f897e` spec-06):
 
    ```bash
    cd I:\ion-shift\blocks
-   git add -A && git commit -m "Registry protocol v1: versioned artifacts, publish workflows, runbook (spec-05)"
    git remote add origin https://github.com/jaredgrabill/ion-drive-blocks.git   # if not already
    git push -u origin main
    git tag v1 && git push origin v1     # third parties: uses: jaredgrabill/ion-drive-blocks/.github/workflows/publish-block.yml@v1

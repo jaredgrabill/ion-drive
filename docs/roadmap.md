@@ -65,7 +65,7 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 | F20 | ~~**`ion-drive dev` is monorepo-only**~~ | ✅ 2026-07-06 — `dev` detects a scaffolded project (`server.ts` + core dep), brings up the compose Postgres best-effort, and runs `tsx watch server.ts` (hot-reload of `server.ts` + `/blocks`); the monorepo contributor path remains the fallback. |
 | F21 | ~~**`init` doesn't scaffold infrastructure**~~ | ✅ 2026-07-06 — `init [dir]` scaffolds the full framework project: composition root, blocks barrel, `.env` (generated secrets) + `.env.example` (hardening knobs), `docker-compose.yml`, tsconfig, README, client starter. |
 | F22 | ~~**No block-authoring support**~~ | ✅ 2026-07-06 — `ion-drive block new/validate/pack` (scaffold, platform-Zod validation via project-first core import, artifact packing with `code/` embedded). Official blocks live in the separate `jaredgrabill/ion-drive-blocks` repo (ADR-018 re-amendment: single repo, registry index in-repo). |
-| F23 | 🟡 **Nothing is published** | Pipeline built 2026-07-06 (Phase 14 Tier 0); packages verified installable via tarballs (the whole Phase 14 live loop ran a scaffolded project on them). Remaining: the **first real publish** (owner-run — needs `NPM_TOKEN` secret + `v0.x` tag), Docker image not yet pushed, and the `jaredgrabill/ion-drive-blocks` repo needs pushing to GitHub (the CLI's default registry URL points at it). |
+| F23 | 🟡 **Nothing is published** | Pipeline built 2026-07-06 (Phase 14 Tier 0); packages verified installable via tarballs (the whole Phase 14 live loop ran a scaffolded project on them). Remaining: the **first real publish** (owner-run — needs `NPM_TOKEN` secret + `v0.x` tag), Docker image not yet pushed, and the `jaredgrabill/ion-drive-blocks` repo needs pushing to GitHub. Since Phase 18 (2026-07-08) this also gates the whole registry activation chain (Pages/DNS, attested publishes, blocks-repo CI) — see `docs/specs/blocks-ecosystem/OWNER-TODO.md`. |
 | F24 | ~~**No agent-facing project instructions**~~ | ✅ 2026-07-06 — `init` ships `AGENTS.md` (MCP endpoint, query language, preview-first schema contract, SDK idioms, block rules) plus `.claude/skills/{ion-schema-change,ion-add-block}`. |
 
 ### 1.5 Deferred polish backlog ⚪
@@ -146,8 +146,22 @@ Tenant provisioning/lifecycle APIs on the system DB, request→tenant routing (h
 ### Phase 17 — Authorization depth
 Field-level RBAC (column masking on read, reject on write), row-level policies (owner scoping via actor identity from Phase 12), policy editor in admin. (F12)
 
-### Phase 18 — Blocks registry ecosystem (specced 2026-07-08, ADR-022)
-The shadcn-style distribution ecosystem: registry protocol v1 (static files, split index, per-version sha256 digests, immutability), manifest v1 (strict semver + dependency ranges + `requires.core`), multi-registry namespaces (`@ion` default, private registries via `${ENV}` auth), digest verification + sigstore attestations + official/verified/community trust tiers, `registry build`/`block publish` + a reusable GitHub Actions publish workflow, `block test`/`audit`, `diff`/`update` (closes the slipped Phase-14 stretch item), the M2 registry site/search/MCP, and the M3 hosted write API (draft). **Fully specced, one implementation agent per spec:** `docs/specs/blocks-ecosystem/` (9 specs + overview; milestone/dependency map in its README). Sequencing: M1 starts right after F23's owner-run first publish.
+### Phase 18 — Blocks registry ecosystem (ADR-022) — **M1 + M1.5 ✅ SHIPPED 2026-07-08** (specs 01–07)
+The shadcn-style distribution ecosystem shipped its core: registry protocol v1, manifest v1
+semver, multi-registry CLI resolution, digest verification + sigstore trust tiers,
+`registry build`/`block publish` + the reusable publish workflow (blocks repo migrated to
+versioned immutable artifacts), `block test`/`audit`, and `diff`/`update` with the installer
+upgrade mode. Every spec carries a status stamp + commit hash in
+`docs/specs/blocks-ecosystem/`; see CLAUDE.md's Phase 18 entry for the dense summary.
+Remaining:
+- **Owner-run activation** (blocked on F23): push + tag the blocks repo, Pages/DNS for
+  `registry.iondrive.dev`, dry-run + first attested publish, third-party-flow rehearsal,
+  real sigstore fixtures — exact commands in `docs/specs/blocks-ecosystem/OWNER-TODO.md`.
+- **M2 — registry site/search/MCP tools** (spec-08, not started).
+- **M3 — hosted write API** (spec-09, draft; re-spec after M2).
+- Deferred small items: admin Blocks "update available" hint (needs M2's site/search
+  infra); `update --json` diff payload could embed the rendered previews verbatim;
+  streaming download cap in `fetchArtifact` (size is checked pre-parse, post-download).
 
 ### Continuous (no phase)
 ~~External plugin packages (F19)~~ (✅ 2026-07-07), complexity-warning cleanup, remaining admin polish (§1.5), performance benchmarks. Plugin follow-ups if demanded: SMTP provider, RabbitMQ bus, a Redis-backed realtime bridge (the SSE stream stays outbox-only when the Redis bus is active).
