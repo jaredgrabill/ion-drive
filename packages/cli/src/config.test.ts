@@ -115,7 +115,9 @@ describe('configWarnings', () => {
       registries: {
         '@acme': {
           url: 'https://acme.test/index.json',
-          headers: { authorization: 'Bearer sk_live_ABCDEFGHIJKLMNOPQRSTUVWX' },
+          // Any 20+ char literal token trips the warning; deliberately NOT
+          // shaped like a real provider key so secret scanners never flag it.
+          headers: { authorization: 'Bearer fake-literal-token-long-enough-to-warn' },
         },
       },
     });

@@ -6,7 +6,8 @@ describe('Encryptor', () => {
 
   it('round-trips a plaintext value', () => {
     const enc = new Encryptor(key);
-    const secret = 'sk_live_supersecret_value_123';
+    // Deliberately NOT shaped like a real provider key (secret scanners).
+    const secret = 'fake-supersecret-value-123';
     const cipher = enc.encrypt(secret);
     expect(cipher).not.toContain(secret);
     expect(enc.decrypt(cipher)).toBe(secret);
