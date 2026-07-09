@@ -132,14 +132,7 @@ export class BlockStore {
    * desirable for the "which servers touched the bad digest?" question.
    */
   async begin(manifest: BlockManifest, source?: BlockInstallSource): Promise<void> {
-    const provenance = {
-      artifact_digest: source?.digest ?? null,
-      source_registry: source?.registry ?? null,
-      source_url: source?.url ?? null,
-      publisher: source?.publisher ?? null,
-      attested: source?.attested ?? null,
-      trust_tier: source?.tier ?? null,
-    };
+    const provenance = provenanceColumns(source);
     await this.db
       .insertInto('_ion_blocks')
       .values({
@@ -178,6 +171,49 @@ export class BlockStore {
       .execute();
   }
 
+  /**
+   * Flips ONLY the lifecycle status (spec-07 upgrade semantics). Upgrades run
+   * begin-with-old/finish-with-new: `setStatus('installing')` guards
+   * concurrency while the PRIOR version + manifest snapshot stay in the row,
+   * so an upgrade failure (`setStatus('failed')`) leaves the diff anchor and
+   * ownership intact and a re-run recomputes the same delta (AC4). Contrast
+   * with {@link begin}, whose upsert replaces the snapshot up front — correct
+   * for plain installs, where the incoming manifest IS the truth.
+   */
+  async setStatus(name: string, status: BlockStatus): Promise<void> {
+    await this.db
+      .updateTable('_ion_blocks')
+      .set({ status, updated_at: sql`now()` })
+      .where('name', '=', name)
+      .execute();
+  }
+
+  /**
+   * Finishes a SUCCESSFUL upgrade: replaces version/title/manifest snapshot +
+   * provenance and marks the row installed with the merged ownership list.
+   * Only reached after the installer completed — a failed upgrade never gets
+   * here, keeping the prior snapshot as the re-run baseline.
+   */
+  async replaceInstalled(
+    manifest: BlockManifest,
+    createdObjects: string[],
+    source?: BlockInstallSource,
+  ): Promise<void> {
+    await this.db
+      .updateTable('_ion_blocks')
+      .set({
+        version: manifest.version,
+        title: manifest.title,
+        status: 'installed',
+        created_objects: JSON.stringify(createdObjects),
+        manifest: JSON.stringify(manifest),
+        ...provenanceColumns(source),
+        updated_at: sql`now()`,
+      })
+      .where('name', '=', manifest.name)
+      .execute();
+  }
+
   async delete(name: string): Promise<boolean> {
     const result = await this.db
       .deleteFrom('_ion_blocks')
@@ -185,4 +221,19 @@ export class BlockStore {
       .executeTakeFirst();
     return (result.numDeletedRows ?? 0n) > 0n;
   }
+}
+
+/**
+ * The spec-04 provenance columns from a client-asserted source envelope.
+ * Absent fields write null — stale provenance would be a lie.
+ */
+function provenanceColumns(source?: BlockInstallSource) {
+  return {
+    artifact_digest: source?.digest ?? null,
+    source_registry: source?.registry ?? null,
+    source_url: source?.url ?? null,
+    publisher: source?.publisher ?? null,
+    attested: source?.attested ?? null,
+    trust_tier: source?.tier ?? null,
+  };
 }

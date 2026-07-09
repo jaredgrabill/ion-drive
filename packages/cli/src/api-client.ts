@@ -20,6 +20,43 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The structural old→new manifest delta computed by the server's upgrade
+ * mode (spec-07). Wire mirror of core's `ManifestDelta` — re-declared here
+ * because the CLI has no runtime core dependency; it reaches the CLI inside
+ * the dry-run upgrade report (`report.delta`).
+ */
+export interface ManifestDeltaWire {
+  from: string;
+  to: string;
+  objects: { added: string[]; removed: string[] };
+  fields: {
+    objectName: string;
+    fieldName: string;
+    kind: 'additive' | 'modifying' | 'destructive';
+    changedKeys?: string[];
+    presentationOnly?: boolean;
+  }[];
+  relationships: { added: string[]; removed: string[] };
+  tasks: { name: string; kind: 'additive' | 'modifying' | 'destructive' }[];
+  roles: { name: string; kind: 'additive' | 'modifying' | 'destructive' }[];
+  subscriptions: { added: string[]; removed: string[]; changed: string[] };
+  webhooks: { added: string[]; removed: string[]; changed: string[] };
+  actions: { added: string[]; removed: string[] };
+  hooks: { added: string[]; removed: string[] };
+  seedChanged: boolean;
+  code: { added: string[]; removed: string[]; changed: string[] };
+  hasChanges: boolean;
+}
+
+/** One schema-engine preview from an upgrade dry run (spec-07). */
+export interface UpgradePreviewWire {
+  target: string;
+  sqlStatements: string[];
+  warnings: string[];
+  errors: string[];
+}
+
 /** Report shape returned by install/preview (subset of the server's report). */
 export interface InstallReport {
   block: string;
@@ -43,6 +80,16 @@ export interface InstallReport {
    */
   webhooksCreated?: Record<string, string>;
   webhooksSkipped?: string[];
+  // --- Upgrade-mode fields (spec-07; absent on plain installs/old servers) ---
+  upgraded?: { from: string; to: string };
+  released?: string[];
+  skippedDestructive?: string[];
+  tasksUpdated?: string[];
+  tasksRemoved?: string[];
+  webhooksUpdated?: string[];
+  webhooksRemoved?: string[];
+  delta?: ManifestDeltaWire;
+  previews?: UpgradePreviewWire[];
   warnings: string[];
 }
 
@@ -59,6 +106,11 @@ export interface InstalledBlock {
   status: string;
   createdObjects: string[];
   installedAt: string;
+  /**
+   * The full manifest snapshot as installed — the pristine baseline
+   * `ion-drive diff`/`update` compare code and schema against (spec-07).
+   */
+  manifest?: Manifest;
   /** Provenance columns (spec-04) — absent on pre-spec-04 servers. */
   artifactDigest?: string | null;
   sourceRegistry?: string | null;
@@ -169,11 +221,21 @@ export class IonApiClient {
 
   install(
     manifest: Manifest,
-    opts: { dryRun?: boolean; force?: boolean; source?: InstallSource } = {},
+    opts: {
+      dryRun?: boolean;
+      force?: boolean;
+      /** Spec-07 upgrade mode — the block must be installed at a lower version. */
+      upgrade?: boolean;
+      /** With upgrade+force: drop removed objects even when they hold rows. */
+      dropData?: boolean;
+      source?: InstallSource;
+    } = {},
   ): Promise<InstallReport> {
     const params = new URLSearchParams();
     if (opts.dryRun) params.set('dryRun', 'true');
     if (opts.force) params.set('force', 'true');
+    if (opts.upgrade) params.set('upgrade', 'true');
+    if (opts.dropData) params.set('dropData', 'true');
     const qs = params.toString() ? `?${params}` : '';
     return this.request('POST', `/api/v1/blocks/install${qs}`, {
       manifest,

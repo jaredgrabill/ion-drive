@@ -148,6 +148,7 @@ export {
   splitBlockRef,
   dependencyNames,
   evaluateDependencies,
+  diffManifests,
 } from './blocks/index.js';
 export type { DependencyEvaluation, OutOfRangeDependency } from './blocks/index.js';
 export type {
@@ -163,6 +164,11 @@ export type {
   BlockInstallSource,
   InstalledBlock,
   BlockInstallReport,
+  UpgradePreviewEntry,
+  ManifestDelta,
+  FieldDelta,
+  NamedDelta,
+  DeltaKind,
 } from './blocks/index.js';
 export { registerBlockRoutes } from './api/block-routes.js';
 

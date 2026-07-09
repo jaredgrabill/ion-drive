@@ -84,6 +84,8 @@ export class MetadataStore {
     const values: Record<string, unknown> = { updated_at: new Date() };
     if (updates.displayName !== undefined) values.display_name = updates.displayName;
     if (updates.description !== undefined) values.description = updates.description;
+    // Provenance flip (spec-07's released-to-user path) — metadata only.
+    if (updates.managedBy !== undefined) values.managed_by = updates.managedBy;
 
     const result = await this.db
       .updateTable('_ion_objects')

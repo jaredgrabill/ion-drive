@@ -452,6 +452,20 @@ function addBlockPaths(paths: Record<string, unknown>, schemas: Record<string, u
       parameters: [
         { name: 'dryRun', in: 'query', schema: { type: 'boolean' } },
         { name: 'force', in: 'query', schema: { type: 'boolean' } },
+        {
+          name: 'upgrade',
+          in: 'query',
+          schema: { type: 'boolean' },
+          description:
+            'Upgrade mode (spec-07): the block must already be installed at a lower version; the manifest delta applies additively, destructive changes gate on force',
+        },
+        {
+          name: 'dropData',
+          in: 'query',
+          schema: { type: 'boolean' },
+          description:
+            'With upgrade+force: drop objects removed by the new version even when they still hold rows',
+        },
       ],
       requestBody: {
         required: true,
@@ -470,8 +484,12 @@ function addBlockPaths(paths: Record<string, unknown>, schemas: Record<string, u
       },
       responses: {
         '201': { description: 'Install report' },
-        '200': { description: 'Dry-run report' },
+        '200': { description: 'Dry-run report, or the equal-version upgrade no-op' },
         '400': { description: 'Invalid manifest or source envelope' },
+        '409': {
+          description:
+            'Not an upgrade (equal version with different content, or a downgrade), or a data guard tripped',
+        },
         '422': { description: 'Unmet or out-of-range block dependency' },
       },
     },

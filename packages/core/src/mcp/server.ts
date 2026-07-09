@@ -803,7 +803,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     const blocks = options.blocks;
     server.tool(
       'list_blocks',
-      'List installed building blocks with their install provenance (version, status, trust tier, artifact digest, publisher).',
+      'List installed building blocks with their install provenance (version, status, trust tier, artifact digest, publisher). To upgrade an installed block to a newer version, use the ion-drive CLI: `ion-drive update <name>`.',
       {},
       async () => {
         const installed = await blocks.listInstalled();

@@ -150,3 +150,55 @@ skip otherwise — note as follow-up).
   registry (client side).
 - Live smoke (numbered, repo convention): the full crm 0.2.0 → 0.3.0-fixture loop
   against real Postgres with a scaffolded project.
+
+## Implementation amendments (2026-07-08)
+
+Approved deviations from the design text above, decided at implementation time:
+
+1. **`diffManifests` lives in core but is NOT imported by the CLI.** The CLI has
+   a zero-core-runtime-dependency rule (the `ref.ts` vendored-copy precedent),
+   so "CLI and server share it" is realized over the wire instead: the dry-run
+   upgrade response carries the computed delta as **`report.delta`** (plus
+   schema previews as `report.previews`), and the CLI renders that. The differ
+   itself is `packages/core/src/blocks/manifest-diff.ts` (exported from core
+   for programmatic users).
+2. **No MCP `install_block` tool exists**, so there is no `upgrade` flag to add.
+   Instead: OpenAPI's `/api/v1/blocks/install` documents the new
+   `upgrade`/`dropData` query params and the 409 response, and the MCP
+   `list_blocks` tool description points agents at `ion-drive update <name>`.
+   The admin "update available" hint was assessed as not trivially cheap
+   (client-side registry check) — recorded as a roadmap follow-up.
+3. **Tasks are destructive (gated); subscriptions/webhooks are runtime wiring.**
+   A task removed by the new version is skipped by default and only removed
+   under `force`; a *changed* task updates in place, preserving the live
+   `enabled` flag. Subscriptions (keyed by consumer) and outbound webhooks
+   (keyed by name) re-sync ungated: dropped ones unsubscribe / are removed by
+   provenance, changed webhooks update in place with the signing secret
+   preserved.
+4. **`?dropData` was added to `/install`** (meaningful with `upgrade`+`force`):
+   removed objects that still hold rows trip the same data guard as uninstall
+   (409) unless `dropData` is set.
+5. **Backfill rule for `isRequired` tightening:** the field's own manifest
+   `defaultValue` doubles as the backfill for existing NULL rows; when absent,
+   that step fails actionably (REQUIRES_BACKFILL naming the field) and the
+   upgrade is safely re-runnable after fixing the manifest or the data.
+6. **Failure semantics are begin-with-old/finish-with-new (AC4):** an upgrade
+   only flips the ledger status to `installing`; the prior version + manifest
+   snapshot stay in the row until the installer succeeds
+   (`BlockStore.setStatus`/`replaceInstalled`). A mid-way failure marks the
+   row `failed` with the OLD snapshot intact, so fixing the cause and
+   re-running the SAME upgrade recomputes the same delta and the idempotent
+   steps complete it. A `failed` row never answers an equal-version request
+   as a no-op (409 pointing at force reinstall), and the CLI's local
+   up-to-date short-circuit does not fire for failed rows.
+
+## Status
+
+**Implemented 2026-07-08** (core installer upgrade mode + engine gates +
+`ion-drive diff`/`update`). Verified by: core unit suites
+(`manifest-diff.test.ts`, `block-installer-upgrade.test.ts`,
+`block-engine-upgrade.test.ts`), the server-side integration suite
+(`blocks-upgrade.integration.test.ts`, incl. the AC4 failure-injection +
+re-run scenario and the spec-06 junction rider), the CLI fixture-registry
+suite (`update.integration.test.ts`, AC1/AC3/AC5), and a numbered live smoke
+against real Postgres.

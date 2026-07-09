@@ -182,7 +182,9 @@ Two paths (see \`.github/workflows/publish.yml\`):
   version bump on \`main\`.
 
 Released \`(name, version)\` artifacts are immutable — bump the version for any
-change.
+change. Consumers pick new versions up with \`ion-drive diff ${name}\` /
+\`ion-drive update ${name}\` (their edits to vendored code are never
+overwritten — updates to touched files land beside them as \`<file>.new\`).
 `;
 }
 

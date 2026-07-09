@@ -47,6 +47,7 @@ const ERROR_RESPONSES: Record<BlockEngineError['code'], { status: number; label:
   dependency_version: { status: 422, label: 'Dependency Version Conflict' },
   not_found: { status: 404, label: 'Not Found' },
   conflict: { status: 409, label: 'Conflict' },
+  not_an_upgrade: { status: 409, label: 'Not An Upgrade' },
   install: { status: 500, label: 'Install Failed' },
 };
 
@@ -114,6 +115,34 @@ function queryFlag(value: string | undefined): boolean {
   return value === 'true' || value === '1';
 }
 
+/**
+ * Runs a POSTed manifest through install or upgrade mode (spec-07). Dry runs
+ * and the equal-version upgrade no-op answer 200; a real install/upgrade that
+ * changed the server answers 201.
+ */
+async function runInstall(
+  blockEngine: BlockEngine,
+  reply: FastifyReply,
+  manifest: unknown,
+  flags: { dryRun: boolean; force: boolean; upgrade: boolean; dropData: boolean },
+  source: BlockInstallSource | undefined,
+) {
+  const report = flags.upgrade
+    ? await blockEngine.upgrade(manifest, {
+        dryRun: flags.dryRun,
+        force: flags.force,
+        dropData: flags.dropData,
+        source,
+      })
+    : await blockEngine.install(manifest, {
+        dryRun: flags.dryRun,
+        force: flags.force,
+        source,
+      });
+  const noop = flags.upgrade && report.upgraded?.from === report.upgraded?.to;
+  return reply.code(flags.dryRun || noop ? 200 : 201).send({ data: report });
+}
+
 export function registerBlockRoutes(services: BlockRoutesServices): FastifyPluginCallback {
   const { blockEngine, permissionEngine } = services;
 
@@ -150,29 +179,29 @@ export function registerBlockRoutes(services: BlockRoutesServices): FastifyPlugi
     // --- Install a block from a submitted manifest ---
     // Body: a bare manifest, or the envelope `{ manifest, source? }` where
     // `source` is client-asserted provenance stored in the ledger (spec-04).
-    fastify.post<{ Querystring: { dryRun?: string; force?: string } }>(
-      '/install',
-      { preHandler: guard('manage') },
-      async (request, reply) => {
-        const body = request.body as { manifest?: unknown };
-        const manifest = body?.manifest ?? request.body;
-        const dryRun = queryFlag(request.query.dryRun);
-        const force = queryFlag(request.query.force);
-        const sourceCheck = parseInstallSource(request.body, reply);
-        if (!sourceCheck.ok) return reply;
-        try {
-          const report = await blockEngine.install(manifest, {
-            dryRun,
-            force,
-            source: sourceCheck.source,
-          });
-          return reply.code(dryRun ? 200 : 201).send({ data: report });
-        } catch (err) {
-          if (err instanceof BlockEngineError) return sendEngineError(reply, err);
-          throw err;
-        }
-      },
-    );
+    // `?upgrade=true` (spec-07) routes to the engine's upgrade mode: the
+    // target must already be installed at a strictly lower version; the delta
+    // applies additively, destructive changes gate on `?force` (`?dropData`
+    // extends force past the non-empty-object guard).
+    fastify.post<{
+      Querystring: { dryRun?: string; force?: string; upgrade?: string; dropData?: string };
+    }>('/install', { preHandler: guard('manage') }, async (request, reply) => {
+      const manifest = (request.body as { manifest?: unknown })?.manifest ?? request.body;
+      const flags = {
+        dryRun: queryFlag(request.query.dryRun),
+        force: queryFlag(request.query.force),
+        upgrade: queryFlag(request.query.upgrade),
+        dropData: queryFlag(request.query.dropData),
+      };
+      const sourceCheck = parseInstallSource(request.body, reply);
+      if (!sourceCheck.ok) return reply;
+      try {
+        return await runInstall(blockEngine, reply, manifest, flags, sourceCheck.source);
+      } catch (err) {
+        if (err instanceof BlockEngineError) return sendEngineError(reply, err);
+        throw err;
+      }
+    });
 
     // --- Get one installed block ---
     fastify.get<{ Params: { name: string } }>(

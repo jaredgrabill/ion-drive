@@ -11,6 +11,8 @@
  *   init [dir]       Scaffold a user-owned framework project (Phase 14)
  *   list             List a registry's block catalog (--registry/--all)
  *   add <ref>        Vendor a block's code + install it (deps resolved)
+ *   diff <block>     Three-way diff vs a newer version (snapshot × new × yours)
+ *   update <block>   Apply a block update (.new files beside your edits)
  *   remove <block>   Uninstall a block (your vendored code stays yours)
  *   dev              Run the project's server.ts (or core's, in the monorepo)
  *   audit            Check installed blocks against registries (advisories/yanks/drift)
@@ -31,6 +33,7 @@ import {
   blockValidateCommand,
 } from './commands/block.js';
 import { devCommand } from './commands/dev.js';
+import { diffCommand } from './commands/diff.js';
 import { initCommand } from './commands/init.js';
 import { listCommand } from './commands/list.js';
 import {
@@ -49,6 +52,7 @@ import {
   schemaPullCommand,
   schemaPushCommand,
 } from './commands/schema.js';
+import { updateCommand } from './commands/update.js';
 import { blockVerifyCommand } from './commands/verify.js';
 import { banner, c, log, sym } from './ui.js';
 import { CLI_VERSION } from './version-check.js';
@@ -59,6 +63,9 @@ program
   .name('ion-drive')
   .description('Ion Drive CLI — accelerated business software development')
   .version(CLI_VERSION)
+  // Root options only bind BEFORE the subcommand, so `diff/update --version
+  // <selector>` reaches the subcommand instead of printing the CLI version.
+  .enablePositionalOptions()
   .addHelpText('beforeAll', banner())
   .configureOutput({
     outputError: (str, write) => write(`${sym.cross} ${c.danger(str.trim())}\n`),
@@ -109,6 +116,52 @@ program
   .option('--show-code', 'List each vendored file (path, bytes, sha256) before confirming')
   .option('--no-verify-provenance', 'Skip attestation checks (digest verification always runs)')
   .action((block, options) => addCommand(block, options));
+
+program
+  .command('diff')
+  .argument('<block>', 'Installed block to compare against a newer registry version')
+  .description('Three-way diff: installed snapshot × new version × your vendored code (spec-07)')
+  .option(
+    '-v, --version <selector>',
+    'Target version (exact or semver range; default: latest active)',
+  )
+  .option('--json', 'Plain JSON output')
+  .option('--no-verify-provenance', 'Skip attestation checks (digest verification always runs)')
+  .action((block, options) =>
+    diffCommand(block, {
+      version: options.version,
+      json: options.json,
+      verifyProvenance: options.verifyProvenance,
+    }),
+  );
+
+program
+  .command('update')
+  .argument('<block>', 'Installed block to update from its recorded registry')
+  .description(
+    'Update a block: diff + confirm, vendor code (.new beside your edits), upgrade the server',
+  )
+  .option(
+    '-v, --version <selector>',
+    'Target version (exact or semver range; default: latest active)',
+  )
+  .option('-y, --yes', 'Skip the confirmation prompts')
+  .option('-f, --force', 'Apply destructive manifest changes (previewed + re-confirmed)')
+  .option('--with-deps', 'Perform required dependency updates first, in order')
+  .option('--drop-data', 'With --force: drop removed objects even when they still hold rows')
+  .option('--json', 'Plain JSON output (non-interactive)')
+  .option('--no-verify-provenance', 'Skip attestation checks (digest verification always runs)')
+  .action((block, options) =>
+    updateCommand(block, {
+      version: options.version,
+      yes: options.yes,
+      force: options.force,
+      withDeps: options.withDeps,
+      dropData: options.dropData,
+      json: options.json,
+      verifyProvenance: options.verifyProvenance,
+    }),
+  );
 
 program
   .command('remove')

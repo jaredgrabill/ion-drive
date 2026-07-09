@@ -240,3 +240,108 @@ function assertVendorable(
 export function hasVendoredCode(blockName: string, dir = process.cwd()): boolean {
   return existsSync(join(resolve(dir), 'blocks', blockName));
 }
+
+// ---------------------------------------------------------------------------
+// Code updates (spec-07 — the `.new`-file convention)
+// ---------------------------------------------------------------------------
+
+/**
+ * The six per-file verdicts of the three-way code comparison (spec-07 §2):
+ * ledger snapshot (old) × new artifact × the user's tree, all byte-compared.
+ */
+export type CodeFileStatus =
+  | 'unchanged'
+  | 'update-available'
+  | 'modified-by-you'
+  | 'added-upstream'
+  | 'removed-upstream'
+  | 'yours';
+
+/** One path's verdict plus the bytes the renderers/appliers need. */
+export interface CodeFileDelta {
+  path: string;
+  status: CodeFileStatus;
+  /** The pristine ledger-snapshot contents (when the old version shipped it). */
+  oldContents?: string;
+  /** The new artifact's contents (when the new version ships it). */
+  newContents?: string;
+}
+
+/** What {@link applyCodeUpdates} did, path by path (project-relative). */
+export interface ApplyCodeResult {
+  /** Safe overwrites + new files written. */
+  written: string[];
+  /** `<file>.new` companions written beside user-modified files. */
+  newFiles: string[];
+  /** Upstream removed these — reported, never deleted. */
+  removedUpstream: string[];
+}
+
+/**
+ * Applies a code-status list to `blocks/<name>/` under the ADR-018 ownership
+ * contract: `update-available`/`added-upstream` files are written (the user
+ * never touched them / they are new), `modified-by-you` files get the new
+ * contents written **adjacent as `<file>.new`** (stale `.new` overwritten;
+ * never the user's file), `removed-upstream` is reported for manual deletion,
+ * `yours`/`unchanged` are untouched.
+ *
+ * Path hardening runs on EVERY path — including ones derived from the ledger
+ * snapshot: the server's JSON is not trusted to stay inside the block folder
+ * (same vendorPathIssue + resolved-inside-blockRoot belt as `vendorBlockCode`).
+ * @throws {VendorError} naming the offending path; nothing is written then
+ */
+export function applyCodeUpdates(
+  blockName: string,
+  deltas: CodeFileDelta[],
+  dir = process.cwd(),
+): ApplyCodeResult {
+  const blockRoot = resolve(dir, 'blocks', blockName);
+  // Validate everything up front so a poisoned list writes nothing at all.
+  for (const delta of deltas) assertUpdatablePath(blockName, blockRoot, delta.path);
+
+  const result: ApplyCodeResult = { written: [], newFiles: [], removedUpstream: [] };
+  for (const delta of deltas) applyOneCodeDelta(blockName, blockRoot, delta, result);
+  return result;
+}
+
+/** The vendorBlockCode hardening, applied to one update path. */
+function assertUpdatablePath(blockName: string, blockRoot: string, path: string): void {
+  const issue = vendorPathIssue(path);
+  if (issue) {
+    throw new VendorError(
+      `Block "${blockName}" update names an unsafe code path ${JSON.stringify(path)}: ${issue}. Nothing was written.`,
+    );
+  }
+  const target = resolve(blockRoot, path.replace(/\\/g, '/'));
+  if (!target.startsWith(blockRoot + sep)) {
+    throw new VendorError(
+      `Block "${blockName}" update path ${JSON.stringify(path)} resolves outside blocks/${blockName}/. Nothing was written.`,
+    );
+  }
+}
+
+/** Applies one file's verdict (write / `.new` beside / report / leave). */
+function applyOneCodeDelta(
+  blockName: string,
+  blockRoot: string,
+  delta: CodeFileDelta,
+  result: ApplyCodeResult,
+): void {
+  const relative = `blocks/${blockName}/${delta.path}`;
+  const target = resolve(blockRoot, delta.path.replace(/\\/g, '/'));
+  if (delta.status === 'update-available' || delta.status === 'added-upstream') {
+    if (delta.newContents === undefined) return; // defensive — cannot happen
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, delta.newContents, 'utf8');
+    result.written.push(relative);
+  } else if (delta.status === 'modified-by-you') {
+    if (delta.newContents === undefined) return;
+    // The user's file is never touched; the update lands beside it, loud in
+    // git status (deliberately NOT gitignored) until they merge + delete it.
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(`${target}.new`, delta.newContents, 'utf8');
+    result.newFiles.push(`${relative}.new`);
+  } else if (delta.status === 'removed-upstream') {
+    result.removedUpstream.push(relative);
+  }
+}

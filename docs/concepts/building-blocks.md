@@ -132,6 +132,49 @@ reload the new handlers before installing the manifest — so run it with
 `npm run dev` active. `remove` uninstalls the schema and unwires the barrel,
 but never deletes `blocks/<name>/` — that code is yours now.
 
+## Updating blocks
+
+`ion-drive diff` and `ion-drive update` (spec-07) move an installed block to a
+newer version **without ever violating the ownership contract**: the vendored
+code is yours, and no tool auto-overwrites or deletes it.
+
+```bash
+ion-drive diff crm                    # what would updating change?
+ion-drive diff crm --version 0.4.0    # against a specific version (or a range)
+ion-drive update crm                  # apply it (diff + confirm first)
+ion-drive update crm --with-deps      # perform required dependency updates too
+ion-drive update crm --force          # also apply destructive manifest changes
+ion-drive update crm --force --drop-data  # …even when removed objects hold rows
+```
+
+Both commands compare **three inputs**: the server ledger's pristine manifest
+snapshot (what was installed), the new digest-verified artifact from the
+block's recorded source registry, and your working tree under `blocks/<name>/`.
+Blocks installed from a local path or direct URL have no registry to update
+from — re-install those with `ion-drive add <path-or-url> --force`.
+
+**Manifest changes** apply server-side through the validated schema pipeline
+(`POST /api/v1/blocks/install?upgrade=true`): additive changes just apply,
+modifying changes ride `modifyField`'s preview machinery (a field that becomes
+required backfills existing NULLs from its own `defaultValue`; without one the
+step fails actionably and the upgrade is safely re-runnable), and
+**destructive** changes (removed objects/fields/relationships/tasks) are
+skipped and reported by default. Items the block owned that it no longer
+declares are **released to `user` management** — they are yours now, like the
+vendored code. `--force` applies destructive changes instead, preview-first
+with a final confirmation (`--drop-data` per the usual uninstall rule).
+Downgrades are refused; the recovery is `ion-drive remove` then
+`ion-drive add <name>@<version>`.
+
+**Code changes** honor a per-file, byte-compared verdict against the ledger
+snapshot: pristine files are safely overwritten, files **you modified get the
+new version written beside them as `<file>.new`** — loud in `git status` on
+purpose; merge what you want and delete the `.new` file. Files removed
+upstream are listed but never deleted; files you created are never touched.
+
+The equal-version re-POST is a no-op (200); dependency-range violations refuse
+with the ordered plan (`--with-deps` performs the chain, dependencies first).
+
 ## Integrity and trust
 
 Every registry install is **digest-verified** (spec-04): the CLI computes

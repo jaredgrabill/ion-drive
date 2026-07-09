@@ -455,8 +455,11 @@ async function confirmInstall(count: number, options: AddOptions): Promise<boole
 // Install phase
 // ---------------------------------------------------------------------------
 
-/** The client-asserted provenance envelope stored in the server ledger. */
-function sourceFor(v: VerifiedItem): InstallSource {
+/**
+ * The client-asserted provenance envelope stored in the server ledger.
+ * Exported for `ion-drive update`, which installs through the same envelope.
+ */
+export function sourceFor(v: VerifiedItem): InstallSource {
   return {
     registry: v.item.registry,
     url: v.item.sourceUrl,
@@ -565,8 +568,12 @@ async function vendorStep(client: IonApiClient, manifest: Manifest): Promise<boo
   return waitForHandlers(client, manifest);
 }
 
-/** Polls the server until the block's handlers are registered (dev-server reload). */
-async function waitForHandlers(client: IonApiClient, manifest: Manifest): Promise<boolean> {
+/**
+ * Polls the server until the block's handlers are registered (dev-server
+ * reload). Exported for `ion-drive update`, which re-vendors code before its
+ * real install and must wait for the same reload (spec-07).
+ */
+export async function waitForHandlers(client: IonApiClient, manifest: Manifest): Promise<boolean> {
   const name = String(manifest.name);
   const wantedActions = ((manifest.actions ?? []) as { name: string }[]).map((a) => a.name);
   const wantedHooks = ((manifest.hooks ?? []) as { name: string }[]).map((h) => h.name);
@@ -638,8 +645,8 @@ async function installOne(
   }
 }
 
-/** Prints the notable lines of an install report (indented). */
-function printReport(report: InstallReport): void {
+/** Prints the notable lines of an install report (indented). Shared with `update`. */
+export function printReport(report: InstallReport): void {
   const line = (label: string, items: string[]) => {
     if (items.length) console.log(`    ${sym.dot} ${c.meteor(label)} ${items.join(', ')}`);
   };

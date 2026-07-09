@@ -129,8 +129,9 @@ REST + MCP → signed/replay-protected webhook → hot-reload edit → guarded r
 Absorbed **F20, F21, F22, F24**; F23 remains 🟡 pending the owner-run first publish + pushing
 `jaredgrabill/ion-drive-blocks`. Executed under the ADR-018 **re-amendment**: official blocks live in one
 `jaredgrabill/ion-drive-blocks` repo (registry index in-repo) instead of repo-per-block. Follow-ups:
-- **`ion-drive diff <block>`** (Tier 3D stretch — slipped as planned; the ledger's manifest
-  snapshot is the base-version anchor).
+- ~~**`ion-drive diff <block>`** (Tier 3D stretch)~~ (✅ 2026-07-08, spec-07: `ion-drive diff`/`update` + installer upgrade mode).
+- **Admin Blocks page "update available" hint** (spec-07 follow-up): needs a client-side
+  registry check in the admin — skipped as not trivially cheap; revisit with the M2 registry site.
 - **CI-automated scaffold boot**: the framework path is unit/integration-covered, but a CI job
   that `npm install`s the real scaffold against packed workspace tarballs is still manual.
 - `add` cosmetic: a local-path target is labeled "(dependency)" in the plan preview.

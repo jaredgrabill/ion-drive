@@ -933,6 +933,47 @@ export class SchemaManager {
     return { success: true, object: this.registry.getObject(tableName) };
   }
 
+  /**
+   * Releases a block-managed object or field to `user` management (spec-07's
+   * upgrade contract: items the old block version created but the new manifest
+   * no longer declares become the user's, like vendored code). Metadata-only —
+   * no DDL runs; the migration trail records the flip. Releasing a whole
+   * object also flips every field that carried the object's prior provenance
+   * (fields stamped by *other* blocks keep their owner).
+   */
+  async releaseToUser(
+    objectName: string,
+    fieldName?: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    const obj = this.registry.getObject(objectName);
+    const metaObj = await this.metadataStore.getObject(objectName);
+    if (!obj || !metaObj) return { success: false, error: `Unknown object "${objectName}"` };
+
+    if (fieldName !== undefined) {
+      const field = obj.fields.find((f) => f.name === fieldName);
+      if (!field?.id) {
+        return { success: false, error: `Unknown field "${objectName}.${fieldName}"` };
+      }
+      await this.metadataStore.updateField(field.id, { managedBy: 'user' });
+      await this.recordAdoptionMigration(
+        `Release field "${objectName}.${fieldName}" to user management`,
+      );
+      await this.refreshObject(objectName);
+      return { success: true };
+    }
+
+    const priorOwner = obj.managedBy;
+    await this.metadataStore.updateObject(objectName, { managedBy: 'user' });
+    for (const field of obj.fields) {
+      if (field.id && priorOwner !== undefined && field.managedBy === priorOwner) {
+        await this.metadataStore.updateField(field.id, { managedBy: 'user' });
+      }
+    }
+    await this.recordAdoptionMigration(`Release object "${objectName}" to user management`);
+    await this.refreshObject(objectName);
+    return { success: true };
+  }
+
   /** Records an adoption in the migration history (metadata-only change). */
   private async recordAdoptionMigration(description: string): Promise<void> {
     const version = (await this.metadataStore.getLatestMigrationVersion()) + 1;

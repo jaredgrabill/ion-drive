@@ -26,6 +26,9 @@ import type {
   RelationshipDefinition,
 } from '../schema/types.js';
 import type { TaskInput } from '../tasks/index.js';
+// Type-only import — erased at runtime, so the module cycle with
+// manifest-diff.ts (which imports BlockManifest from here) is harmless.
+import type { ManifestDelta } from './manifest-diff.js';
 
 // ---------------------------------------------------------------------------
 // Shared name / version / range grammar (ADR-022 / spec-02)
@@ -496,7 +499,42 @@ export interface BlockInstallReport {
    */
   webhooksCreated: Record<string, string>;
   webhooksSkipped: string[];
+  // --- Upgrade-mode fields (spec-07). Empty on plain installs. ---
+  /** Present when this report came from the installer's upgrade mode. */
+  upgraded?: { from: string; to: string };
+  /**
+   * Items the old version created that the new manifest no longer declares,
+   * kept (no force) and released to `user` management — they are the user's
+   * now, like vendored code (ADR-018).
+   */
+  released: string[];
+  /** Destructive manifest changes reported and skipped (apply with force). */
+  skippedDestructive: string[];
+  /** Tasks updated in place (definition changed; `enabled` preserved). */
+  tasksUpdated: string[];
+  /** Tasks removed because the new manifest dropped them (force only). */
+  tasksRemoved: string[];
+  /** Outbound webhooks updated in place (secret preserved). */
+  webhooksUpdated: string[];
+  /** Outbound webhooks removed by provenance (dropped from the manifest). */
+  webhooksRemoved: string[];
+  /** The structural old→new manifest delta (upgrade mode only). */
+  delta?: ManifestDelta;
+  /**
+   * Schema-engine previews gathered during an upgrade **dry run** (modifying
+   * fields + forced destructive changes) — the CLI renders these verbatim.
+   */
+  previews?: UpgradePreviewEntry[];
   warnings: string[];
+}
+
+/** One schema-engine preview surfaced by an upgrade dry run. */
+export interface UpgradePreviewEntry {
+  /** What the preview is for, e.g. `field contacts.status` / `object leads`. */
+  target: string;
+  sqlStatements: string[];
+  warnings: string[];
+  errors: string[];
 }
 
 // ---------------------------------------------------------------------------

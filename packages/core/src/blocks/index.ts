@@ -15,6 +15,7 @@
  */
 
 import type { Kysely } from 'kysely';
+import semver from 'semver';
 import type { RoleManager } from '../auth/rbac/role-manager.js';
 import type { DataService } from '../data/data-service.js';
 import type { SystemDatabase } from '../db/types.js';
@@ -38,12 +39,15 @@ import {
   dependencyNames,
   evaluateDependencies,
 } from './dependency-check.js';
+import { diffManifests } from './manifest-diff.js';
 
 /**
  * Error codes map to HTTP statuses in the block routes: `validation` → 400,
  * `dependency`/`dependency_version` → 422, `not_found` → 404, `conflict` →
- * 409, `install` → 500. `dependency_version` (spec-02) is a dependency that
- * *is* installed, but at a version outside the declared semver range.
+ * 409, `not_an_upgrade` → 409, `install` → 500. `dependency_version`
+ * (spec-02) is a dependency that *is* installed, but at a version outside the
+ * declared semver range. `not_an_upgrade` (spec-07) is an upgrade request
+ * whose target version is not strictly newer than the installed one.
  */
 export type BlockErrorCode =
   | 'validation'
@@ -51,6 +55,7 @@ export type BlockErrorCode =
   | 'conflict'
   | 'dependency'
   | 'dependency_version'
+  | 'not_an_upgrade'
   | 'install';
 
 export class BlockEngineError extends Error {
@@ -100,6 +105,18 @@ export interface InstallBlockOptions {
 export interface UninstallBlockOptions {
   /** Drop tables even when they hold rows. */
   dropData?: boolean;
+}
+
+/** Options for {@link BlockEngine.upgrade} (spec-07). */
+export interface UpgradeBlockOptions {
+  /** Preview only — report + schema previews, nothing written. */
+  dryRun?: boolean;
+  /** Apply destructive delta changes instead of skipping/releasing them. */
+  force?: boolean;
+  /** With `force`: drop removed objects even when they still hold rows. */
+  dropData?: boolean;
+  /** Client-asserted install provenance (spec-04), replacing the ledger's. */
+  source?: BlockInstallSource;
 }
 
 export class BlockEngine {
@@ -219,18 +236,209 @@ export class BlockEngine {
       await this.store.finish(manifest.name, 'installed', owned);
       return report;
     } catch (err) {
-      await this.store.finish(manifest.name, 'failed', []);
-      if (err instanceof BlockInstallError) {
-        // An unsatisfied `requires.core` is the caller's manifest being wrong
-        // for this server — a validation failure (400), not a broken install.
-        throw new BlockEngineError(
-          err.code === 'core_range' ? 'validation' : 'install',
-          err.message,
-          err.warnings,
+      // Preserve prior ledger ownership on failure (spec-07 resolution): a
+      // failed force-reinstall must not orphan the objects the previous
+      // install created — uninstall still needs to know what to drop.
+      await this.store.finish(manifest.name, 'failed', existing?.createdObjects ?? []);
+      throw this.asEngineError(err);
+    }
+  }
+
+  /**
+   * Upgrades an installed block to a strictly newer manifest version
+   * (spec-07). A SEPARATE flow from {@link install} — the manifest delta is
+   * computed against the ledger's snapshot and applied through the
+   * installer's upgrade mode (additive apply / modifying pipeline /
+   * destructive gate + released-to-user / runtime re-sync).
+   *
+   * Version gates: not installed → `not_found` ("use install"); equal
+   * version → digest-compared no-op or 409 `not_an_upgrade` (the
+   * force-reinstall path already covers same-version-different-content;
+   * a `failed` row never no-ops); lower version → 409 with the documented
+   * remove-then-add recovery.
+   *
+   * Failure semantics (AC4): the ledger keeps the PRIOR version + manifest
+   * snapshot on a mid-way failure (only the status flips to `failed`), so
+   * fixing the cause and re-running the same upgrade recomputes the same
+   * delta and the idempotent steps complete the job.
+   */
+  async upgrade(
+    manifestInput: unknown,
+    options: UpgradeBlockOptions = {},
+  ): Promise<BlockInstallReport> {
+    const manifest = this.parse(manifestInput);
+
+    const existing = await this.store.getByName(manifest.name);
+    if (!existing) {
+      throw new BlockEngineError(
+        'not_found',
+        `Block "${manifest.name}" is not installed — use a plain install (\`ion-drive add ${manifest.name}\`) instead of an upgrade.`,
+      );
+    }
+    if (existing.status === 'installing') {
+      throw new BlockEngineError(
+        'conflict',
+        `Block "${manifest.name}" has an install in progress — retry once it finishes.`,
+      );
+    }
+
+    // The ledger snapshot is the diff anchor; a pre-v1 (or corrupted) snapshot
+    // cannot be diffed — the documented recovery is uninstall + reinstall.
+    let oldManifest: BlockManifest;
+    try {
+      oldManifest = parseManifest(existing.manifest);
+    } catch {
+      throw new BlockEngineError(
+        'validation',
+        `The installed manifest snapshot for "${manifest.name}" is not a valid v1 manifest, so an upgrade delta cannot be computed. Recovery: uninstall (\`ion-drive remove ${manifest.name}\`) and reinstall the new version.`,
+      );
+    }
+
+    const gate = this.checkUpgradeVersionGate(existing, oldManifest, manifest, options);
+    if (gate) return gate; // equal-version no-op report
+
+    const outOfRange = await this.checkDependencies(manifest, options.force ?? false);
+    const delta = diffManifests(oldManifest, manifest);
+    const installerOptions = {
+      force: options.force,
+      dropData: options.dropData,
+    };
+
+    if (options.dryRun) {
+      const report = await this.installer.upgrade(existing, manifest, delta, {
+        ...installerOptions,
+        dryRun: true,
+      });
+      for (const dep of outOfRange) {
+        report.warnings.push(
+          `Dependency ${dep.name}@${dep.installedVersion} does not satisfy ${dep.range} — overridden by force.`,
         );
       }
-      throw err;
+      return report;
     }
+
+    // Begin-with-old/finish-with-new (AC4): only the STATUS flips to
+    // `installing` here — the prior version + manifest snapshot stay in the
+    // ledger until the installer succeeds, so a mid-way failure leaves the
+    // exact diff anchor a re-run needs (the idempotent steps then finish the
+    // partially-applied delta).
+    await this.store.setStatus(manifest.name, 'installing');
+    try {
+      const report = await this.installer.upgrade(existing, manifest, delta, {
+        ...installerOptions,
+        dryRun: false,
+      });
+      for (const dep of outOfRange) {
+        report.warnings.push(
+          `Dependency ${dep.name}@${dep.installedVersion} does not satisfy ${dep.range} — overridden by force.`,
+        );
+      }
+      // Ownership math (spec-07 resolution): prior ownership ∪ newly created,
+      // minus objects the delta removed — whether they were dropped (force)
+      // or released to the user, they are no longer this block's to drop.
+      const owned = [...new Set([...existing.createdObjects, ...report.objectsCreated])].filter(
+        (name) => !delta.objects.removed.includes(name),
+      );
+      await this.store.replaceInstalled(manifest, owned, options.source);
+      return report;
+    } catch (err) {
+      // Prior version/snapshot/ownership are still in the row — mark it
+      // failed so the user can fix the cause and re-run the SAME upgrade.
+      await this.store.setStatus(manifest.name, 'failed');
+      throw this.asEngineError(err);
+    }
+  }
+
+  /**
+   * The equal/lower-version gates. Returns a no-op report for a same-version,
+   * same-content re-POST; throws for everything that is not a real upgrade.
+   */
+  private checkUpgradeVersionGate(
+    existing: InstalledBlock,
+    oldManifest: BlockManifest,
+    manifest: BlockManifest,
+    options: UpgradeBlockOptions,
+  ): BlockInstallReport | null {
+    if (semver.gt(manifest.version, existing.version)) return null;
+
+    if (semver.lt(manifest.version, existing.version)) {
+      throw new BlockEngineError(
+        'not_an_upgrade',
+        `Downgrade from ${existing.version} to ${manifest.version} is not supported — recovery is \`ion-drive remove ${manifest.name}\` then \`ion-drive add ${manifest.name}@${manifest.version}\`.`,
+      );
+    }
+
+    // A failed row at the requested version must never no-op: the live schema
+    // may not match its snapshot (e.g. a failed plain install). Repair is a
+    // force reinstall, or an upgrade to a strictly newer version.
+    if (existing.status === 'failed') {
+      throw new BlockEngineError(
+        'conflict',
+        `Block "${manifest.name}" is in a failed state at ${existing.version} — repair it with a force reinstall (\`ion-drive add ${manifest.name} --force\`) or upgrade to a newer version.`,
+      );
+    }
+
+    // Equal version: compare digests when both sides have one; otherwise fall
+    // back to the structural delta (empty ⇒ genuinely the same content).
+    const clientDigest = options.source?.digest;
+    const sameContent =
+      clientDigest !== undefined && existing.artifactDigest !== null
+        ? clientDigest === existing.artifactDigest
+        : !diffManifests(oldManifest, manifest).hasChanges;
+    if (sameContent) {
+      const report = this.noopUpgradeReport(manifest, existing);
+      return report;
+    }
+    throw new BlockEngineError(
+      'not_an_upgrade',
+      `Block "${manifest.name}" is already at ${existing.version} but with different content — a same-version change is a force reinstall (\`ion-drive add ${manifest.name} --force\`), not an upgrade.`,
+    );
+  }
+
+  /** An all-empty report for the equal-version, equal-content no-op (200). */
+  private noopUpgradeReport(manifest: BlockManifest, existing: InstalledBlock): BlockInstallReport {
+    return {
+      block: manifest.name,
+      version: manifest.version,
+      dryRun: false,
+      objectsCreated: [],
+      objectsSkipped: [],
+      relationshipsCreated: [],
+      recordsSeeded: {},
+      tasksCreated: [],
+      rolesCreated: [],
+      rolesSkipped: [],
+      subscriptionsRegistered: [],
+      actionsExposed: [],
+      hooksExposed: [],
+      webhooksCreated: {},
+      webhooksSkipped: [],
+      released: [],
+      skippedDestructive: [],
+      tasksUpdated: [],
+      tasksRemoved: [],
+      webhooksUpdated: [],
+      webhooksRemoved: [],
+      upgraded: { from: existing.version, to: manifest.version },
+      warnings: [`Block "${manifest.name}" is already at ${existing.version} — nothing to do.`],
+    };
+  }
+
+  /** Maps installer failures onto engine error codes (shared install/upgrade). */
+  private asEngineError(err: unknown): unknown {
+    if (err instanceof BlockInstallError) {
+      // An unsatisfied `requires.core` is the caller's manifest being wrong
+      // for this server — a validation failure (400), not a broken install.
+      // A tripped upgrade data guard mirrors uninstall's conflict (409).
+      const code =
+        err.code === 'core_range'
+          ? 'validation'
+          : err.code === 'data_guard'
+            ? 'conflict'
+            : 'install';
+      return new BlockEngineError(code, err.message, err.warnings);
+    }
+    return err;
   }
 
   /**
@@ -338,6 +546,9 @@ function manifestDependsOn(manifest: BlockManifest, name: string): boolean {
 
 export { BlockStore, bootstrapBlockTables } from './block-store.js';
 export { BlockInstaller, BlockInstallError } from './block-installer.js';
+export type { UpgradeInstallOptions } from './block-installer.js';
+export { diffManifests, deepEqual } from './manifest-diff.js';
+export type { ManifestDelta, FieldDelta, NamedDelta, DeltaKind } from './manifest-diff.js';
 export { BlockManifestError, parseManifest } from './block-manifest.js';
 export {
   blockManifestSchema,
@@ -364,6 +575,7 @@ export type {
   BlockInstallSource,
   InstalledBlock,
   BlockInstallReport,
+  UpgradePreviewEntry,
 } from './block-types.js';
 export { ActionRegistry, ACTION_REGISTRY } from './action-registry.js';
 export type {
