@@ -156,6 +156,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.12.0
+        version: 1.29.0(zod@3.25.76)
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
@@ -186,6 +189,9 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.23.0
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       '@ion-drive/core':
         specifier: workspace:^

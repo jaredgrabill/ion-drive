@@ -24,6 +24,14 @@
       "type": "string",
       "format": "date-time"
     },
+    "searchUrl": {
+      "type": "string",
+      "minLength": 1
+    },
+    "registriesUrl": {
+      "type": "string",
+      "minLength": 1
+    },
     "blocks": {
       "type": "object",
       "additionalProperties": {

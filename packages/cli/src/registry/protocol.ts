@@ -53,6 +53,10 @@ export interface RegistryIndexDoc {
   description?: string;
   homepage?: string;
   generatedAt: string;
+  /** Prebuilt search-index URL (spec-08), relative to the index or absolute. */
+  searchUrl?: string;
+  /** `registries.json` directory URL (spec-08); absent ⇒ probe the index's sibling. */
+  registriesUrl?: string;
   blocks: Record<string, RegistryIndexEntry>;
 }
 
@@ -95,9 +99,30 @@ export interface RegistryBlockDoc {
   categories?: string[];
   repository?: string;
   homepage?: string;
+  /** Copied-README URL (spec-08), relative to this file or absolute. Display data. */
+  readmeUrl?: string;
   latest: string;
   versions: Record<string, RegistryVersionEntry>;
   advisories: RegistryAdvisory[];
+}
+
+/** One entry in a `registries.json` directory (spec-01 §6, consumer view). */
+export interface RegistriesDirectoryEntry {
+  /** The `@handle` projects map to this registry's URL. */
+  namespace: string;
+  /** Absolute URL of the registry's `index.json`. */
+  url: string;
+  owner?: string;
+  description?: string;
+  repository?: string;
+  /** `listed` means "reviewed for listing", not "code audited". Display only. */
+  trust?: string;
+}
+
+/** `registries.json` — the PR-reviewed directory of registries. */
+export interface RegistriesDirectoryDoc {
+  schemaVersion: 1;
+  registries: RegistriesDirectoryEntry[];
 }
 
 // --- Format gate -------------------------------------------------------------
@@ -196,6 +221,38 @@ export function parseBlockDoc(input: unknown, url: string): RegistryBlockDoc {
   }
   if (!Array.isArray(record.advisories)) record.advisories = [];
   return record as unknown as RegistryBlockDoc;
+}
+
+/**
+ * Validates a fetched `registries.json` (spec-08 §3). Lenient beyond the
+ * format gate and the load-bearing `namespace`/`url` pair per entry; entries
+ * missing either are skipped rather than fatal (one bad listing must not take
+ * the whole directory down).
+ * @throws {RegistryError}
+ */
+export function parseRegistriesDirectoryDoc(input: unknown, url: string): RegistriesDirectoryDoc {
+  const record = asRecord(input, url, 'registries directory');
+  if (!('schemaVersion' in record)) {
+    throw new RegistryError(`${url}: registries directory is missing schemaVersion`);
+  }
+  if (record.schemaVersion !== 1) {
+    throw new RegistryError(
+      `${url}: this registries directory uses an unsupported format (schemaVersion ${JSON.stringify(
+        record.schemaVersion,
+      )}; this client supports schemaVersion 1)`,
+    );
+  }
+  if (!Array.isArray(record.registries)) {
+    throw new RegistryError(`${url}: registries directory has no "registries" array`);
+  }
+  const registries: RegistriesDirectoryEntry[] = [];
+  for (const raw of record.registries) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const entry = raw as Record<string, unknown>;
+    if (typeof entry.namespace !== 'string' || typeof entry.url !== 'string') continue;
+    registries.push(entry as unknown as RegistriesDirectoryEntry);
+  }
+  return { schemaVersion: 1, registries };
 }
 
 // --- URL helpers (vendored from core's registry-types.ts — keep identical) ----

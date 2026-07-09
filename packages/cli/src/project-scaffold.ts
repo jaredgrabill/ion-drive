@@ -257,6 +257,16 @@ PATCH /api/v1/schema/objects/:name/fields/:field               # apply
 Fields owned by a block (\`managedBy: block:<name>\`) are contract-protected; overriding
 requires \`?force=true\` and is usually the wrong move — extend with new fields instead.
 
+## Finding blocks
+
+- \`ion-drive search <term>\` searches the configured registry (name, title,
+  description, categories); \`ion-drive list\` browses the whole catalog.
+- **Registry MCP (preferred for agents):** \`ion-drive mcp\` serves a stdio MCP
+  server with \`search_blocks\`, \`get_block\` (version history + README),
+  \`list_registries\`, and \`preview_install\` (full dependency resolution +
+  digest/trust verification, never makes changes). Use it to *choose* blocks;
+  the server MCP at \`/api/v1/mcp\` then works with the installed data.
+
 ## Blocks
 
 - \`blocks/index.ts\` is the explicit barrel of loaded blocks — maintained by
@@ -296,8 +306,10 @@ description: Install an Ion Drive building block (schema and/or vendored logic) 
 
 # Add an Ion Drive building block
 
-1. Discover: \`ion-drive list\` (default registry catalog) or \`ion-drive registry list\`
-   (all configured registries). Refs may be namespaced and range-pinned —
+1. Discover: \`ion-drive search <term>\` (or \`ion-drive list\` for the whole catalog,
+   \`ion-drive registry list\` for all configured registries). Agents: \`ion-drive mcp\`
+   exposes \`search_blocks\`/\`get_block\`/\`list_registries\`/\`preview_install\` over stdio.
+   Refs may be namespaced and range-pinned —
    \`crm\`, \`crm@^0.2.0\`, \`@acme/billing@1.x\` — or a URL / local path to a block.
 2. Preview: \`ion-drive add <name> --dry-run\` shows objects, dependencies, and requirements.
 3. Install: \`ion-drive add <name>\`. For blocks with vendored code this (a) copies the code

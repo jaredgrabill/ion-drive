@@ -151,3 +151,28 @@ Prereq for all of these: **F23's first npm publish** (`@ion-drive/cli` +
    `ion-drive add @scratch/<block>` must install `✔ verified`. (The local half
    — publish → serve → install by ref, minus attestation — was already
    rehearsed against a local bare repo in the spec-05 smoke.)
+
+## From spec-08 (registry data surfaces, search, directory, MCP)
+
+Everything in spec-08 is implemented and verified against local fixtures; the
+one owner-gated half is **AC5's live-URL check** (blocked on F23 / spec-05
+items 1–2 — the blocks repo push + Pages/DNS):
+
+1. **AC5 — badge embeds from the live registry.** After
+   `registry.iondrive.dev` serves (the spec-08 emissions are already committed
+   in the blocks repo — search-index, readmes, badges):
+
+   ```bash
+   curl -fsS https://registry.iondrive.dev/registry/search-index.json | jq '.documents[].name'
+   curl -fsS https://registry.iondrive.dev/badges/crm.svg | head -c 120   # <svg …
+   curl -fsS https://registry.iondrive.dev/registry/blocks/crm.readme.md | head -3
+   ```
+
+   Then confirm the badge renders in a real third-party README: add
+   `![crm](https://registry.iondrive.dev/badges/crm.svg)` to any GitHub README
+   (the official blocks' own READMEs already embed theirs — pushing the repo
+   makes them live) and check GitHub's camo proxy displays it. From any
+   project, `ion-drive search invoicing` must hit the live search index
+   (`via search index` in the footer) and `ion-drive registry add @probe`
+   must produce the not-in-directory hint against the live
+   `registries.json`.

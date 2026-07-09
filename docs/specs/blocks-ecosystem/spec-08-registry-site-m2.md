@@ -1,5 +1,30 @@
 # Spec 08 — Registry Data Surfaces, Search, Directory, and Registry MCP (M2)
 
+> **Status:** ✅ implemented 2026-07-09 (fresh-agent verifier sign-off; commit hash
+> stamped by the orchestrator in the sign-off commit).
+> **Amendments adopted during implementation:**
+> - `index.json` also gains optional **`registriesUrl`** (spec-01 amended) — the Pages
+>   layout serves `registries.json` at the repo root, so sibling resolution alone
+>   can't discover it; `registry build` sets it when the root file validates, clients
+>   fall back to the sibling path.
+> - Search index shape: plain documents in a `{ schemaVersion: 1, generatedAt,
+>   documents: [{ name, title, description, categories, latest, trust }] }` envelope,
+>   sorted by name — no minisearch dependency. A core Zod/JSON Schema for this file
+>   was deliberately deferred.
+> - `registry build` status edits (`yank`/`deprecate`) sync `latest` into the
+>   search index and badge so `--check` stays a no-op; `BuildResult` gained
+>   `deleted[]` (stale readme copies are removed and reported as drift).
+> - Badge official-green is `#006300` (7.54:1 white-text contrast, dataviz-validated;
+>   the lighter status green failed at 3.35:1). Blocks repo `.gitattributes` also
+>   pins `*/README.md -text` (readme copies are byte-compared against sources).
+> - `registry add` gained `-y/--yes`; `preview_install` degrades to empty server
+>   state + a warning when the server is unreachable (documented divergence from
+>   `add`, which fails hard — parity is asserted with identical injected state).
+> - AC5's screenshot half: Chrome tooling was unavailable to the agents; badge
+>   rendering is evidenced by snapshot tests, XML well-formedness, computed
+>   contrast, and HTTP-served embeds. The live-URL embed check is in OWNER-TODO
+>   (F23-gated).
+
 > **Rewritten 2026-07-09 per the ADR-023 amendment:** the statically generated site at
 > `registry.iondrive.dev` is **dropped** — that host serves JSON and artifacts only,
 > forever. The human browsing surface is the client-rendered blocks browser on

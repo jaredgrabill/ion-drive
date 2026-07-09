@@ -12,13 +12,17 @@
  *
  * All subcommands take `--json` (plain `JSON.stringify`, no styling — the
  * LLM-first DX rule). `registry add <@ns>` without a URL is the spec-08
- * directory lookup — a friendly not-yet error here.
+ * directory lookup: the namespace is resolved through the main registry's
+ * PR-reviewed `registries.json`, shown for confirmation, then validated and
+ * written exactly like the URL form.
  */
 
 import { resolve } from 'node:path';
+import prompts from 'prompts';
 import {
   BUILT_IN_REGISTRIES,
   ConfigError,
+  type IonProjectConfig,
   defaultRegistryNamespace,
   effectiveRegistries,
   readConfig,
@@ -33,9 +37,11 @@ import {
 } from '../registry/build.js';
 import { CORE_REQUIRED_MESSAGE, loadCoreValidator } from '../registry/core-loader.js';
 import {
+  type RegistriesDirectoryEntry,
   RegistryError,
   type ResolvedRegistry,
   fetchIndex,
+  fetchRegistriesDirectory,
   isPermittedRegistryUrl,
   resolveRegistry,
 } from '../registry/registry-client.js';
@@ -78,22 +84,30 @@ export interface RegistryListOptions extends JsonOption {
   cache?: boolean;
 }
 
-export async function registryListCommand(options: RegistryListOptions): Promise<void> {
-  const config = readConfig();
-  const registries = effectiveRegistries(config);
-  const defaultNs = safeDefaultNamespace();
-  const noCache = options.cache === false;
+/** One row of `registry list` — also the MCP `list_registries` payload. */
+export interface RegistryListRow {
+  namespace: string;
+  url: string;
+  isDefault: boolean;
+  name?: string;
+  blocks?: number;
+  generatedAt?: string;
+  error?: string;
+}
 
-  // Per-registry fetch failures are error rows, never an abort (spec §5).
-  const rows: {
-    namespace: string;
-    url: string;
-    isDefault: boolean;
-    name?: string;
-    blocks?: number;
-    generatedAt?: string;
-    error?: string;
-  }[] = [];
+/**
+ * Pure row gathering for every configured registry (shared by the command
+ * and the registry MCP's `list_registries`). Per-registry fetch failures are
+ * error rows, never an abort (spec-03 §5). No logging.
+ */
+export async function gatherRegistryRows(
+  config: IonProjectConfig,
+  opts: { noCache?: boolean; fetchImpl?: typeof fetch } = {},
+): Promise<RegistryListRow[]> {
+  const registries = effectiveRegistries(config);
+  const defaultNs = safeDefaultNamespace(config);
+
+  const rows: RegistryListRow[] = [];
   for (const namespace of Object.keys(registries)) {
     const row = {
       namespace,
@@ -102,7 +116,7 @@ export async function registryListCommand(options: RegistryListOptions): Promise
     };
     try {
       const reg = resolveRegistry(namespace, config);
-      const index = await fetchIndex(reg, { noCache });
+      const index = await fetchIndex(reg, { noCache: opts.noCache, fetchImpl: opts.fetchImpl });
       rows.push({
         ...row,
         name: index.name,
@@ -113,6 +127,12 @@ export async function registryListCommand(options: RegistryListOptions): Promise
       rows.push({ ...row, error: (err as Error).message });
     }
   }
+  return rows;
+}
+
+export async function registryListCommand(options: RegistryListOptions): Promise<void> {
+  const config = readConfig();
+  const rows = await gatherRegistryRows(config, { noCache: options.cache === false });
 
   if (options.json) {
     printJson(rows);
@@ -142,9 +162,9 @@ export async function registryListCommand(options: RegistryListOptions): Promise
 }
 
 /** The default namespace, tolerating a broken `defaultRegistry` for display. */
-function safeDefaultNamespace(): string | undefined {
+function safeDefaultNamespace(config: IonProjectConfig): string | undefined {
   try {
-    return defaultRegistryNamespace(readConfig());
+    return defaultRegistryNamespace(config);
   } catch {
     return undefined;
   }
@@ -152,26 +172,36 @@ function safeDefaultNamespace(): string | undefined {
 
 // --- registry add ---------------------------------------------------------------
 
+export interface RegistryAddOptions extends JsonOption {
+  /** Skip the directory-lookup confirmation prompt. */
+  yes?: boolean;
+}
+
 export async function registryAddCommand(
   namespace: string,
   url: string | undefined,
-  options: JsonOption,
+  options: RegistryAddOptions,
 ): Promise<void> {
   if (!NAMESPACE_RE.test(namespace)) {
     fail(`Invalid namespace "${namespace}" — expected a lowercase handle like "@acme".`, options);
     return;
   }
-  if (url === undefined) {
-    // The main registry's registries.json directory lookup is spec-08 (M2).
-    fail(
-      `Looking up ${namespace} in the registries directory ships in a later release (spec-08) — pass its index URL: ion-drive registry add ${namespace} <url>`,
-      options,
-    );
-    return;
+
+  // The no-URL form (spec-08 §3): look the namespace up in the main
+  // registry's registries.json, confirm, then run the same validate+write
+  // path as the URL form.
+  let entry: RegistriesDirectoryEntry | undefined;
+  let targetUrl = url;
+  if (targetUrl === undefined) {
+    entry = await lookupDirectoryEntry(namespace, options);
+    if (!entry) return; // failure or unknown namespace already reported
+    if (!(await confirmDirectoryEntry(entry, options))) return; // declined ⇒ no write
+    targetUrl = entry.url;
   }
-  if (!isPermittedRegistryUrl(url)) {
+
+  if (!isPermittedRegistryUrl(targetUrl)) {
     fail(
-      `Refusing ${url} — registries must be https (http is allowed only for localhost/127.0.0.1).`,
+      `Refusing ${targetUrl} — registries must be https (http is allowed only for localhost/127.0.0.1).`,
       options,
     );
     return;
@@ -179,7 +209,7 @@ export async function registryAddCommand(
 
   // Validate before writing anything: fetch + parse the index. A legacy
   // (unversioned) index surfaces spec-01's "pre-release format" error here.
-  const probe: ResolvedRegistry = { namespace, url, headers: {}, params: {} };
+  const probe: ResolvedRegistry = { namespace, url: targetUrl, headers: {}, params: {} };
   let indexName: string;
   let blockCount: number;
   try {
@@ -192,17 +222,76 @@ export async function registryAddCommand(
   }
 
   const config = readConfig();
-  const registries = { ...config.registries, [namespace]: url };
+  const registries = { ...config.registries, [namespace]: targetUrl };
   writeConfig({ ...config, registries });
 
   if (options.json) {
-    printJson({ namespace, url, name: indexName, blocks: blockCount });
+    printJson({
+      namespace,
+      url: targetUrl,
+      name: indexName,
+      blocks: blockCount,
+      ...(entry ? { fromDirectory: true, owner: entry.owner, trust: entry.trust } : {}),
+    });
     return;
   }
   log.success(
     `Added ${c.bold(namespace)} ${sym.arrow} ${c.cyan(indexName)} (${blockCount} block${blockCount === 1 ? '' : 's'})`,
   );
   log.dim(`  Install from it with  ion-drive add ${namespace}/<block>`);
+}
+
+/**
+ * Resolves `@ns` through the main (default) registry's `registries.json`.
+ * Unknown namespaces get the documented hint (the URL form still works and is
+ * the private-registry path); an unreachable/malformed directory is a named
+ * error. Nothing is written on any failure path.
+ */
+async function lookupDirectoryEntry(
+  namespace: string,
+  options: RegistryAddOptions,
+): Promise<RegistriesDirectoryEntry | undefined> {
+  const config = readConfig();
+  try {
+    const main = resolveRegistry(undefined, config);
+    const { directory } = await fetchRegistriesDirectory(main, { noCache: true });
+    const entry = directory.registries.find((r) => r.namespace === namespace);
+    if (!entry) {
+      fail(
+        `${namespace} is not in the registries directory — pass the URL explicitly: ion-drive registry add ${namespace} <url>`,
+        options,
+      );
+      return undefined;
+    }
+    return entry;
+  } catch (err) {
+    if (err instanceof RegistryError || err instanceof ConfigError) {
+      fail(err.message, options);
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Shows the directory listing and confirms (skipped for --yes / --json). */
+async function confirmDirectoryEntry(
+  entry: RegistriesDirectoryEntry,
+  options: RegistryAddOptions,
+): Promise<boolean> {
+  if (options.json || options.yes) return true; // non-interactive modes
+  log.info(`${c.bold(entry.namespace)} ${sym.arrow} ${c.cyan(entry.url)}`);
+  if (entry.owner) log.bullet(`owner        ${entry.owner}`);
+  if (entry.description) log.bullet(`description  ${c.dim(entry.description)}`);
+  // Directory trust is a listing review, never a code audit (spec-01 §6).
+  if (entry.trust) log.bullet(`trust        ${entry.trust} ${c.dim('(listing review only)')}`);
+  const { go } = await prompts({
+    type: 'confirm',
+    name: 'go',
+    message: `Add ${entry.namespace} to ion.config.json?`,
+    initial: true,
+  });
+  if (!go) log.warn('Aborted — nothing written.');
+  return Boolean(go);
 }
 
 // --- registry remove ---------------------------------------------------------------
@@ -287,7 +376,9 @@ export async function registryBuildCommand(
     block: options.block,
   });
 
-  const failed = result.refusals.length > 0 || (options.check === true && result.wrote.length > 0);
+  const failed =
+    result.refusals.length > 0 ||
+    (options.check === true && result.wrote.length + result.deleted.length > 0);
   if (options.json) {
     printJson({ ...result, check: options.check === true, ok: !failed });
     if (failed) process.exitCode = 1;
@@ -312,24 +403,26 @@ function renderBuildResult(result: BuildResult, check: boolean): void {
     return;
   }
   if (check) {
-    renderCheckOutcome(result.wrote);
+    renderCheckOutcome(result.wrote, result.deleted);
     return;
   }
-  if (result.wrote.length === 0) {
+  if (result.wrote.length + result.deleted.length === 0) {
     log.success('Registry is up to date — nothing to write.');
     return;
   }
   for (const path of result.wrote) log.raw(`  ${sym.check} ${c.cyan(path)}`);
+  for (const path of result.deleted) log.raw(`  ${sym.cross} ${c.meteor(`${path} (removed)`)}`);
   log.success(
-    `Registry built — ${result.packed.length} new artifact(s), ${result.wrote.length} file(s) written.`,
+    `Registry built — ${result.packed.length} new artifact(s), ${result.wrote.length} file(s) written${result.deleted.length > 0 ? `, ${result.deleted.length} removed` : ''}.`,
   );
 }
 
-/** The --check verdict: any would-be change is a failure listing the files. */
-function renderCheckOutcome(wouldWrite: string[]): void {
-  if (wouldWrite.length > 0) {
-    log.error(`--check: ${wouldWrite.length} file(s) would change:`);
+/** The --check verdict: any would-be change (write OR delete) fails, listed. */
+function renderCheckOutcome(wouldWrite: string[], wouldDelete: string[]): void {
+  if (wouldWrite.length + wouldDelete.length > 0) {
+    log.error(`--check: ${wouldWrite.length + wouldDelete.length} file(s) would change:`);
     for (const path of wouldWrite) log.bullet(c.cyan(path));
+    for (const path of wouldDelete) log.bullet(c.meteor(`${path} (would be removed)`));
     process.exitCode = 1;
     return;
   }

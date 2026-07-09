@@ -36,6 +36,10 @@
       "type": "string",
       "format": "uri"
     },
+    "readmeUrl": {
+      "type": "string",
+      "minLength": 1
+    },
     "latest": {
       "type": "string"
     },

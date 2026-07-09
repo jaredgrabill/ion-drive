@@ -15,7 +15,9 @@
  *   update <block>   Apply a block update (.new files beside your edits)
  *   remove <block>   Uninstall a block (your vendored code stays yours)
  *   dev              Run the project's server.ts (or core's, in the monorepo)
+ *   search <term>    Search a registry for blocks (search index or fallback)
  *   audit            Check installed blocks against registries (advisories/yanks/drift)
+ *   mcp              Serve the registry MCP tools over stdio (for coding agents)
  *   schema …         Snapshot pull/diff/push + drift doctor
  *   block …          Block-authoring toolchain (new/validate/pack/test/verify/publish)
  *   registry …       Configured registries (list/add/remove/ping) + the
@@ -36,6 +38,7 @@ import { devCommand } from './commands/dev.js';
 import { diffCommand } from './commands/diff.js';
 import { initCommand } from './commands/init.js';
 import { listCommand } from './commands/list.js';
+import { mcpCommand } from './commands/mcp.js';
 import {
   registryAddCommand,
   registryBuildCommand,
@@ -52,6 +55,7 @@ import {
   schemaPullCommand,
   schemaPushCommand,
 } from './commands/schema.js';
+import { searchCommand } from './commands/search.js';
 import { updateCommand } from './commands/update.js';
 import { blockVerifyCommand } from './commands/verify.js';
 import { banner, c, log, sym } from './ui.js';
@@ -98,6 +102,17 @@ program
   .option('-a, --all', 'List every configured registry')
   .option('--no-cache', 'Bypass the registry metadata cache')
   .action((options) => listCommand(options));
+
+program
+  .command('search')
+  .argument('<term>', 'Search term (matched against name, title, description, categories)')
+  .description('Search a registry for blocks (prebuilt search index, or index fallback)')
+  .option('-r, --registry <@ns>', 'Search a specific configured registry (default: the default)')
+  .option('--json', 'Plain JSON output')
+  .option('--no-cache', 'Bypass the registry metadata cache')
+  .action((term, options) =>
+    searchCommand(term, { registry: options.registry, json: options.json, cache: options.cache }),
+  );
 
 program
   .command('add')
@@ -184,6 +199,13 @@ program
   .option('--json', 'Plain JSON output')
   .option('--no-cache', 'Bypass the registry metadata cache')
   .action((options) => auditCommand({ json: options.json, cache: options.cache }));
+
+program
+  .command('mcp')
+  .description(
+    'Serve the registry MCP tools over stdio (search_blocks, get_block, list_registries, preview_install)',
+  )
+  .action(() => mcpCommand());
 
 const schema = program
   .command('schema')
@@ -339,8 +361,9 @@ registry
 registry
   .command('add')
   .argument('<namespace>', 'Registry namespace, e.g. @acme')
-  .argument('[url]', "URL of the registry's index.json")
-  .description('Validate a registry and add it to ion.config.json')
+  .argument('[url]', "URL of the registry's index.json (omit to look @ns up in the directory)")
+  .description('Validate a registry and add it to ion.config.json (no URL: directory lookup)')
+  .option('-y, --yes', 'Skip the directory-lookup confirmation prompt')
   .option('--json', 'Plain JSON output')
   .action((namespace, url, options) => registryAddCommand(namespace, url, options));
 

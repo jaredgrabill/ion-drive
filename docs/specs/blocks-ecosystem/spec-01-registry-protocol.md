@@ -1,6 +1,15 @@
 # Spec 01 — Registry Protocol v1
 
 > **Status:** ✅ implemented 2026-07-08, commit af5dc64
+> **Amended 2026-07-09 (spec-08):** three backward-compatible **optional** fields — no
+> schemaVersion bump: `searchUrl` on `index.json` (URL of the registry's
+> `search-index.json`, relative per §2), `registriesUrl` on `index.json` (URL of the
+> registries directory — added because the shipped Pages layout serves
+> `registries.json` at the repo root, not beside the index, so sibling resolution
+> alone can't find it; clients fall back to a sibling `registries.json` when absent),
+> and `readmeUrl` on `blocks/<name>.json` (top-level mutable display data — a copied
+> per-block README, keeping browsers same-origin). All three are display/discovery
+> data, never load-bearing for install/verify.
 
 **Lands in:** `jaredgrabill/ion-drive` (JSON Schemas + types) and
 `jaredgrabill/ion-drive-blocks` (reference layout).

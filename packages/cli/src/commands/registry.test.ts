@@ -1,13 +1,16 @@
 /**
- * Unit tests for the `ion-drive registry` command group (spec-03 §5 / AC6):
- * list/add/remove/ping incl. `--json`, the add-time legacy-index rejection,
- * the not-yet directory lookup, URL permission refusal, and the remove guard
- * (installed blocks from the registry block removal unless --force).
+ * Unit tests for the `ion-drive registry` command group (spec-03 §5 / AC6 +
+ * spec-08 §3 / AC3): list/add/remove/ping incl. `--json`, the add-time
+ * legacy-index rejection, the no-URL directory lookup (happy path, unknown
+ * namespace hint, unreachable directory, declined confirm), URL permission
+ * refusal, and the remove guard (installed blocks from the registry block
+ * removal unless --force).
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import prompts from 'prompts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type IonProjectConfig, resetConfigWarnings } from '../config.js';
 import { resetRegistryCache } from '../registry/registry-client.js';
@@ -128,10 +131,108 @@ describe('registry add', () => {
     expect(output()).toContain('"@acme"');
   });
 
-  it('bare add (directory lookup) is a friendly not-yet error', async () => {
+  // --- The no-URL directory-lookup form (spec-08 §3 / AC3) -------------------
+
+  const MAIN_URL = 'https://registry.iondrive.dev/registry/index.json';
+  const MAIN_INDEX = {
+    schemaVersion: 1,
+    name: 'Ion Drive Official Blocks',
+    generatedAt: '2026-07-09T00:00:00Z',
+    registriesUrl: '../registries.json',
+    blocks: {},
+  };
+  const DIRECTORY = {
+    schemaVersion: 1,
+    registries: [
+      {
+        namespace: '@acme',
+        url: 'http://localhost:9700/index.json',
+        owner: 'Acme Corp',
+        description: 'Acme blocks.',
+        trust: 'listed',
+      },
+    ],
+  };
+
+  it('bare add resolves through the directory, probes the target, and writes config (AC3)', async () => {
+    writeCfg({});
+    stubFetch({
+      [MAIN_URL]: MAIN_INDEX,
+      'https://registry.iondrive.dev/registries.json': DIRECTORY,
+      'http://localhost:9700/index.json': INDEX,
+    });
+    await registryAddCommand('@acme', undefined, { json: true });
+    expect(process.exitCode).toBeUndefined();
+    expect(JSON.parse(output())).toEqual({
+      namespace: '@acme',
+      url: 'http://localhost:9700/index.json',
+      name: 'Fixture Registry',
+      blocks: 1,
+      fromDirectory: true,
+      owner: 'Acme Corp',
+      trust: 'listed',
+    });
+    expect(readCfg().registries).toEqual({ '@acme': 'http://localhost:9700/index.json' });
+  });
+
+  it('bare add falls back to the sibling registries.json when the index has no registriesUrl', async () => {
+    writeCfg({});
+    stubFetch({
+      [MAIN_URL]: { ...MAIN_INDEX, registriesUrl: undefined },
+      'https://registry.iondrive.dev/registry/registries.json': DIRECTORY,
+      'http://localhost:9700/index.json': INDEX,
+    });
+    await registryAddCommand('@acme', undefined, { json: true });
+    expect(process.exitCode).toBeUndefined();
+    expect(readCfg().registries).toEqual({ '@acme': 'http://localhost:9700/index.json' });
+  });
+
+  it('an unknown namespace produces the documented pass-the-URL hint (AC3)', async () => {
+    writeCfg({});
+    stubFetch({
+      [MAIN_URL]: MAIN_INDEX,
+      'https://registry.iondrive.dev/registries.json': DIRECTORY,
+    });
+    await registryAddCommand('@nope', undefined, {});
+    expect(process.exitCode).toBe(1);
+    expect(output()).toContain(
+      '@nope is not in the registries directory — pass the URL explicitly: ion-drive registry add @nope <url>',
+    );
+    expect(readCfg().registries).toBeUndefined();
+  });
+
+  it('an unreachable directory is a named error and nothing is written', async () => {
+    writeCfg({});
+    stubFetch({ [MAIN_URL]: MAIN_INDEX }); // registries.json un-routed
+    await registryAddCommand('@acme', undefined, { json: true });
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(output())).toHaveProperty('error');
+    expect(readCfg().registries).toBeUndefined();
+  });
+
+  it('a malformed directory is a named error and nothing is written', async () => {
+    writeCfg({});
+    stubFetch({
+      [MAIN_URL]: MAIN_INDEX,
+      'https://registry.iondrive.dev/registries.json': { registries: [] }, // no schemaVersion
+    });
     await registryAddCommand('@acme', undefined, {});
     expect(process.exitCode).toBe(1);
-    expect(output()).toContain('later release');
+    expect(output()).toContain('missing schemaVersion');
+    expect(readCfg().registries).toBeUndefined();
+  });
+
+  it('declining the confirmation writes nothing', async () => {
+    writeCfg({});
+    stubFetch({
+      [MAIN_URL]: MAIN_INDEX,
+      'https://registry.iondrive.dev/registries.json': DIRECTORY,
+      'http://localhost:9700/index.json': INDEX,
+    });
+    prompts.inject([false]);
+    await registryAddCommand('@acme', undefined, {});
+    expect(output()).toContain('nothing written');
+    expect(readCfg().registries).toBeUndefined();
   });
 });
 

@@ -243,6 +243,27 @@ describe('parseRegistryIndex', () => {
     );
   });
 
+  // spec-08: searchUrl/registriesUrl are optional, backward-compatible additions.
+  it('round-trips searchUrl + registriesUrl and stays valid without them', () => {
+    const withUrls = {
+      ...specIndexExample,
+      searchUrl: 'search-index.json',
+      registriesUrl: '../registries.json',
+    };
+    expect(parseRegistryIndex(withUrls)).toEqual(withUrls);
+    // The pre-spec-08 shape (no searchUrl/registriesUrl) stays valid.
+    expect(parseRegistryIndex(specIndexExample)).toEqual(specIndexExample);
+  });
+
+  it('rejects an empty searchUrl/registriesUrl', () => {
+    expect(() => parseRegistryIndex({ ...specIndexExample, searchUrl: '' })).toThrow(
+      RegistryParseError,
+    );
+    expect(() => parseRegistryIndex({ ...specIndexExample, registriesUrl: '' })).toThrow(
+      RegistryParseError,
+    );
+  });
+
   it('rejects unknown top-level keys (strict schema)', () => {
     expect(() => parseRegistryIndex({ ...specIndexExample, bogus: true })).toThrow(
       RegistryParseError,
@@ -261,6 +282,19 @@ describe('parseRegistryBlock', () => {
 
   it('defaults advisories to [] when omitted', () => {
     expect(parseRegistryBlock(minimalBlock()).advisories).toEqual([]);
+  });
+
+  // spec-08: readmeUrl is an optional, backward-compatible addition.
+  it('round-trips readmeUrl and stays valid without it', () => {
+    const withReadme = { ...specBlockExample, readmeUrl: 'crm.readme.md' };
+    expect(parseRegistryBlock(withReadme)).toEqual(withReadme);
+    expect(parseRegistryBlock(specBlockExample)).toEqual(specBlockExample);
+  });
+
+  it('rejects an empty readmeUrl', () => {
+    expect(() => parseRegistryBlock({ ...specBlockExample, readmeUrl: '' })).toThrow(
+      RegistryParseError,
+    );
   });
 
   it('rejects schemaVersion 2 as an unsupported format', () => {

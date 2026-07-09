@@ -19,18 +19,34 @@
  *     mutation is `attestationUrl` absent → present, set iff the sigstore
  *     bundle exists on disk beside the artifact (spec-05 §3 ordering / D5).
  *  5. **Regenerates** `registry/index.json` from the per-block docs.
+ *  6. **Emits the spec-08 registry-data surfaces** — all mutable display data,
+ *     never release artifacts: `registry/search-index.json` (advertised via the
+ *     index's `searchUrl`), a byte-exact `registry/blocks/<name>.readme.md`
+ *     copy of each block's `README.md` (advertised via `readmeUrl`; a stale
+ *     copy is deleted when the source README disappears), and one
+ *     deterministic `badges/<name>.svg` per block (`badge.ts`). The index also
+ *     advertises `registriesUrl` when a valid root `registries.json` exists.
  *
  * Everything is pure over an injected {@link BuildFs} + clock + validator so
- * the whole generator is unit-testable in memory. Writes are buffered and
- * flushed only when there are no refusals; `--check` (CI drift guard) never
- * writes and reports the files that *would* change.
+ * the whole generator is unit-testable in memory. Writes (and deletes) are
+ * buffered and flushed only when there are no refusals; `--check` (CI drift
+ * guard) never touches disk and reports the files that *would* change.
  *
  * Also here: {@link applyStatusEdit}, the `registry yank`/`deprecate` writer
  * (the git-registry admin loop for the mutable status fields).
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import semver from 'semver';
+import { renderBadgeSvg } from './badge.js';
 import type { CoreValidatorModule } from './core-loader.js';
 import { computeDigest, packBytes } from './verify.js';
 
@@ -49,6 +65,8 @@ export interface BuildFs {
   stat(path: string): { isDirectory: boolean };
   /** Recursive mkdir. */
   mkdir(dir: string): void;
+  /** Removes a file (spec-08 stale-emission cleanup). Absent files are fine. */
+  rm(path: string): void;
 }
 
 /** The real `node:fs`-backed {@link BuildFs} used by the commands. */
@@ -61,6 +79,9 @@ export function realBuildFs(): BuildFs {
     stat: (path) => ({ isDirectory: statSync(path).isDirectory() }),
     mkdir: (dir) => {
       mkdirSync(dir, { recursive: true });
+    },
+    rm: (path) => {
+      rmSync(path, { force: true });
     },
   };
 }
@@ -124,6 +145,8 @@ export interface BuildResult {
   packed: PackedArtifact[];
   /** Files written — or, under `--check`, files that WOULD change. */
   wrote: string[];
+  /** Stale emissions removed — or, under `--check`, files that WOULD be removed. */
+  deleted: string[];
   /** Named hard failures (immutability violations, validation, missing config). */
   refusals: string[];
   warnings: string[];
@@ -167,7 +190,7 @@ interface BlockDoc extends Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 /** Directory names that are never blocks (outputs, docs, repo plumbing). */
-const NON_BLOCK_DIRS = new Set(['registry', 'schemas', 'docs', 'node_modules', 'site']);
+const NON_BLOCK_DIRS = new Set(['registry', 'schemas', 'docs', 'node_modules', 'site', 'badges']);
 
 /**
  * Discovers block source directories: every `<root>/<name>/block.json` one
@@ -291,8 +314,9 @@ interface PendingWrite {
 export function buildRegistry(root: string, opts: BuildOptions): BuildResult {
   const fs = opts.fs ?? realBuildFs();
   const now = opts.now ?? (() => new Date());
-  const result: BuildResult = { packed: [], wrote: [], refusals: [], warnings: [] };
+  const result: BuildResult = { packed: [], wrote: [], deleted: [], refusals: [], warnings: [] };
   const writes: PendingWrite[] = [];
+  const deletes: string[] = [];
 
   const { config, refusal } = readRegistryConfig(fs, root);
   if (!config) {
@@ -310,20 +334,34 @@ export function buildRegistry(root: string, opts: BuildOptions): BuildResult {
     return result;
   }
 
-  // Per-block pipeline: validate → pack/guard → regenerate the block doc.
-  const docs = buildSelectedDocs({ fs, root, names, config, now, opts, result, writes });
+  // registries.json is hand-maintained; the build VALIDATES it, never writes
+  // it. Validated up front because the index advertises it (`registriesUrl`)
+  // only when it exists AND parses (spec-08).
+  const hasDirectory = validateRegistriesDirectory(fs, root, opts.validator, result);
+  if (result.refusals.length > 0) return result;
+
+  // Per-block pipeline: validate → pack/guard → readme copy → block doc.
+  const docs = buildSelectedDocs({ fs, root, names, config, now, opts, result, writes, deletes });
   if (result.refusals.length > 0) return result; // abort: nothing is written
 
   // Index regeneration spans ALL discovered blocks — unselected ones
-  // contribute their existing on-disk doc.
-  const index = buildIndex({ fs, root, names, docs, config, now, opts, result, writes });
+  // contribute their existing on-disk doc. The search index and badges are
+  // derived from the same summaries (spec-08).
+  const index = buildIndex({
+    fs,
+    root,
+    names,
+    docs,
+    config,
+    now,
+    opts,
+    result,
+    writes,
+    hasDirectory,
+  });
   if (result.refusals.length > 0 || index === null) return result;
 
-  // registries.json is hand-maintained; the build VALIDATES it, never writes it.
-  validateRegistriesDirectory(fs, root, opts.validator, result);
-  if (result.refusals.length > 0) return result;
-
-  flushWrites(fs, writes, result, opts.check === true);
+  flushWrites(fs, writes, deletes, result, opts.check === true);
   return result;
 }
 
@@ -337,6 +375,7 @@ function buildSelectedDocs(input: {
   opts: BuildOptions;
   result: BuildResult;
   writes: PendingWrite[];
+  deletes: string[];
 }): Map<string, BlockDoc> {
   const selected = input.opts.block === undefined ? input.names : [input.opts.block];
   const docs = new Map<string, BlockDoc>();
@@ -347,10 +386,11 @@ function buildSelectedDocs(input: {
   return docs;
 }
 
-/** Flushes buffered writes — or, under `--check`, only reports them. */
+/** Flushes buffered writes + deletes — or, under `--check`, only reports them. */
 function flushWrites(
   fs: BuildFs,
   writes: PendingWrite[],
+  deletes: string[],
   result: BuildResult,
   check: boolean,
 ): void {
@@ -360,6 +400,10 @@ function flushWrites(
       fs.mkdir(dirnameOf(write.path));
       fs.writeFile(write.path, write.data);
     }
+  }
+  for (const path of deletes) {
+    result.deleted.push(path);
+    if (!check) fs.rm(path);
   }
 }
 
@@ -378,6 +422,7 @@ interface BlockBuildContext {
   opts: BuildOptions;
   result: BuildResult;
   writes: PendingWrite[];
+  deletes: string[];
 }
 
 /**
@@ -410,7 +455,30 @@ function buildBlockDoc(ctx: BlockBuildContext): BlockDoc | null {
 
   if (!verifyReleasedVersions(ctx, existingDoc)) return null;
 
-  return assembleBlockDoc(ctx, manifest, version, existingDoc, packed);
+  const readmeUrl = syncReadmeCopy(ctx);
+  return assembleBlockDoc(ctx, manifest, version, existingDoc, packed, readmeUrl);
+}
+
+/**
+ * The spec-08 README copy: `registry/blocks/<name>.readme.md` is a byte-exact
+ * copy of `<root>/<name>/README.md` when the source exists (queued only when
+ * the bytes differ — idempotency). When the source is absent, a stale copy is
+ * queued for DELETION and no `readmeUrl` is advertised. Returns the relative
+ * `readmeUrl` for the block doc, or undefined.
+ */
+function syncReadmeCopy(ctx: BlockBuildContext): string | undefined {
+  const { fs, root, name } = ctx;
+  const sourcePath = joinPath(root, name, 'README.md');
+  const copyPath = joinPath(root, 'registry', 'blocks', `${name}.readme.md`);
+  if (!fs.exists(sourcePath)) {
+    if (fs.exists(copyPath)) ctx.deletes.push(copyPath);
+    return undefined;
+  }
+  const source = fs.readFile(sourcePath);
+  if (!fs.exists(copyPath) || !bytesEqual(fs.readFile(copyPath), source)) {
+    ctx.writes.push({ path: copyPath, data: source });
+  }
+  return `${name}.readme.md`;
 }
 
 /** Existing `registry/blocks/<name>.json`, `null` when absent, `undefined` on refusal. */
@@ -537,6 +605,7 @@ function assembleBlockDoc(
   version: string,
   existingDoc: BlockDoc | null,
   packed: PackedArtifact,
+  readmeUrl: string | undefined,
 ): BlockDoc | null {
   const { name, config, now, opts, result } = ctx;
 
@@ -577,6 +646,7 @@ function assembleBlockDoc(
       typeof meta.repository === 'string' ? meta.repository : config.repository,
     ),
     ...optional('homepage', typeof meta.homepage === 'string' ? meta.homepage : undefined),
+    ...optional('readmeUrl', readmeUrl),
     latest: computeLatest(ordered),
     versions: ordered,
     advisories: existingDoc?.advisories ?? [],
@@ -641,13 +711,17 @@ interface IndexBuildContext {
   opts: BuildOptions;
   result: BuildResult;
   writes: PendingWrite[];
+  /** True when a valid root `registries.json` exists (⇒ advertise `registriesUrl`). */
+  hasDirectory: boolean;
 }
 
 /**
  * Regenerates `registry/index.json` from the per-block docs (freshly built
- * for selected blocks; read from disk for the rest under `--block`). The
- * index is written only when it materially changed (`generatedAt` alone never
- * forces a write — that keeps a no-op build a true no-op).
+ * for selected blocks; read from disk for the rest under `--block`), then
+ * derives the spec-08 emissions — `registry/search-index.json` and one badge
+ * SVG per block — from the same summaries. The index and search index are
+ * written only when materially changed (`generatedAt` alone never forces a
+ * write — that keeps a no-op build a true no-op).
  */
 function buildIndex(ctx: IndexBuildContext): Record<string, unknown> | null {
   const { fs, root, names, docs, config, opts, result } = ctx;
@@ -676,6 +750,10 @@ function buildIndex(ctx: IndexBuildContext): Record<string, unknown> | null {
     ...optional('description', config.description),
     ...optional('homepage', config.homepage),
     generatedAt: isoNow(ctx.now),
+    // Spec-08: the search index is always emitted, so always advertised;
+    // the registries directory only when the root file exists and validates.
+    searchUrl: 'search-index.json',
+    ...(ctx.hasDirectory ? { registriesUrl: '../registries.json' } : {}),
     blocks,
   };
 
@@ -687,10 +765,69 @@ function buildIndex(ctx: IndexBuildContext): Record<string, unknown> | null {
   }
 
   const path = joinPath(root, 'registry', 'index.json');
-  if (indexMateriallyChanged(fs, path, index)) {
+  if (docMateriallyChanged(fs, path, index)) {
     ctx.writes.push({ path, data: encoder.encode(serializeDoc(index)) });
   }
+
+  emitSearchIndex(ctx, blocks);
+  emitBadges(ctx, blocks);
   return index;
+}
+
+/** The summary fields shared by index entries, search documents, and badges. */
+interface BlockSummary {
+  title?: string;
+  description?: string;
+  categories?: string[];
+  latest: string;
+  trust?: string;
+}
+
+/**
+ * Emits `registry/search-index.json` (spec-08 §1): a plain documents array —
+ * `name, title, description, categories, latest, trust` — sorted by name,
+ * derived from the same summaries as the index. Mutable display data; written
+ * only when materially changed (same `generatedAt` normalization as the
+ * index), so `--check` covers it and a no-op build stays a no-op.
+ */
+function emitSearchIndex(ctx: IndexBuildContext, blocks: Record<string, unknown>): void {
+  const documents = Object.keys(blocks)
+    .sort()
+    .map((name) => {
+      const entry = blocks[name] as BlockSummary;
+      return {
+        name,
+        ...optional('title', entry.title),
+        ...optional('description', entry.description),
+        ...(entry.categories && entry.categories.length > 0
+          ? { categories: entry.categories }
+          : {}),
+        latest: entry.latest,
+        ...optional('trust', entry.trust),
+      };
+    });
+
+  const searchIndex = { schemaVersion: 1, generatedAt: isoNow(ctx.now), documents };
+  const path = joinPath(ctx.root, 'registry', 'search-index.json');
+  if (docMateriallyChanged(ctx.fs, path, searchIndex)) {
+    ctx.writes.push({ path, data: encoder.encode(serializeDoc(searchIndex)) });
+  }
+}
+
+/**
+ * Emits one deterministic `badges/<name>.svg` per block (spec-08 §1) from its
+ * index summary — name, `v<latest>`, and the display-hint trust. Identical
+ * input renders identical bytes, so idempotency/`--check` need no special
+ * casing.
+ */
+function emitBadges(ctx: IndexBuildContext, blocks: Record<string, unknown>): void {
+  for (const name of Object.keys(blocks).sort()) {
+    const entry = blocks[name] as BlockSummary;
+    const svg = renderBadgeSvg({ name, version: entry.latest, trust: entry.trust });
+    const path = joinPath(ctx.root, 'badges', `${name}.svg`);
+    if (ctx.fs.exists(path) && readText(ctx.fs, path) === svg) continue;
+    ctx.writes.push({ path, data: encoder.encode(svg) });
+  }
 }
 
 /** Existing doc for an unselected block; `null` when absent, `undefined` on refusal. */
@@ -712,12 +849,8 @@ function readDocForIndex(ctx: IndexBuildContext, name: string): BlockDoc | null 
   }
 }
 
-/** True when the emitted index differs from disk beyond `generatedAt`. */
-function indexMateriallyChanged(
-  fs: BuildFs,
-  path: string,
-  index: Record<string, unknown>,
-): boolean {
+/** True when an emitted doc differs from disk beyond `generatedAt`. */
+function docMateriallyChanged(fs: BuildFs, path: string, index: Record<string, unknown>): boolean {
   if (!fs.exists(path)) return true;
   let existing: Record<string, unknown>;
   try {
@@ -743,7 +876,7 @@ function indexMateriallyChanged(
  */
 function warnOnMissingGitattributes(fs: BuildFs, root: string, result: BuildResult): void {
   const advice =
-    'add a .gitattributes with `dist/** -text` (and `*.sigstore.json -text`) — sha256 digests are over exact bytes and autocrlf checkouts corrupt released artifacts';
+    'add a .gitattributes with `dist/** -text` (and `*.sigstore.json -text`, plus `badges/** -text` for the emitted SVGs) — sha256 digests are over exact bytes and autocrlf checkouts corrupt released artifacts';
   const path = joinPath(root, '.gitattributes');
   if (!fs.exists(path)) {
     result.warnings.push(`no .gitattributes at the registry root — ${advice}`);
@@ -764,18 +897,21 @@ function warnOnMissingGitattributes(fs: BuildFs, root: string, result: BuildResu
 // registries.json (validated when present; never generated)
 // ---------------------------------------------------------------------------
 
+/** Returns true when a root `registries.json` exists AND validates (spec-08). */
 function validateRegistriesDirectory(
   fs: BuildFs,
   root: string,
   validator: CoreValidatorModule,
   result: BuildResult,
-): void {
+): boolean {
   const path = joinPath(root, 'registries.json');
-  if (!fs.exists(path)) return;
+  if (!fs.exists(path)) return false;
   try {
     validator.parseRegistriesDirectory(JSON.parse(readText(fs, path)));
+    return true;
   } catch (err) {
     result.refusals.push(`registries.json: ${(err as Error).message}`);
+    return false;
   }
 }
 
@@ -849,15 +985,52 @@ export function applyStatusEdit(
   if (fs.exists(indexPath)) {
     const index = JSON.parse(readText(fs, indexPath)) as {
       generatedAt?: string;
-      blocks?: Record<string, { latest?: string }>;
+      blocks?: Record<string, { latest?: string; trust?: string }>;
     };
     const summary = index.blocks?.[name];
     if (summary) {
       summary.latest = doc.latest;
       index.generatedAt = isoNow(now);
       fs.writeFile(indexPath, encoder.encode(serializeDoc(index)));
+      // Spec-08 emissions encode `latest` too — sync them so `--check`
+      // stays a no-op right after a yank/deprecate (no rebuild needed).
+      syncEmissionsForStatusEdit(fs, root, name, doc.latest, summary.trust, now);
     }
   }
 
   return { name, version, status, latest: doc.latest };
+}
+
+/**
+ * Post-status-edit sync of the spec-08 display emissions: updates the block's
+ * `latest` in `registry/search-index.json` and re-renders `badges/<name>.svg`
+ * when those files exist (they don't in a pre-spec-08 checkout — best-effort
+ * by design; a full `registry build` regenerates everything).
+ */
+function syncEmissionsForStatusEdit(
+  fs: BuildFs,
+  root: string,
+  name: string,
+  latest: string,
+  trust: string | undefined,
+  now: () => Date,
+): void {
+  const searchPath = joinPath(root, 'registry', 'search-index.json');
+  if (fs.exists(searchPath)) {
+    const searchIndex = JSON.parse(readText(fs, searchPath)) as {
+      generatedAt?: string;
+      documents?: { name: string; latest?: string }[];
+    };
+    const doc = searchIndex.documents?.find((d) => d.name === name);
+    if (doc && doc.latest !== latest) {
+      doc.latest = latest;
+      searchIndex.generatedAt = isoNow(now);
+      fs.writeFile(searchPath, encoder.encode(serializeDoc(searchIndex)));
+    }
+  }
+
+  const badgePath = joinPath(root, 'badges', `${name}.svg`);
+  if (fs.exists(badgePath)) {
+    fs.writeFile(badgePath, encoder.encode(renderBadgeSvg({ name, version: latest, trust })));
+  }
 }

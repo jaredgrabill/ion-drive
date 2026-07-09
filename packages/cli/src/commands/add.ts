@@ -5,14 +5,17 @@
  * The shadcn `add` analog, spec-03 + spec-04 edition: parse the ref (`crm`,
  * `crm@^0.2.0`, `@acme/billing@1.x`, a block.json URL, or a local path),
  * resolve the dependency closure across configured registries, then run the
- * **verify phase** ({@link fetchAndVerifyPlan}) — every registry artifact is
- * fetched as raw bytes and its sha256 checked against the registry-declared
- * digest *before* the plan is shown, anything is vendored, or the server is
- * called. A digest mismatch aborts the whole command with no `--force`
- * override (spec-04 AC1). Attestation bundles, when present, are verified
- * through the sigstore seam and produce the `official`/`verified`/`community`
- * badge on each plan line; attestation failures degrade to `community` with a
- * warning — only the digest is load-bearing for integrity.
+ * **verify phase** — every registry artifact is fetched as raw bytes and its
+ * sha256 checked against the registry-declared digest *before* the plan is
+ * shown, anything is vendored, or the server is called. A digest mismatch
+ * aborts the whole command with no `--force` override (spec-04 AC1).
+ * Attestation bundles, when present, are verified through the sigstore seam
+ * and produce the `official`/`verified`/`community` badge on each plan line.
+ *
+ * The resolve+verify pipeline itself lives in `registry/preview.ts`
+ * ({@link buildVerifiedPlan}) and is **shared verbatim** with the registry
+ * MCP's `preview_install` tool (spec-08 AC4) — this module owns only the UI:
+ * spinners, plan rendering, confirmation, vendoring, and the install loop.
  *
  * The local `ion.config.json` records what was installed — name, version, the
  * **computed** digest, source, sourceUrl — and the server install carries a
@@ -31,45 +34,26 @@ import {
   writeConfig,
 } from '../config.js';
 import { BarrelError, VendorError, addToBarrel, vendorBlockCode } from '../project.js';
+import {
+  type VerifiedItem,
+  type VerifiedPlan,
+  buildVerifiedPlan,
+  gatherServerState,
+} from '../registry/preview.js';
 import { RefError, parseRef } from '../registry/ref.js';
-import {
-  type Manifest,
-  RegistryError,
-  asManifest,
-  fetchArtifact,
-  fetchBlock,
-  fetchIndex,
-  fetchManifestFromUrl,
-  readLocalBlock,
-  resolveRegistry,
-  withParams,
-} from '../registry/registry-client.js';
-import {
-  type InstallPlan,
-  type PlanItem,
-  ResolveError,
-  type ResolverIO,
-  resolvePlan,
-} from '../registry/resolver.js';
-import {
-  type AttestationOutcome,
-  type SigstoreVerifier,
-  realSigstoreVerifier,
-} from '../registry/sigstore-adapter.js';
-import {
-  type AttestationStatus,
-  IntegrityError,
-  type TrustTier,
-  checkSize,
-  computeDigest,
-  computeTier,
-  normalizeRepo,
-  packBytes,
-  tierBadge,
-  verifyDigest,
-} from '../registry/verify.js';
+import { type Manifest, RegistryError } from '../registry/registry-client.js';
+import { type InstallPlan, ResolveError } from '../registry/resolver.js';
+import { IntegrityError, tierBadge } from '../registry/verify.js';
 import { box, c, gradient, log, orbitSpinner, sym } from '../ui.js';
 import { warnOnVersionSkew } from '../version-check.js';
+
+// The verify phase moved to registry/preview.ts (spec-08) — re-exported here
+// so existing import sites (update-shared, block-test, tests) stay stable.
+export {
+  fetchAndVerifyPlan,
+  type VerifiedItem,
+  type VerifyPhaseDeps,
+} from '../registry/preview.js';
 
 export interface AddOptions {
   yes?: boolean;
@@ -96,17 +80,13 @@ export async function addCommand(target: string, options: AddOptions): Promise<v
   const config = readConfig();
   const client = new IonApiClient(config.serverUrl, config.apiKey);
 
-  const plan = await resolveTarget(client, config, target, options);
-  if (!plan) return;
+  const result = await resolveAndVerify(client, config, target, options);
+  if (!result) return;
+  const { plan, verified } = result;
   if (plan.items.length === 0) {
     log.info(`${c.bold(target)} is already installed. Nothing to do.`);
     return;
   }
-
-  // Verify phase — digest gate + attestation policy, BEFORE the plan renders,
-  // anything is vendored, or the server is called (spec-04 AC1).
-  const verified = await runVerifyPhase(plan.items, config, options);
-  if (!verified) return;
 
   renderPlan(target, config.serverUrl, plan, verified, options);
   if (options.showCode) renderCodeListing(verified);
@@ -116,42 +96,27 @@ export async function addCommand(target: string, options: AddOptions): Promise<v
   await runInstalls(client, config, verified, options);
 }
 
-/** Verifies connectivity and resolves the install plan. Returns null on failure. */
-async function resolveTarget(
+/**
+ * The command-layer wrapper around the shared pipeline: gathers server state
+ * (hard failure when unreachable — `add` needs the server anyway), warns on
+ * CLI↔server version skew, then delegates to {@link buildVerifiedPlan}.
+ * Returns null after friendly-logging any known failure.
+ */
+async function resolveAndVerify(
   client: IonApiClient,
   config: IonProjectConfig,
   target: string,
   options: AddOptions,
-): Promise<InstallPlan | null> {
-  const noCache = options.cache === false;
-  const io: ResolverIO = {
-    fetchIndex: (reg) => fetchIndex(reg, { noCache }),
-    fetchBlock: (reg, name) => fetchBlock(reg, name, { noCache }),
-    getLocalOrUrlManifest: async (ref) => {
-      if (ref.kind === 'url') return fetchManifestFromUrl(ref.url);
-      // Local blocks: the digest is computed over the packed bytes the CLI
-      // itself assembles — identical to what `block pack` would publish.
-      const manifest = readLocalBlock(ref.path);
-      return { manifest, digest: computeDigest(packBytes(manifest)) };
-    },
-  };
-
+): Promise<VerifiedPlan | null> {
   try {
-    const ref = parseRef(target);
-    const health = await client.health();
-    warnOnVersionSkew(health.version);
-    const installed = new Map(
-      (await client.listInstalled())
-        .filter((b) => b.status === 'installed')
-        .map((b) => [b.name, b.version] as const),
-    );
-    return await resolvePlan(ref, {
-      config,
-      installed,
-      recordedBlocks: config.blocks,
-      serverCoreVersion: health.version,
+    parseRef(target); // ref problems first — before any network call
+    const serverState = await gatherServerState(client, config);
+    if (serverState.serverCoreVersion) warnOnVersionSkew(serverState.serverCoreVersion);
+    return await buildVerifiedPlan(target, config, {
+      serverState,
       force: options.force,
-      io,
+      noCache: options.cache === false,
+      verifyProvenance: options.verifyProvenance !== false,
     });
   } catch (err) {
     return failFriendly(err);
@@ -173,192 +138,6 @@ function failFriendly(err: unknown): null {
     return null;
   }
   throw err;
-}
-
-// ---------------------------------------------------------------------------
-// Verify phase (spec-04 §2)
-// ---------------------------------------------------------------------------
-
-/** One plan item after the verify phase — manifest in hand, tier computed. */
-export interface VerifiedItem {
-  item: PlanItem;
-  manifest: Manifest;
-  /** The digest computed over the actual bytes (what the ledger records). */
-  computedDigest: string;
-  tier: TrustTier;
-  attestationStatus: AttestationStatus;
-  /** Set when the attestation verified: who built it, at which commit. */
-  attestedBy?: { repository: string; commit?: string };
-  /** Verify-phase notices, rendered under the plan line. */
-  warnings: string[];
-}
-
-/** Injectable IO for the verify phase (tests pass fakes; prod uses defaults). */
-export interface VerifyPhaseDeps {
-  fetchImpl?: typeof fetch;
-  verifier?: SigstoreVerifier;
-}
-
-/**
- * The spec-04 verify phase: fetches every registry item's artifact bytes,
- * enforces size + digest (hard failure — {@link IntegrityError} aborts the
- * whole plan; no flag is even consulted), parses the manifest from the
- * verified bytes, and runs the attestation policy when a bundle is present.
- * Local/URL items reuse the digest computed at planning time — their bytes
- * are never re-fetched (C8).
- */
-export async function fetchAndVerifyPlan(
-  items: PlanItem[],
-  config: IonProjectConfig,
-  opts: { verifyProvenance: boolean } & VerifyPhaseDeps = { verifyProvenance: true },
-): Promise<VerifiedItem[]> {
-  const verifier = opts.verifier ?? realSigstoreVerifier();
-  const verified: VerifiedItem[] = [];
-  for (const item of items) {
-    verified.push(
-      item.manifest
-        ? verifyManifestItem(item, item.manifest)
-        : await verifyRegistryItem(item, config, { ...opts, verifier }),
-    );
-  }
-  return verified;
-}
-
-/** Local/URL items: the manifest + digest are already in hand from planning. */
-function verifyManifestItem(item: PlanItem, manifest: Manifest): VerifiedItem {
-  const computedDigest = item.digest ?? computeDigest(packBytes(manifest));
-  const warnings: string[] = [];
-  if (item.source !== 'local') {
-    warnings.push(
-      `installed from a direct URL — computed ${computedDigest}. Pin this by re-adding from a registry, or keep this digest for your records.`,
-    );
-  }
-  return {
-    item,
-    manifest,
-    computedDigest,
-    tier: 'community',
-    attestationStatus: 'absent',
-    warnings,
-  };
-}
-
-/** Registry items: fetch bytes → size gate → digest gate → parse → attest. */
-async function verifyRegistryItem(
-  item: PlanItem,
-  config: IonProjectConfig,
-  opts: { verifyProvenance: boolean; fetchImpl?: typeof fetch; verifier: SigstoreVerifier },
-): Promise<VerifiedItem> {
-  if (!item.registry || !item.sourceUrl || !item.digest) {
-    throw new RegistryError(`Plan item "${item.name}" has no artifact source`); // unreachable
-  }
-  const reg = resolveRegistry(item.registry, config);
-  const { bytes } = await fetchArtifact(withParams(item.sourceUrl, reg.params), reg.headers, {
-    fetchImpl: opts.fetchImpl,
-  });
-  // The two hard gates. IntegrityError aborts the ENTIRE command — deliberately
-  // no force parameter exists on this path (spec-04 AC1).
-  checkSize(bytes, item.size, item.sourceUrl);
-  verifyDigest(bytes, item.digest, item.sourceUrl);
-  const computedDigest = item.digest; // proven equal to sha256(bytes) above
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    throw new RegistryError(`Artifact at ${item.sourceUrl} is not JSON`);
-  }
-  const manifest = asManifest(parsed, item.sourceUrl);
-
-  const { outcome, warnings } = await checkAttestation(item, reg, opts);
-  const tierResult = computeTier({
-    computedDigest,
-    repository: item.repository,
-    attestation: outcome,
-  });
-  appendTierWarnings(warnings, tierResult.attestationStatus, tierResult.reason);
-
-  const attestedBy =
-    tierResult.attestationStatus === 'ok' && outcome?.kind === 'verified'
-      ? {
-          repository: normalizeRepo(outcome.facts.sourceRepository) ?? '',
-          commit: outcome.facts.sourceCommit,
-        }
-      : undefined;
-  return {
-    item,
-    manifest,
-    computedDigest,
-    tier: tierResult.tier,
-    attestationStatus: tierResult.attestationStatus,
-    attestedBy,
-    warnings,
-  };
-}
-
-/** Fetches + verifies the attestation bundle, when present and not skipped. */
-async function checkAttestation(
-  item: PlanItem,
-  reg: { headers: Record<string, string>; params: Record<string, string> },
-  opts: { verifyProvenance: boolean; fetchImpl?: typeof fetch; verifier: SigstoreVerifier },
-): Promise<{ outcome?: AttestationOutcome; warnings: string[] }> {
-  if (!item.attestationUrl) return { warnings: [] };
-  if (!opts.verifyProvenance) {
-    return { warnings: ['provenance check skipped (--no-verify-provenance)'] };
-  }
-  let bundleJson: unknown;
-  try {
-    const { bytes } = await fetchArtifact(
-      withParams(item.attestationUrl, reg.params),
-      reg.headers,
-      {
-        fetchImpl: opts.fetchImpl,
-      },
-    );
-    bundleJson = JSON.parse(new TextDecoder().decode(bytes));
-  } catch (err) {
-    // A missing/unreachable bundle degrades, never crashes (AC7): the digest
-    // already protects integrity; attestation is provenance.
-    return {
-      outcome: { kind: 'unavailable', reason: (err as Error).message },
-      warnings: [],
-    };
-  }
-  return { outcome: await opts.verifier.verifyBundle(bundleJson), warnings: [] };
-}
-
-/** The one warning line each non-verified outcome earns (spec-04 UX rules). */
-function appendTierWarnings(
-  warnings: string[],
-  status: AttestationStatus,
-  reason: string | undefined,
-): void {
-  if (status === 'absent' && warnings.length === 0) {
-    warnings.push('unattested — install proceeds on digest integrity alone');
-  } else if (status === 'invalid') {
-    warnings.push(
-      `attestation present but INVALID — treat as unattested; this can indicate tampering${reason ? ` (${reason})` : ''}`,
-    );
-  } else if (status === 'unavailable') {
-    warnings.push(
-      `could not verify provenance${reason ? ` (${reason})` : ''} — treating as community`,
-    );
-  }
-}
-
-/** Wraps {@link fetchAndVerifyPlan} with the CLI's friendly failure handling. */
-async function runVerifyPhase(
-  items: PlanItem[],
-  config: IonProjectConfig,
-  options: AddOptions,
-): Promise<VerifiedItem[] | null> {
-  try {
-    return await fetchAndVerifyPlan(items, config, {
-      verifyProvenance: options.verifyProvenance !== false,
-    });
-  } catch (err) {
-    return failFriendly(err);
-  }
 }
 
 // ---------------------------------------------------------------------------

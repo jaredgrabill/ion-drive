@@ -73,6 +73,9 @@ function createMemFs(initial: Record<string, string>): {
     exists: (path) => files.has(path) || isDir(path),
     stat: (path) => ({ isDirectory: !files.has(path) && isDir(path) }),
     mkdir: () => {},
+    rm: (path) => {
+      files.delete(path);
+    },
   };
   return { fs, files };
 }
@@ -215,10 +218,13 @@ describe('buildRegistry', () => {
     const result = buildRegistry('repo', { fs, validator, now: T2 });
     expect(result.refusals).toEqual([]);
     expect(result.packed.map((p) => `${p.name}@${p.version}`)).toEqual(['crm@0.3.0']);
+    // The spec-08 emissions encode `latest`, so the bump rewrites them too.
     expect(result.wrote.sort()).toEqual([
+      'repo/badges/crm.svg',
       'repo/crm/dist/0.3.0/block.json',
       'repo/registry/blocks/crm.json',
       'repo/registry/index.json',
+      'repo/registry/search-index.json',
     ]);
 
     const doc = readJson(files, 'repo/registry/blocks/crm.json') as unknown as Doc;
@@ -329,6 +335,139 @@ describe('buildRegistry', () => {
     );
     const result = buildRegistry('repo', { fs, validator, now: T1 });
     expect(result.refusals.join('\n')).toMatch(/registries\.json:/);
+  });
+});
+
+describe('spec-08 registry-data emissions', () => {
+  const VALID_DIRECTORY = JSON.stringify({
+    schemaVersion: 1,
+    registries: [{ namespace: '@acme', url: 'https://blocks.acme.test/registry/index.json' }],
+  });
+
+  it('emits a sorted search-index.json and advertises it via searchUrl', () => {
+    const { fs, files } = freshRepo();
+    const result = buildRegistry('repo', { fs, validator, now: T1 });
+    expect(result.refusals).toEqual([]);
+    expect(result.wrote).toContain('repo/registry/search-index.json');
+
+    const index = readJson(files, 'repo/registry/index.json');
+    expect(index.searchUrl).toBe('search-index.json');
+    expect(index.registriesUrl).toBeUndefined(); // no root registries.json here
+    parseRegistryIndex(index); // strict round-trip with the new field (AC1)
+
+    const searchIndex = readJson(files, 'repo/registry/search-index.json') as {
+      schemaVersion: number;
+      generatedAt: string;
+      documents: { name: string; latest: string; trust?: string; title?: string }[];
+    };
+    expect(searchIndex.schemaVersion).toBe(1);
+    expect(searchIndex.generatedAt).toBe('2026-07-08T10:00:00Z');
+    expect(searchIndex.documents.map((d) => d.name)).toEqual(['audit', 'crm']); // sorted
+    expect(searchIndex.documents[1]).toMatchObject({
+      name: 'crm',
+      title: 'CRM',
+      latest: '0.2.0',
+      trust: 'official',
+    });
+  });
+
+  it('advertises registriesUrl when a valid root registries.json exists', () => {
+    const { fs, files } = freshRepo();
+    files.set('repo/registries.json', encoder.encode(VALID_DIRECTORY));
+    buildRegistry('repo', { fs, validator, now: T1 });
+    const index = readJson(files, 'repo/registry/index.json');
+    expect(index.registriesUrl).toBe('../registries.json');
+    parseRegistryIndex(index);
+  });
+
+  it('emits one deterministic badge SVG per block', () => {
+    const { fs, files } = freshRepo();
+    const result = buildRegistry('repo', { fs, validator, now: T1 });
+    expect(result.wrote).toContain('repo/badges/crm.svg');
+    expect(result.wrote).toContain('repo/badges/audit.svg');
+    const svg = decoder.decode(files.get('repo/badges/crm.svg'));
+    expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
+    expect(svg).toContain('v0.2.0 · official'); // CONFIG says trust: official
+    expect(svg).toContain('role="img"');
+    // badges/ is never mistaken for a block directory.
+    expect(discoverBlocks(fs, 'repo')).toEqual(['audit', 'crm']);
+  });
+
+  it('copies a block README byte-exact and advertises readmeUrl', () => {
+    const { fs, files } = freshRepo();
+    const readme = '# CRM\r\n\r\nCompanies and contacts.\n'; // mixed EOLs stay exact
+    files.set('repo/crm/README.md', encoder.encode(readme));
+    const result = buildRegistry('repo', { fs, validator, now: T1 });
+    expect(result.refusals).toEqual([]);
+    expect(result.wrote).toContain('repo/registry/blocks/crm.readme.md');
+    expect(decoder.decode(files.get('repo/registry/blocks/crm.readme.md'))).toBe(readme);
+
+    const doc = readJson(files, 'repo/registry/blocks/crm.json');
+    expect(doc.readmeUrl).toBe('crm.readme.md');
+    parseRegistryBlock(doc); // strict round-trip with the new field (AC1)
+    // audit has no README: no field, no copy.
+    expect(readJson(files, 'repo/registry/blocks/audit.json').readmeUrl).toBeUndefined();
+    expect(files.has('repo/registry/blocks/audit.readme.md')).toBe(false);
+  });
+
+  it('deletes a stale readme copy when the source README disappears', () => {
+    const { fs, files } = freshRepo();
+    files.set('repo/crm/README.md', encoder.encode('# CRM\n'));
+    buildRegistry('repo', { fs, validator, now: T1 });
+    files.delete('repo/crm/README.md');
+
+    // --check reports the would-be delete as drift without touching disk.
+    const check = buildRegistry('repo', { fs, validator, now: T2, check: true });
+    expect(check.deleted).toContain('repo/registry/blocks/crm.readme.md');
+    expect(files.has('repo/registry/blocks/crm.readme.md')).toBe(true);
+
+    const result = buildRegistry('repo', { fs, validator, now: T2 });
+    expect(result.deleted).toContain('repo/registry/blocks/crm.readme.md');
+    expect(files.has('repo/registry/blocks/crm.readme.md')).toBe(false);
+    expect(readJson(files, 'repo/registry/blocks/crm.json').readmeUrl).toBeUndefined();
+  });
+
+  it('--check fails on hand-tampered emissions (search index, badge, readme copy)', () => {
+    const { fs, files } = freshRepo();
+    files.set('repo/crm/README.md', encoder.encode('# CRM\n'));
+    buildRegistry('repo', { fs, validator, now: T1 });
+    expect(buildRegistry('repo', { fs, validator, now: T2, check: true }).wrote).toEqual([]);
+
+    files.set('repo/registry/search-index.json', encoder.encode('{"tampered":true}\n'));
+    files.set('repo/badges/crm.svg', encoder.encode('<svg>tampered</svg>\n'));
+    files.set('repo/registry/blocks/crm.readme.md', encoder.encode('# tampered\n'));
+    const check = buildRegistry('repo', { fs, validator, now: T2, check: true });
+    expect(check.wrote.sort()).toEqual([
+      'repo/badges/crm.svg',
+      'repo/registry/blocks/crm.readme.md',
+      'repo/registry/search-index.json',
+    ]);
+  });
+
+  it('a second build (and yank) keeps emissions in sync and writes nothing new', () => {
+    const { fs, files } = freshRepo();
+    files.set('repo/crm/README.md', encoder.encode('# CRM\n'));
+    files.set('repo/registries.json', encoder.encode(VALID_DIRECTORY));
+    buildRegistry('repo', { fs, validator, now: T1 });
+
+    // Idempotency across a clock change: nothing rewrites.
+    const second = buildRegistry('repo', { fs, validator, now: T2 });
+    expect(second.wrote).toEqual([]);
+    expect(second.deleted).toEqual([]);
+
+    // A status edit re-syncs latest into the search index + badge, so a
+    // follow-up --check is still a no-op (no rebuild required after a yank).
+    files.set('repo/crm/block.json', encoder.encode(manifestJson('crm', '0.3.0')));
+    buildRegistry('repo', { fs, validator, now: T2 });
+    applyStatusEdit('repo', 'crm@0.3.0', 'yanked', { fs, now: T2, reason: 'broken' });
+    const check = buildRegistry('repo', { fs, validator, now: T2, check: true });
+    expect(check.wrote).toEqual([]);
+    expect(check.deleted).toEqual([]);
+    const searchIndex = readJson(files, 'repo/registry/search-index.json') as {
+      documents: { name: string; latest: string }[];
+    };
+    expect(searchIndex.documents.find((d) => d.name === 'crm')?.latest).toBe('0.2.0');
+    expect(decoder.decode(files.get('repo/badges/crm.svg'))).toContain('v0.2.0');
   });
 });
 

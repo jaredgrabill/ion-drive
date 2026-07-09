@@ -40,19 +40,27 @@ import {
   writeCachedIndex,
 } from './cache.js';
 import {
+  type RegistriesDirectoryDoc,
   type RegistryBlockDoc,
   RegistryError,
   type RegistryIndexDoc,
   isPermittedRegistryUrl,
   parseBlockDoc,
   parseIndexDoc,
+  parseRegistriesDirectoryDoc,
   resolveRegistryUrl,
 } from './protocol.js';
 import { computeDigest } from './verify.js';
 
 // Re-exports so commands keep one import site for the registry layer.
 export { RegistryError, isPermittedRegistryUrl, resolveRegistryUrl } from './protocol.js';
-export type { RegistryBlockDoc, RegistryIndexDoc, RegistryVersionEntry } from './protocol.js';
+export type {
+  RegistriesDirectoryDoc,
+  RegistriesDirectoryEntry,
+  RegistryBlockDoc,
+  RegistryIndexDoc,
+  RegistryVersionEntry,
+} from './protocol.js';
 export { isLocalPath, isUrl } from './ref.js';
 
 /** A manifest is an opaque object here; the server validates it on install. */
@@ -225,6 +233,47 @@ export async function fetchBlock(
   slot.blocks.set(name, doc);
   writeCachedBlock(reg.url, name, doc, opts);
   return { doc, url };
+}
+
+/**
+ * Fetches a registry's prebuilt search-index documents (spec-08 §2).
+ * `searchUrl` comes from the index and resolves against the **index** URL
+ * (spec-01 §2); the fetch carries the registry's auth headers/params and the
+ * permitted-URL guard like every other registry read. Lenient about shape:
+ * `{ documents: [...] }` (the emitted format) or a bare array both work.
+ * Never cached — it's mutable display data and callers fall back on failure.
+ * @throws {RegistryError} when unreachable or not a search index
+ */
+export async function fetchSearchDocuments(
+  reg: ResolvedRegistry,
+  searchUrl: string,
+  opts: FetchOptions = {},
+): Promise<unknown[]> {
+  const url = resolveRegistryUrl(searchUrl, reg.url);
+  const body = await fetchJson(url, reg, opts);
+  if (Array.isArray(body)) return body;
+  if (typeof body === 'object' && body !== null) {
+    const documents = (body as Record<string, unknown>).documents;
+    if (Array.isArray(documents)) return documents;
+  }
+  throw new RegistryError(`Search index at ${url} has no documents array`);
+}
+
+/**
+ * Fetches the main registry's `registries.json` directory (spec-08 §3).
+ * Located via the index's `registriesUrl` when advertised, else the sibling
+ * fallback (`registries.json` beside the index) — both resolved against the
+ * index URL. Returns the parsed directory plus the URL it was found at.
+ * @throws {RegistryError} when unreachable or malformed
+ */
+export async function fetchRegistriesDirectory(
+  reg: ResolvedRegistry,
+  opts: FetchOptions = {},
+): Promise<{ directory: RegistriesDirectoryDoc; url: string }> {
+  const index = await fetchIndex(reg, opts);
+  const url = resolveRegistryUrl(index.registriesUrl ?? 'registries.json', reg.url);
+  const directory = parseRegistriesDirectoryDoc(await fetchJson(url, reg, opts), url);
+  return { directory, url };
 }
 
 /**

@@ -71,6 +71,20 @@ describe('scaffoldProject', () => {
     expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toContain('ion-drive audit');
   });
 
+  it('teaches agents block discovery: search + the four registry MCP tools (spec-08)', () => {
+    scaffoldProject(dir);
+    const agents = readFileSync(join(dir, 'AGENTS.md'), 'utf8');
+    expect(agents).toContain('## Finding blocks');
+    expect(agents).toContain('ion-drive search');
+    for (const tool of ['search_blocks', 'get_block', 'list_registries', 'preview_install']) {
+      expect(agents).toContain(tool);
+    }
+    // The ion-add-block skill's discovery step mentions them too.
+    const skill = readFileSync(join(dir, '.claude', 'skills', 'ion-add-block', 'SKILL.md'), 'utf8');
+    expect(skill).toContain('ion-drive search');
+    expect(skill).toContain('ion-drive mcp');
+  });
+
   it('writes a barrel with the add/remove markers', () => {
     scaffoldProject(dir);
     const barrel = readFileSync(join(dir, 'blocks', 'index.ts'), 'utf8');
