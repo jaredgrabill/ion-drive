@@ -1,0 +1,20 @@
+{
+  "$schema": "https://iondrive.dev/schemas/registries-directory.v1.json",
+  "schemaVersion": 1,
+  "registries": [
+    {
+      "namespace": "@ion",
+      "url": "https://registry.iondrive.dev/registry/index.json",
+      "owner": "IonShift Labs",
+      "description": "Official Ion Drive blocks.",
+      "repository": "https://github.com/jaredgrabill/ion-drive-blocks",
+      "trust": "official"
+    },
+    {
+      "namespace": "@acme",
+      "url": "https://blocks.acme.test/registry/index.json",
+      "description": "Acme's self-hosted registry.",
+      "trust": "listed"
+    }
+  ]
+}

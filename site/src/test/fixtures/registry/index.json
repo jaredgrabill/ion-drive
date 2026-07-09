@@ -1,0 +1,32 @@
+{
+  "$schema": "https://iondrive.dev/schemas/registry-index.v1.json",
+  "schemaVersion": 1,
+  "name": "Fixture Registry",
+  "description": "Protocol-v1 fixture registry for the blocks browser tests.",
+  "homepage": "http://localhost:8765",
+  "generatedAt": "2026-07-09T00:00:00Z",
+  "searchUrl": "search-index.json",
+  "registriesUrl": "../registries.json",
+  "blocks": {
+    "crm": {
+      "title": "CRM",
+      "description": "Leads, companies, contacts, deals, and activities — lead capture, conversion, and a stage-tracked sales pipeline.",
+      "categories": ["sales", "crm"],
+      "latest": "0.2.0",
+      "blockUrl": "blocks/crm.json",
+      "trust": "official"
+    },
+    "billing": {
+      "title": "Billing",
+      "description": "Invoices with a payment-provider integration.",
+      "categories": ["commerce"],
+      "latest": "1.1.0",
+      "blockUrl": "blocks/billing.json",
+      "trust": "verified"
+    },
+    "tiny": {
+      "latest": "1.0.0",
+      "blockUrl": "blocks/tiny.json"
+    }
+  }
+}

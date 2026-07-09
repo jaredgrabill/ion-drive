@@ -1,0 +1,979 @@
+/*
+ * "Deep Field" — landing, 404, and blocks-browser styles.
+ *
+ * Vacuum and negative space; near-monochrome black-and-white base; the space
+ * theme as restraint. The signature is the hero: a vast dark field where the
+ * only bright objects are the headline and a glowing always-dark terminal.
+ * Spacing rides a 4px base scale (4/8/12/16/24/32/48/64/96/128).
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--site-font-body);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* --- Links ----------------------------------------------------------------
+   Body links: text color + a soft ion-blue underline; hover commits. */
+main a:not(.btn):not(.card-link),
+.site-footer a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--ion-blue) / 0.4);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: color var(--duration-fast) var(--ease-out-expo);
+}
+main a:not(.btn):not(.card-link):hover,
+.site-footer a:hover {
+  color: hsl(var(--ion-blue));
+  text-decoration-color: hsl(var(--ion-blue));
+}
+/* External links get a ↗ (site chrome only — never inside code). */
+a.external::after {
+  content: " \2197";
+  font-size: 0.85em;
+}
+
+/* Focus rings — one of the three sanctioned glows. */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ion-blue));
+  border-radius: 4px;
+}
+
+/* --- Layout ---------------------------------------------------------------- */
+.container {
+  max-width: var(--site-max-content);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+section.band {
+  padding: var(--site-section-pad) 0;
+}
+section.band + section.band {
+  border-top: 1px solid hsl(var(--border));
+}
+
+/* --- Nav -------------------------------------------------------------------- */
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: hsl(var(--background) / 0.85);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid hsl(var(--border));
+}
+.site-nav .container {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  height: 56px;
+}
+/* Ceremonial gradient use #1: the wordmark (display size, bold). */
+.wordmark {
+  font-family: var(--site-font-display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+  text-decoration: none !important;
+  background: linear-gradient(90deg, hsl(var(--ion-purple)), hsl(var(--ion-cyan)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+}
+.site-nav nav {
+  margin-left: auto;
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+.site-nav nav a {
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+  font-size: 0.9375rem;
+  transition: color var(--duration-fast) var(--ease-out-expo);
+}
+.site-nav nav a:hover {
+  color: hsl(var(--foreground));
+}
+@media (max-width: 480px) {
+  .site-nav .container,
+  .site-nav nav {
+    gap: 12px;
+  }
+  .wordmark {
+    font-size: 1.0625rem;
+    white-space: nowrap;
+  }
+  .site-nav nav a {
+    font-size: 0.875rem;
+  }
+}
+.theme-toggle {
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.theme-toggle:hover {
+  color: hsl(var(--foreground));
+}
+.theme-toggle .moon,
+:root[data-theme="dark"] .theme-toggle .sun {
+  display: block;
+}
+.theme-toggle .sun,
+:root[data-theme="dark"] .theme-toggle .moon {
+  display: none;
+}
+
+/* --- Hero -------------------------------------------------------------------- */
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(4rem, 12vw, 8rem) 0 var(--site-section-pad);
+  text-align: center;
+}
+/* Light mode: no stars — one faint radial breath of ion-blue at the zenith. */
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(80% 60% at 50% 0%, hsl(var(--ion-blue) / 0.04), transparent);
+}
+/* Dark mode: the admin's starfield gradient stack (kept in sync with
+   packages/admin/src/index.css .starfield), masked to fade into the void. */
+:root[data-theme="dark"] .hero::before {
+  background-color: transparent;
+  background-image: radial-gradient(1px 1px at 20px 30px, hsl(0 0% 100% / 0.8), transparent),
+    radial-gradient(1px 1px at 130px 80px, hsl(0 0% 100% / 0.6), transparent),
+    radial-gradient(1.5px 1.5px at 220px 150px, hsl(215 100% 80% / 0.7), transparent),
+    radial-gradient(1px 1px at 300px 60px, hsl(0 0% 100% / 0.5), transparent),
+    radial-gradient(1px 1px at 380px 200px, hsl(265 70% 80% / 0.6), transparent),
+    radial-gradient(1.5px 1.5px at 90px 240px, hsl(0 0% 100% / 0.7), transparent),
+    radial-gradient(1px 1px at 170px 310px, hsl(0 0% 100% / 0.4), transparent),
+    radial-gradient(1px 1px at 340px 340px, hsl(185 80% 75% / 0.6), transparent);
+  background-size: 420px 380px;
+  opacity: 0.5;
+  mask-image: linear-gradient(to bottom, black, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent);
+  animation: star-drift 90s linear infinite;
+}
+@keyframes star-drift {
+  to {
+    background-position: 420px 380px;
+  }
+}
+.hero > .container {
+  position: relative;
+}
+.hero h1 {
+  font-family: var(--site-font-display);
+  font-size: clamp(2.75rem, 6vw, 4.5rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  margin: 0 auto 24px;
+  max-width: 22ch;
+}
+/* Ceremonial gradient use #2: exactly one word of the H1. */
+.gradient-word {
+  background: linear-gradient(90deg, hsl(var(--ion-purple)), hsl(var(--ion-cyan)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero .tagline {
+  color: hsl(var(--muted-foreground));
+  font-size: 1.125rem;
+  max-width: 60ch;
+  margin: 0 auto 12px;
+}
+.hero .triplet {
+  font-family: var(--site-font-mono);
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+  margin: 0 auto 32px;
+}
+.hero .cta-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.license-line {
+  font-family: var(--site-font-mono);
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+  margin: 0 0 48px;
+}
+
+/* --- Buttons ------------------------------------------------------------------ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-decoration: none;
+  color: hsl(var(--foreground));
+  background: hsl(var(--card));
+  transition: box-shadow var(--duration-normal) var(--ease-out-expo), border-color
+    var(--duration-normal) var(--ease-out-expo);
+}
+.btn:hover {
+  border-color: hsl(var(--muted-foreground));
+}
+.btn-primary {
+  background: hsl(var(--ion-blue));
+  border-color: hsl(var(--ion-blue));
+  color: #fff;
+}
+/* Sanctioned glow #2: primary CTA hover. */
+.btn-primary:hover {
+  border-color: hsl(var(--ion-blue));
+  box-shadow: var(--site-glow-cta);
+}
+
+/* --- The terminal (ALWAYS NIGHT) ----------------------------------------------
+   Renders on dark tokens in both themes — the single dark glowing mass on the
+   white light-mode page. Sanctioned glow #1. */
+.terminal {
+  max-width: 68ch;
+  margin: 0 auto;
+  text-align: left;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--site-terminal-border));
+  background: hsl(var(--site-terminal-bg));
+  color: hsl(var(--site-terminal-fg));
+  box-shadow: var(--site-glow-terminal);
+  overflow: hidden;
+}
+.terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid hsl(var(--site-terminal-border));
+  font-family: var(--site-font-mono);
+  font-size: 0.75rem;
+  color: hsl(240 5% 64.9%);
+}
+.terminal-header .star {
+  color: hsl(265 70% 60%);
+}
+.terminal-body {
+  padding: 20px 16px 24px;
+  font-family: var(--site-font-mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+.term-line {
+  display: block;
+  min-height: 1.7em;
+  white-space: nowrap;
+}
+/* Typed command lines: width in ch stepped open, once, staggered. */
+.term-line .type {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
+  width: 0;
+  animation: term-type calc(var(--n) * 28ms) steps(var(--n)) var(--d) forwards;
+}
+@keyframes term-type {
+  to {
+    width: calc(var(--n) * 1ch);
+  }
+}
+/* Output lines print at once, at their delay. */
+.term-line.out {
+  opacity: 0;
+  animation: term-print 1ms linear var(--d) forwards;
+}
+@keyframes term-print {
+  to {
+    opacity: 1;
+  }
+}
+/* One blinking caret on the final line. */
+.term-caret {
+  display: inline-block;
+  width: 1ch;
+  opacity: 0;
+  border-right: 6px solid hsl(215 100% 60% / 0.8);
+  animation: term-print 1ms linear var(--d) forwards, term-blink 1.1s step-end calc(var(--d) + 1ms)
+    infinite;
+}
+@keyframes term-blink {
+  50% {
+    border-color: transparent;
+  }
+}
+/* CLI palette mapped to tokens (always the dark steps — night terminal). */
+.terminal .t-prompt {
+  color: hsl(240 5% 64.9%);
+}
+.terminal .t-ok {
+  color: hsl(155 75% 45%);
+}
+.terminal .t-arrow {
+  color: hsl(265 70% 60%);
+}
+.terminal .t-key {
+  color: hsl(185 80% 55%);
+}
+.terminal .t-dim {
+  color: hsl(240 5% 64.9%);
+}
+
+/* --- Eyebrows + prose ----------------------------------------------------------- */
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--site-font-mono);
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  margin: 0 0 16px;
+}
+.eyebrow::before {
+  content: "";
+  width: 24px;
+  height: 1px;
+  background: hsl(var(--ion-blue));
+}
+h2 {
+  font-family: var(--site-font-display);
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0 0 16px;
+}
+h3 {
+  font-family: var(--site-font-display);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+}
+.prose {
+  max-width: 65ch;
+}
+.prose p {
+  margin: 0 0 16px;
+  color: hsl(var(--muted-foreground));
+}
+.prose strong {
+  color: hsl(var(--foreground));
+}
+/* ✦ list bullets — the micro-dose of personality. */
+ul.starlist {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+}
+ul.starlist li {
+  padding-left: 24px;
+  position: relative;
+  margin-bottom: 8px;
+  color: hsl(var(--muted-foreground));
+}
+ul.starlist li::before {
+  content: "\2726";
+  position: absolute;
+  left: 0;
+  color: hsl(var(--ion-blue));
+  font-size: 0.75rem;
+  top: 0.25em;
+}
+ul.starlist code,
+.prose code {
+  font-family: var(--site-font-mono);
+  font-size: 0.85em;
+  background: hsl(var(--surface-sunken));
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* --- Pitch sections --------------------------------------------------------------- */
+.pitch {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 48px;
+  align-items: center;
+}
+/* Grid children must shrink below their content's min width — long inline
+   code (endpoint paths) would otherwise force page-level horizontal scroll. */
+.pitch > * {
+  min-width: 0;
+}
+.prose code,
+ul.starlist code {
+  overflow-wrap: anywhere;
+}
+.pitch + .pitch {
+  margin-top: var(--site-section-pad);
+}
+.pitch.flip > .pitch-code {
+  order: -1;
+}
+@media (max-width: 860px) {
+  .pitch {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .pitch.flip > .pitch-code {
+    order: 0;
+  }
+}
+
+/* --- Code blocks (Shiki, dual theme) ----------------------------------------------- */
+.code-panel {
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--surface-sunken));
+  overflow: hidden;
+}
+.code-panel .code-title {
+  display: block;
+  padding: 6px 14px;
+  border-bottom: 1px solid hsl(var(--border));
+  font-family: var(--site-font-mono);
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+.code-panel .code-title::before {
+  content: "\2726 ";
+  color: hsl(var(--ion-purple));
+}
+pre.astro-code {
+  margin: 0;
+  padding: 16px;
+  /* Pure white in light mode (the 1px border carries the panel definition):
+     github-light-default's comment gray needs it to clear AA 4.5:1. */
+  background: hsl(0 0% 100%) !important;
+  font-family: var(--site-font-mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+:root[data-theme="dark"] pre.astro-code {
+  background: hsl(var(--surface-sunken)) !important;
+}
+/* Shiki dual themes: dark palette when the site theme is dark. */
+:root[data-theme="dark"] pre.astro-code,
+:root[data-theme="dark"] pre.astro-code span {
+  color: var(--shiki-dark) !important;
+}
+
+/* --- Feature grid ------------------------------------------------------------------- */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+@media (max-width: 960px) {
+  .feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.feature-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--card));
+  padding: 24px;
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color var(--duration-normal) var(--ease-out-expo);
+}
+a.feature-card:hover {
+  border-color: hsl(var(--ion-blue) / 0.5);
+}
+.feature-card p {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: hsl(var(--muted-foreground));
+}
+
+/* --- Ecosystem strip ------------------------------------------------------------------ */
+.eco-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+@media (max-width: 860px) {
+  .eco-strip {
+    grid-template-columns: 1fr;
+  }
+}
+.eco-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  padding: 20px 24px;
+  text-decoration: none !important;
+  color: inherit !important;
+  background: hsl(var(--card));
+  transition: border-color var(--duration-normal) var(--ease-out-expo);
+}
+.eco-card:hover {
+  border-color: hsl(var(--ion-blue) / 0.5);
+}
+.eco-card .eco-kind {
+  font-family: var(--site-font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: hsl(var(--muted-foreground));
+  display: block;
+  margin-bottom: 4px;
+}
+.eco-card .eco-name {
+  font-weight: 600;
+}
+
+/* --- Footer ------------------------------------------------------------------------------ */
+.site-footer {
+  border-top: 1px solid hsl(var(--border));
+  padding: 48px 0 64px;
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+}
+.site-footer .tagline {
+  font-family: var(--site-font-mono);
+  margin: 0 0 16px;
+}
+.site-footer .tagline .star {
+  color: hsl(var(--ion-blue));
+}
+.site-footer p {
+  margin: 0 0 8px;
+  max-width: 80ch;
+}
+.site-footer .foot-links {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+/* --- 404 — the one full-starfield page ------------------------------------------------------ */
+.void-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  background-color: hsl(240 10% 3.9%);
+  /* The admin's starfield stack, full bleed (kept in sync with
+     packages/admin/src/index.css .starfield). */
+  background-image: radial-gradient(1px 1px at 20px 30px, hsl(0 0% 100% / 0.8), transparent),
+    radial-gradient(1px 1px at 130px 80px, hsl(0 0% 100% / 0.6), transparent),
+    radial-gradient(1.5px 1.5px at 220px 150px, hsl(215 100% 80% / 0.7), transparent),
+    radial-gradient(1px 1px at 300px 60px, hsl(0 0% 100% / 0.5), transparent),
+    radial-gradient(1px 1px at 380px 200px, hsl(265 70% 80% / 0.6), transparent),
+    radial-gradient(1.5px 1.5px at 90px 240px, hsl(0 0% 100% / 0.7), transparent),
+    radial-gradient(1px 1px at 170px 310px, hsl(0 0% 100% / 0.4), transparent),
+    radial-gradient(1px 1px at 340px 340px, hsl(185 80% 75% / 0.6), transparent);
+  background-size: 420px 380px;
+  color: hsl(0 0% 98%);
+}
+.void-page .code {
+  font-family: var(--site-font-display);
+  font-weight: 700;
+  font-size: clamp(6rem, 20vw, 12rem);
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin: 0;
+}
+.void-page .drift {
+  color: hsl(240 5% 64.9%);
+  font-size: 1.125rem;
+  margin: 8px 0 16px;
+}
+.void-page .moons {
+  font-size: 1.5rem;
+  letter-spacing: 0.5em;
+  margin: 0 0 32px;
+}
+.void-page nav {
+  display: flex;
+  gap: 24px;
+}
+.void-page nav a {
+  color: hsl(0 0% 98%);
+  text-decoration: underline;
+  text-decoration-color: hsl(215 100% 60% / 0.4);
+  text-underline-offset: 3px;
+}
+.void-page nav a:hover {
+  color: hsl(215 100% 60%);
+}
+/* When the inline script detects a /blocks/* deep link, the 404 content hides
+   and the browser island (mounted on the same page) takes over. */
+:root[data-blocks-fallback] .void-page {
+  display: none;
+}
+
+/* ============================================================================
+   Blocks browser (React island) — same card conventions as the landing.
+   ============================================================================ */
+.blocks-page {
+  padding: 48px 0 var(--site-section-pad);
+  min-height: 60vh;
+}
+.blocks-head {
+  margin-bottom: 32px;
+}
+.blocks-head p {
+  color: hsl(var(--muted-foreground));
+  max-width: 65ch;
+  margin: 0;
+}
+.blocks-toolbar {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 24px 0;
+  align-items: center;
+}
+.blocks-toolbar input[type="search"] {
+  flex: 1;
+  min-width: 220px;
+  max-width: 420px;
+  padding: 8px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 0.9375rem;
+}
+.category-chip {
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-family: var(--site-font-mono);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.category-chip[aria-pressed="true"] {
+  border-color: hsl(var(--ion-blue));
+  color: hsl(var(--ion-blue));
+}
+.block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 24px;
+}
+.block-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--card));
+  padding: 20px 24px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--duration-normal) var(--ease-out-expo);
+}
+.block-card:hover {
+  border-color: hsl(var(--ion-blue) / 0.5);
+}
+.block-card .block-name {
+  font-family: var(--site-font-mono);
+  font-weight: 400;
+  font-size: 1rem;
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.block-card .block-desc {
+  margin: 0 0 12px;
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+}
+.block-card .block-meta {
+  font-family: var(--site-font-mono);
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+/* Trust badges: registry-asserted hints, never computed tiers. */
+.trust-badge {
+  font-family: var(--site-font-mono);
+  font-size: 0.6875rem;
+  border-radius: 999px;
+  padding: 1px 8px;
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+}
+.trust-badge[data-trust="official"] {
+  border-color: hsl(var(--ion-green) / 0.5);
+  color: hsl(var(--ion-green));
+}
+.trust-badge[data-trust="verified"] {
+  border-color: hsl(var(--ion-cyan) / 0.5);
+  color: hsl(var(--ion-cyan));
+}
+.notice {
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  padding: 24px;
+  background: hsl(var(--card));
+  max-width: 65ch;
+}
+.notice.error {
+  border-color: hsl(var(--ion-red) / 0.4);
+}
+.notice h3 {
+  margin-top: 0;
+}
+.notice p {
+  color: hsl(var(--muted-foreground));
+  margin: 0 0 8px;
+}
+.crumbs {
+  font-family: var(--site-font-mono);
+  font-size: 0.8125rem;
+  margin-bottom: 24px;
+}
+.crumbs button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: hsl(var(--ion-blue));
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--ion-blue) / 0.4);
+  text-underline-offset: 3px;
+}
+.block-panel h2 code {
+  font-family: var(--site-font-mono);
+}
+.version-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  margin: 16px 0 24px;
+}
+.version-table th {
+  text-align: left;
+  font-family: var(--site-font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: hsl(var(--muted-foreground));
+  font-weight: 400;
+  padding: 8px 12px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.version-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid hsl(var(--border));
+  vertical-align: top;
+}
+.version-table tr.struck td {
+  text-decoration: line-through;
+  color: hsl(var(--muted-foreground));
+}
+.digest {
+  font-family: var(--site-font-mono);
+  font-size: 0.75rem;
+}
+.copy-btn {
+  background: none;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  color: hsl(var(--ion-blue));
+  font-family: var(--site-font-mono);
+  font-size: 0.6875rem;
+  padding: 1px 6px;
+  margin-left: 8px;
+  cursor: pointer;
+}
+.copy-btn:hover {
+  border-color: hsl(var(--ion-blue) / 0.5);
+}
+.status-pill {
+  font-family: var(--site-font-mono);
+  font-size: 0.6875rem;
+}
+.status-pill[data-status="deprecated"] {
+  color: hsl(var(--ion-amber));
+}
+.status-pill[data-status="yanked"] {
+  color: hsl(var(--ion-red));
+}
+.advisory {
+  border: 1px solid hsl(var(--ion-amber) / 0.4);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 8px 0;
+  font-size: 0.875rem;
+}
+.advisory .sev {
+  font-family: var(--site-font-mono);
+  text-transform: uppercase;
+  font-size: 0.6875rem;
+  color: hsl(var(--ion-amber));
+  margin-right: 8px;
+}
+.install-snippet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--surface-sunken));
+  font-family: var(--site-font-mono);
+  font-size: 0.875rem;
+  padding: 10px 14px;
+  margin: 16px 0;
+  max-width: 48ch;
+}
+.install-snippet code {
+  flex: 1;
+}
+.readme {
+  border-top: 1px solid hsl(var(--border));
+  margin-top: 32px;
+  padding-top: 24px;
+  max-width: 72ch;
+}
+.readme pre {
+  background: hsl(var(--surface-sunken));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 16px;
+  font-family: var(--site-font-mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+.readme code {
+  font-family: var(--site-font-mono);
+  font-size: 0.875em;
+}
+.readme img {
+  max-width: 100%;
+}
+.readme table {
+  border-collapse: collapse;
+}
+.readme th,
+.readme td {
+  border: 1px solid hsl(var(--border));
+  padding: 6px 12px;
+  text-align: left;
+}
+.registry-list {
+  display: grid;
+  gap: 24px;
+  max-width: 48rem;
+}
+.trust-note {
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+  border-left: 2px solid hsl(var(--ion-blue) / 0.5);
+  padding-left: 16px;
+  margin: 24px 0;
+  max-width: 65ch;
+}
+
+/* Wide content must scroll in place, never the page. */
+.terminal-body,
+pre.astro-code,
+.readme pre {
+  scrollbar-width: thin;
+}
+
+/* Companion to the verbatim reduced-motion collapse in tokens.css: the hero's
+   staggered animation-delays must collapse too, or the "instant" animations
+   would still hide lines for seconds. Net effect: the full static transcript
+   renders immediately (AC6). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-delay: 0s !important;
+  }
+}
+
+/* Link-styled buttons (client-side navigation inside the island). */
+button.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: hsl(var(--ion-blue));
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--ion-blue) / 0.4);
+  text-underline-offset: 3px;
+}
+button.linklike:hover {
+  text-decoration-color: hsl(var(--ion-blue));
+}
+
+.block-card .block-title {
+  font-family: var(--site-font-body);
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+/* Wide tables scroll in place — the page never scrolls horizontally. */
+.table-scroll {
+  overflow-x: auto;
+  margin: 16px 0 24px;
+}
+.table-scroll .version-table {
+  margin: 0;
+  min-width: 640px;
+}

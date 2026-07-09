@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "tiny",
+  "latest": "1.0.0",
+  "versions": {
+    "1.0.0": {
+      "artifactUrl": "../../tiny/dist/1.0.0/block.json",
+      "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  }
+}

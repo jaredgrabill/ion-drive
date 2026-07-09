@@ -1,0 +1,110 @@
+/*
+ * iondrive.dev design tokens — "Deep Field".
+ *
+ * KEEP IN SYNC with packages/admin/src/index.css (the admin console's
+ * `:root` / `.dark` blocks): the HSL triplets and names below are a
+ * copy-adapted subset — one brand, one palette. The admin keys dark mode on
+ * `.dark`; the site keys it on `:root[data-theme='dark']` (Starlight's
+ * convention, shared by the landing pre-paint script). Site-only tokens are
+ * prefixed `--site-`.
+ *
+ * Accent discipline: ion-blue is the WORKING accent (links, focus, CTA). The
+ * purple→cyan gradient is CEREMONIAL — display-size bold only, exactly two
+ * uses (one gradient word in the H1, the nav wordmark). Glow appears in
+ * exactly three places: the hero terminal, primary-CTA hover, focus rings.
+ */
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --border: 240 5.9% 90%;
+  --radius: 0.5rem;
+
+  /* Space-themed accents (admin values, light mode). */
+  --ion-blue: 215 100% 50%;
+  --ion-purple: 265 70% 55%;
+  --ion-cyan: 185 80% 40%;
+  --ion-green: 155 75% 35%;
+  --ion-amber: 35 95% 45%;
+  --ion-red: 0 72% 51%;
+
+  --surface-sunken: 240 4.8% 97%;
+
+  /* Motion (admin values). */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
+
+  /* --- Site-only tokens ------------------------------------------------- */
+  --site-max-content: 72rem;
+  --site-section-pad: clamp(4rem, 10vw, 7rem);
+  --site-font-display: "Space Grotesk", system-ui, sans-serif;
+  --site-font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --site-font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+
+  /* THE TERMINAL IS ALWAYS NIGHT: fixed dark values used in both themes. */
+  --site-terminal-bg: 240 12% 3%;
+  --site-terminal-border: 240 3.7% 15.9%;
+  --site-terminal-fg: 0 0% 98%;
+
+  --site-glow-terminal: 0 8px 32px -12px hsl(215 100% 50% / 0.18);
+  --site-glow-cta: 0 0 16px -4px hsl(var(--ion-blue) / 0.4);
+}
+
+:root[data-theme="dark"] {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 5.5%;
+  --muted-foreground: 240 5% 64.9%;
+  --border: 240 3.7% 15.9%;
+
+  /* Accents brighten in dark mode so they glow against the near-black base. */
+  --ion-blue: 215 100% 60%;
+  --ion-purple: 265 70% 60%;
+  --ion-cyan: 185 80% 55%;
+  --ion-green: 155 75% 45%;
+  --ion-amber: 35 95% 55%;
+  --ion-red: 0 72% 55%;
+
+  --surface-sunken: 240 6% 3%;
+
+  --site-glow-terminal: 0 0 48px -12px hsl(215 100% 60% / 0.35);
+}
+
+/* --- Self-hosted fonts (display + mono only; body is system-ui) ---------- */
+
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/space-grotesk-latin-var.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono-latin-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Selection carries a hint of nebula everywhere. */
+::selection {
+  background: hsl(var(--ion-purple) / 0.25);
+}
+
+/* Motion sensitivity: collapse all animation/transition to imperceptible.
+   (Copied verbatim from packages/admin/src/index.css.) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

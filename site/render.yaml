@@ -1,0 +1,39 @@
+# iondrive.dev on Render — the OPTIONAL alternative host (ADR-023 second
+# amendment: GitHub Pages is primary via .github/workflows/site-deploy.yml).
+#
+# Render blueprint auto-discovery reads a *root* render.yaml — when connecting
+# this repo to Render, copy this file to the repo root (or point the blueprint
+# at it). Everything Render-specific lives in this one file; the build output
+# is plain static files, portable to any host. Owner steps live in
+# docs/specs/blocks-ecosystem/OWNER-TODO.md.
+
+services:
+  - type: web
+    runtime: static
+    name: iondrive-dev
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec turbo run build --filter=site
+    staticPublishPath: site/dist
+    # Rebuild only when the site or its content sources change.
+    buildFilter:
+      paths:
+        - site/**
+        - docs/**
+        - packages/core/schemas/**
+    headers:
+      # Hashed Astro assets are immutable.
+      - path: /_astro/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /fonts/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    routes:
+      # The blocks browser is client-routed: deep links rewrite to its page.
+      # (On GitHub Pages the 404 page provides the same fallback.)
+      - type: rewrite
+        source: /blocks/*
+        destination: /blocks/index.html
+      # www → apex.
+      - type: redirect
+        source: https://www.iondrive.dev/*
+        destination: https://iondrive.dev/*

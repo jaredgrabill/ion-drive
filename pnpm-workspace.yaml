@@ -1,2 +1,4 @@
 packages:
   - "packages/*"
+  # iondrive.dev static site (spec-10) — private, never published.
+  - "site"

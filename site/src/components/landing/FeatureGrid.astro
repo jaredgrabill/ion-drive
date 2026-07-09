@@ -1,0 +1,73 @@
+---
+/**
+ * The dense factual feature grid — README.md "Key Features" de-emojied, each
+ * cell linking into the docs (or GitHub where the topic's doc is unpublished).
+ */
+
+interface Feature {
+  title: string;
+  body: string;
+  href: string;
+  external?: boolean;
+}
+
+const features: Feature[] = [
+  {
+    title: 'Runtime data objects',
+    body: 'Create, modify, and delete tables through the admin console or API. No migrations, no deploys, no downtime.',
+    href: '/docs/concepts/data-objects/',
+  },
+  {
+    title: 'Automatic API surface',
+    body: 'Every data object instantly gets REST endpoints, GraphQL types, and MCP tools. Download an always-current OpenAPI spec.',
+    href: '/docs/api/rest/',
+  },
+  {
+    title: 'Rich querying',
+    body: 'Full-text search, per-property operators, sorting, and pagination on every list endpoint — with a typed client SDK that builds the queries for you.',
+    href: '/docs/api/querying/',
+  },
+  {
+    title: 'LLM/agent native',
+    body: 'Built-in MCP server lets AI agents introspect your schema and CRUD data with zero integration code.',
+    href: '/docs/api/mcp/',
+  },
+  {
+    title: 'Building blocks',
+    body: 'Pull in pre-built modules (CRM, invoicing, communications, audit) like shadcn/ui — you own the code, customize freely.',
+    href: '/docs/concepts/building-blocks/',
+  },
+  {
+    title: 'Multi-tenant by design',
+    body: 'Designed for per-tenant database isolation. Tenant management is on the roadmap.',
+    href: 'https://github.com/jaredgrabill/ion-drive/blob/main/docs/roadmap.md',
+    external: true,
+  },
+  {
+    title: 'Built-in observability',
+    body: 'OpenTelemetry instrumentation with an optional Grafana stack. Pre-built dashboards included.',
+    href: '/docs/deployment/docker/',
+  },
+  {
+    title: 'Pluggable auth',
+    body: 'Better Auth (self-hosted) by default; swap the provider via the plugin system.',
+    href: '/docs/concepts/plugins/',
+  },
+  {
+    title: 'Admin console',
+    body: 'Visual schema designer, Airtable-like data grid, user management, secrets vault, monitoring dashboards.',
+    href: '/docs/getting-started/',
+  },
+];
+---
+
+<div class="feature-grid">
+  {
+    features.map((f) => (
+      <a class={`feature-card card-link${f.external ? ' external' : ''}`} href={f.href}>
+        <h3>{f.title}</h3>
+        <p>{f.body}</p>
+      </a>
+    ))
+  }
+</div>

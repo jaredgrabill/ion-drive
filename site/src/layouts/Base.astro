@@ -1,0 +1,80 @@
+---
+/**
+ * Base shell for the non-Starlight pages (landing, blocks, 404): head meta
+ * (per-page OG), self-hosted font preload, and the ~0.5KB inline pre-paint
+ * theme script — deliberately the only JS the landing ships. It shares
+ * Starlight's `starlight-theme` localStorage key and `data-theme` root
+ * attribute so the theme survives navigation between surfaces.
+ */
+import '../styles/tokens.css';
+import '../styles/landing.css';
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+const ogImage = new URL('/og.png', Astro.site);
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link
+      rel="preload"
+      href="/fonts/space-grotesk-latin-var.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/jetbrains-mono-latin-400.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    <!-- Pre-paint theme: shared with Starlight (same key, same attribute). -->
+    <script is:inline>
+      (() => {
+        let theme = 'auto';
+        try {
+          theme = localStorage.getItem('starlight-theme') || 'auto';
+        } catch {}
+        if (theme !== 'light' && theme !== 'dark') {
+          theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <!--
+ ██╗ ██████╗ ███╗   ██╗    ██████╗ ██████╗ ██╗██╗   ██╗███████╗
+ ██║██╔═══██╗████╗  ██║    ██╔══██╗██╔══██╗██║██║   ██║██╔════╝
+ ██║██║   ██║██╔██╗ ██║    ██║  ██║██████╔╝██║██║   ██║█████╗
+ ██║██║   ██║██║╚██╗██║    ██║  ██║██╔══██╗██║╚██╗ ██╔╝██╔══╝
+ ██║╚██████╔╝██║ ╚████║    ██████╔╝██║  ██║██║ ╚████╔╝ ███████╗
+ ╚═╝ ╚═════╝ ╚═╝  ╚═══╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝  ╚══════╝
+                       built at ludicrous speed ✦
+    -->
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

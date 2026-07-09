@@ -5,7 +5,7 @@ Yoga in-browser explorer when you open it in a browser). The schema is
 **reflected from the live registry** — every non-system object contributes a
 type, a list query, a by-id query, and create/update/delete mutations. When you
 change the schema, the GraphQL schema is rebuilt automatically (cached by
-registry version). See [ADR-009](../research/architecture-decisions.md).
+registry version). See [ADR-009](https://github.com/jaredgrabill/ion-drive/blob/main/docs/research/architecture-decisions.md).
 
 ## Generated shape
 

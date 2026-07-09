@@ -20,3 +20,7 @@ docker/volumes
 .env.*
 tmp
 temp
+# The site never ships in the image; its package.json must stay for
+# --frozen-lockfile (the lockfile has an importer per workspace package).
+site/**
+!site/package.json

@@ -18,6 +18,7 @@ COPY packages/client/package.json ./packages/client/
 COPY packages/plugin-redis/package.json ./packages/plugin-redis/
 COPY packages/plugin-sendgrid/package.json ./packages/plugin-sendgrid/
 COPY packages/plugin-storage-s3/package.json ./packages/plugin-storage-s3/
+COPY site/package.json ./site/
 
 RUN pnpm install --frozen-lockfile
 
@@ -30,7 +31,8 @@ COPY . .
 # node_modules (or a just-built workspace dependency) is fully visible on the
 # emulated filesystem — reproduces only under emulation, not on a native
 # single-platform build.
-RUN pnpm exec turbo run build --concurrency=1
+# The iondrive.dev site is excluded — it never ships in the image.
+RUN pnpm exec turbo run build --concurrency=1 --filter='!site'
 
 # --- Stage 2: Production ---
 FROM node:22-alpine AS production
@@ -55,6 +57,7 @@ COPY --from=builder /app/packages/client/package.json ./packages/client/
 COPY --from=builder /app/packages/plugin-redis/package.json ./packages/plugin-redis/
 COPY --from=builder /app/packages/plugin-sendgrid/package.json ./packages/plugin-sendgrid/
 COPY --from=builder /app/packages/plugin-storage-s3/package.json ./packages/plugin-storage-s3/
+COPY --from=builder /app/site/package.json ./site/
 
 # Install production dependencies only
 COPY --from=builder /app/pnpm-lock.yaml ./

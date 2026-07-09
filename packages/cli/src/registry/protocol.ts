@@ -21,6 +21,9 @@
  * The types here are narrow local shapes (the CLI has no runtime dependency
  * on core — see `ref.ts`); a parity test feeds the same fixture registry to
  * both core's parsers and this reader.
+ *
+ * KEEP IN SYNC with `site/src/components/blocks/registry/reader.ts` — the
+ * blocks browser on iondrive.dev vendors this exact reader (spec-10).
  */
 
 /** Thrown for anything a registry serves that this client cannot consume. */

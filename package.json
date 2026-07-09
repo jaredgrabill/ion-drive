@@ -23,7 +23,7 @@
   "license": "Apache-2.0",
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --filter=!site",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
     "lint": "biome check .",

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://iondrive.dev/sitemap-index.xml

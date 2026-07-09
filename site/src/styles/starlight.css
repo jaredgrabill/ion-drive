@@ -1,0 +1,56 @@
+/*
+ * Starlight theme mapping — the docs must not look bolted-on (spec-10 design).
+ * Maps Starlight's CSS custom properties onto the shared iondrive.dev tokens
+ * (see tokens.css, kept in sync with packages/admin/src/index.css):
+ * accent ramp → ion-blue, backgrounds → --background/--card, fonts → system
+ * body + JetBrains Mono. Space Grotesk appears in docs ONLY in the header
+ * wordmark; Starlight headings stay on the system stack.
+ */
+
+:root {
+  --sl-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sl-font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+}
+
+/* Dark: accents brighten against the near-black base (admin convention). */
+:root[data-theme="dark"] {
+  --sl-color-accent-low: hsl(215 100% 60% / 0.15);
+  --sl-color-accent: hsl(215 100% 50%);
+  --sl-color-accent-high: hsl(215 100% 75%);
+  --sl-color-bg: hsl(240 10% 3.9%);
+  --sl-color-bg-nav: hsl(240 10% 5.5%);
+  --sl-color-bg-sidebar: hsl(240 10% 3.9%);
+  --sl-color-bg-inline-code: hsl(240 6% 3%);
+  --sl-color-hairline: hsl(240 3.7% 15.9%);
+  --sl-color-hairline-light: hsl(240 3.7% 15.9%);
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: hsl(215 100% 50% / 0.1);
+  --sl-color-accent: hsl(215 100% 50%);
+  --sl-color-accent-high: hsl(215 100% 32%);
+  --sl-color-bg: hsl(0 0% 100%);
+  --sl-color-bg-nav: hsl(0 0% 100%);
+  --sl-color-bg-sidebar: hsl(0 0% 100%);
+  --sl-color-bg-inline-code: hsl(240 4.8% 97%);
+  --sl-color-hairline: hsl(240 5.9% 90%);
+  --sl-color-hairline-light: hsl(240 5.9% 90%);
+}
+
+/* The header wordmark — the docs' single Space Grotesk + ceremonial-gradient
+   appearance (mirrors the landing nav wordmark). */
+.site-title {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(90deg, hsl(var(--ion-purple)), hsl(var(--ion-cyan)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Selection matches the rest of the site (tokens.css sets it globally too,
+   restated here because Starlight layers its own styles). */
+::selection {
+  background: hsl(var(--ion-purple) / 0.25);
+}

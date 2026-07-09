@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-09T00:00:00Z",
+  "documents": [
+    {
+      "name": "crm",
+      "title": "CRM",
+      "description": "Leads, companies, contacts, deals, and activities — lead capture, conversion, and a stage-tracked sales pipeline.",
+      "categories": ["sales", "crm"],
+      "latest": "0.2.0",
+      "trust": "official"
+    },
+    {
+      "name": "billing",
+      "title": "Billing",
+      "description": "Invoices with a payment-provider integration.",
+      "categories": ["commerce"],
+      "latest": "1.1.0",
+      "trust": "verified"
+    },
+    {
+      "name": "tiny",
+      "latest": "1.0.0"
+    }
+  ]
+}

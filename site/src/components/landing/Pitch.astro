@@ -1,0 +1,31 @@
+---
+/**
+ * One pitch section: eyebrow + heading + prose on one side, a code panel on
+ * the other. `flip` swaps the columns for visual rhythm. Every code sample is
+ * lifted from the docs (getting-started, querying, building-blocks, mcp) —
+ * never invented.
+ */
+
+interface Props {
+  eyebrow: string;
+  title: string;
+  flip?: boolean;
+  codeTitle?: string;
+}
+
+const { eyebrow, title, flip = false, codeTitle } = Astro.props;
+---
+
+<div class={`pitch${flip ? ' flip' : ''}`}>
+  <div class="prose">
+    <p class="eyebrow">{eyebrow}</p>
+    <h2>{title}</h2>
+    <slot />
+  </div>
+  <div class="pitch-code">
+    <div class="code-panel">
+      {codeTitle && <span class="code-title">{codeTitle}</span>}
+      <slot name="code" />
+    </div>
+  </div>
+</div>

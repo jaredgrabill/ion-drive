@@ -114,7 +114,7 @@ the server and the backends to fan the signals out (Loki's native OTLP ingest
 is at `http://localhost:3101/otlp`). The Loki datasource is provisioned and
 ready for that setup.
 
-See [ADR-012](../research/architecture-decisions.md) for the telemetry design.
+See [ADR-012](https://github.com/jaredgrabill/ion-drive/blob/main/docs/research/architecture-decisions.md) for the telemetry design.
 
 ## Health & readiness
 
@@ -126,7 +126,7 @@ See [ADR-012](../research/architecture-decisions.md) for the telemetry design.
 
 - Each server instance serves **one database** (`ION_DATABASE_URL`). For tenant
   isolation today, run one instance per tenant with its own database; built-in
-  tenant provisioning/routing is on the [roadmap](../roadmap.md) (Phase 16).
+  tenant provisioning/routing is on the [roadmap](https://github.com/jaredgrabill/ion-drive/blob/main/docs/roadmap.md) (Phase 16).
 - Run database backups against Postgres as usual — all state (schema metadata,
   data, secrets, tasks, blocks ledger) lives there. Recipes and the
   restore procedure are in [Backup & Restore](backup-restore.md).

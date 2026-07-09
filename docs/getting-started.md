@@ -1,5 +1,8 @@
 # Getting Started
 
+> This guide is also rendered (with the rest of the docs) at
+> [iondrive.dev/docs/getting-started](https://iondrive.dev/docs/getting-started/).
+
 This guide takes you from an empty machine to a running Ion Drive backend with
 a custom data object, live APIs, and a typed client — in about five minutes.
 You'll own the project it creates: a thin `server.ts` plus a `/blocks`
@@ -30,7 +33,7 @@ create your account. (`.env` was generated with fresh secrets; production
 hardening knobs are documented in `.env.example`.)
 
 > **Contributor path:** working on Ion Drive itself? Clone
-> `jaredgrabill/ion-drive` and `pnpm dev` — see [CONTRIBUTING](../CONTRIBUTING.md).
+> `jaredgrabill/ion-drive` and `pnpm dev` — see [CONTRIBUTING](https://github.com/jaredgrabill/ion-drive/blob/main/CONTRIBUTING.md).
 
 ## 2. Create a data object
 

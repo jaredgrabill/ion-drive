@@ -1,0 +1,50 @@
+---
+/**
+ * The blocks browser page — the only route that ships the React island
+ * (`client:only`; the landing and docs stay island-free). The static shell
+ * paragraph below covers the pre-hydration beat and <noscript>. Client-side
+ * routing handles `/blocks/<name>` and `/blocks/registries`; deep links on
+ * GitHub Pages arrive via the 404 fallback, and on Render via the
+ * `render.yaml` rewrite.
+ */
+import { BlocksBrowser } from '../../components/blocks/BlocksBrowser.js';
+import Footer from '../../components/landing/Footer.astro';
+import Nav from '../../components/landing/Nav.astro';
+import Base from '../../layouts/Base.astro';
+---
+
+<Base
+  title="Blocks — the Ion Drive registry"
+  description="Browse digest-verified Ion Drive building blocks: CRM, invoicing, communications, audit, and third-party registries."
+>
+  <Nav />
+  <main>
+    <BlocksBrowser client:only="react" />
+    <div class="blocks-shell container blocks-page" aria-hidden="true">
+      <p>loading registry…</p>
+    </div>
+    <noscript>
+      <div class="container blocks-page">
+        <div class="notice">
+          <h3>The blocks browser needs JavaScript</h3>
+          <p>
+            It reads the live registry JSON in your browser. Without JS, browse the registry
+            directly at
+            <a href="https://registry.iondrive.dev/registry/index.json"
+              >registry.iondrive.dev/registry/index.json</a
+            >
+            or use <code>npx ion-drive list</code>.
+          </p>
+        </div>
+      </div>
+    </noscript>
+  </main>
+  <Footer />
+</Base>
+
+<style is:global>
+  /* Hide the static shell once the island has hydrated content. */
+  astro-island:has(div) + .blocks-shell {
+    display: none;
+  }
+</style>

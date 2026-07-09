@@ -2,6 +2,9 @@
 #
 # Runs on every push to main and on pull requests:
 #   - checks:      lint (Biome), typecheck, unit tests, build across the monorepo
+#                  (includes the iondrive.dev `site` package — its docs-curation
+#                  link check and schema-emission tests run inside the root gates;
+#                  deployment is the separate site-deploy.yml workflow)
 #   - integration: core integration tests against a real Postgres 17 service
 
 name: CI

@@ -1,5 +1,37 @@
 # Spec 10 — `iondrive.dev`: Project Page, Docs Site, and Blocks Browser
 
+> **Status:** ✅ implemented 2026-07-09 (fresh-agent verifier sign-off; commit hash
+> stamped in the follow-up docs commit).
+> **Amendments adopted during implementation:**
+> - **Docs pipeline:** Starlight's `docsSchema()` hard-requires `title` frontmatter
+>   (no repo doc has any) and Astro does not rewrite file-relative `.md` links, so
+>   the "content-collection loader pointing at `../docs`" is implemented as a
+>   generated-tree pipeline: `scripts/prepare-docs.mjs` (allowlist copy into a
+>   gitignored `src/content/docs/docs/` tree, H1→title extraction, link
+>   rewrite/check with named `DocsCurationError`/`DocsLinkError`) feeding the stock
+>   `docsLoader()`. Same invariants, one testable transform point, zero committed
+>   mirror. 13 pre-existing links from curated docs to excluded targets were
+>   rewritten in canonical `docs/` to absolute GitHub URLs.
+> - **Versions:** Astro ~6.4 + Starlight ~0.39 + @astrojs/react ^5 (Astro 7 was
+>   days old at implementation); Shiki `-default` GitHub theme variants (the plain
+>   ones fail AA on comment gray); Starlight hover-prefetch disabled (zero-JS
+>   budget).
+> - **Deep links on Pages:** `404.astro` doubles as the `/blocks/*` SPA fallback
+>   (client-rendered, no-SEO surface per the ADR-023 trade-off); `render.yaml`
+>   carries the real rewrite for the optional Render host.
+> - **OG image:** one committed brand `og.png` with per-page meta text (build-time
+>   per-page generation dropped — heavy deps for a three-surface site).
+> - **Install one-liner:** the docs' canonical `npx @ion-drive/cli init my-app`
+>   (nothing invented) instead of the `npm i -g` variant.
+> - **Root `pnpm dev`** filters out the site (`turbo run dev --filter=!site`) so
+>   daily platform DX is unchanged; `pnpm --filter site dev` runs the site.
+> - **Design:** owner-directed exploration (three candidate directions weighed)
+>   selected "Deep Field" — near-monochrome black-and-white base, space theme as
+>   restraint, an always-dark glowing hero terminal in both themes, ceremonial
+>   purple→cyan gradient in exactly two display-size places, admin `--ion-*`
+>   tokens copy-adapted with KEEP-IN-SYNC headers. Landing ≈53KB gz, Lighthouse
+>   100/100/100/100.
+
 > **Rewritten 2026-07-09 per the ADR-023 amendment:** one static site, three surfaces
 > — project page, Starlight docs over the repo's `docs/`, and the client-rendered
 > blocks browser (absorbing the browsing UI dropped from `registry.iondrive.dev`).
@@ -80,6 +112,8 @@ one brand, don't invent a second), dark **and** light (`prefers-color-scheme` +
 toggle), build-time syntax highlighting (no client-side highlighter), self-hosted
 font or system stack, `prefers-reduced-motion` honored. The implementer must load the
 `frontend-design` skill before writing markup; any diagram follows `dataviz`.
+
+Keep some of the space theme and black and while asthetic--minimal, clean, sexy and a bit of personality and fun for a developer audience. This will be the first look for a developer of the project. Consider some ideas and designs and weigh them out with a quick sub task.
 
 ### 3. The blocks browser
 

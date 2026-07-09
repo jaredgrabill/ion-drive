@@ -27,6 +27,21 @@
     },
     "clean": {
       "cache": false
+    },
+    "site#build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "../docs/**", "../packages/core/schemas/**"],
+      "outputs": ["dist/**"]
+    },
+    "site#test": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "inputs": ["$TURBO_DEFAULT$", "../docs/**", "../packages/core/schemas/**"]
+    },
+    "site#typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "inputs": ["$TURBO_DEFAULT$", "../docs/**", "../packages/core/schemas/**"]
     }
   }
 }

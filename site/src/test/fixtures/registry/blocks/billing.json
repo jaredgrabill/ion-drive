@@ -1,0 +1,29 @@
+{
+  "$schema": "https://iondrive.dev/schemas/registry-block.v1.json",
+  "schemaVersion": 1,
+  "name": "billing",
+  "title": "Billing",
+  "description": "Invoices with a payment-provider integration.",
+  "categories": ["commerce"],
+  "latest": "1.1.0",
+  "versions": {
+    "1.1.0": {
+      "artifactUrl": "../../billing/dist/1.1.0/block.json",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "publishedAt": "2026-07-08T00:00:00Z",
+      "dependencies": {},
+      "requires": { "core": ">=0.2.0 <1.0.0" },
+      "status": "active"
+    },
+    "1.0.0": {
+      "artifactUrl": "../../billing/dist/1.0.0/block.json",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "publishedAt": "2026-07-05T00:00:00Z",
+      "dependencies": {},
+      "requires": {},
+      "status": "deprecated",
+      "statusReason": "upgrade to 1.1.0"
+    }
+  },
+  "advisories": []
+}

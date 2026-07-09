@@ -1,0 +1,40 @@
+{
+  "name": "site",
+  "version": "0.0.0",
+  "private": true,
+  "description": "iondrive.dev — project page, Starlight docs, and the client-rendered blocks browser (spec-10). Static output only; never published to npm.",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/prepare-docs.mjs && astro dev",
+    "build": "node scripts/prepare-docs.mjs && astro build",
+    "preview": "astro preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "node scripts/prepare-docs.mjs && astro sync && astro check && tsc --noEmit",
+    "clean": "rimraf dist .astro src/content/docs"
+  },
+  "dependencies": {
+    "@astrojs/react": "^5.0.7",
+    "@astrojs/starlight": "~0.39.3",
+    "@shikijs/themes": "^4.3.1",
+    "astro": "~6.4.8",
+    "dompurify": "^3.4.11",
+    "marked": "^18.0.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.9",
+    "@ion-drive/core": "workspace:*",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "jsdom": "^29.1.1",
+    "rimraf": "^6.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

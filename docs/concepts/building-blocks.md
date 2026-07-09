@@ -446,5 +446,5 @@ version recorded in your project keep working, loudly warned); deprecated
 versions install with a warning. The official repo's full operating procedures
 live in its `docs/registry-operations.md`.
 
-See [ADR-013, ADR-018, and ADR-022](../research/architecture-decisions.md)
+See [ADR-013, ADR-018, and ADR-022](https://github.com/jaredgrabill/ion-drive/blob/main/docs/research/architecture-decisions.md)
 for the design rationale.

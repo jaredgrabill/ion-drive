@@ -43,6 +43,11 @@ docker/volumes/
 # Default local blob store (StorageProvider LocalStorage)
 .ion-storage/
 
+# iondrive.dev site build outputs (docs are copied in by scripts/prepare-docs.mjs)
+site/dist/
+site/.astro/
+site/src/content/docs/
+
 # Temporary
 tmp/
 temp/

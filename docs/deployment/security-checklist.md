@@ -187,5 +187,5 @@ trust](../concepts/building-blocks.md#integrity-and-trust).
 ## 12. Report vulnerabilities responsibly
 
 Found something? **Don't open a public issue.** Email
-**jared@ionshiftlabs.com** per [SECURITY.md](../../SECURITY.md) — acknowledgement
+**jared@ionshiftlabs.com** per [SECURITY.md](https://github.com/jaredgrabill/ion-drive/blob/main/SECURITY.md) — acknowledgement
 within 3 business days, assessment within 14.

@@ -1,0 +1,97 @@
+---
+/**
+ * The hero terminal — ALWAYS NIGHT (dark tokens in both themes; the single
+ * dark glowing mass on the light page). CSS-only typed animation: each
+ * command line is a `width: N ch` span stepped open with `steps(N)` at a
+ * staggered delay; output lines print whole. Plays once, ≤8s, no loop. The
+ * full transcript is in the DOM (SEO / screen readers), and reduced motion
+ * collapses to the static transcript (see tokens.css + landing.css).
+ *
+ * The transcript is lifted from docs/getting-started.md §1–4 plus
+ * `ion-drive add crm` and the querying envelope — never invented output.
+ */
+
+type Line =
+  | { kind: 'cmd'; text: string }
+  | { kind: 'out'; html: string; plain: string }
+  | { kind: 'gap' };
+
+const OK = '<span class="t-ok">✔</span>';
+const ARROW = '<span class="t-arrow">➜</span>';
+const key = (k: string) => `<span class="t-key">"${k}"</span>`;
+
+const lines: Line[] = [
+  { kind: 'cmd', text: 'npx @ion-drive/cli init my-app' },
+  {
+    kind: 'out',
+    html: `${OK} my-app scaffolded — server.ts + blocks/ are yours`,
+    plain: '✔ my-app scaffolded — server.ts + blocks/ are yours',
+  },
+  { kind: 'cmd', text: 'npm run dev' },
+  {
+    kind: 'out',
+    html: `${ARROW} API <span class="t-key">http://localhost:3000</span> <span class="t-dim">·</span> admin console <span class="t-key">/admin</span>`,
+    plain: '➜ API http://localhost:3000 · admin console /admin',
+  },
+  { kind: 'gap' },
+  { kind: 'cmd', text: 'npx ion-drive add crm' },
+  {
+    kind: 'out',
+    html: `${OK} crm installed — REST, GraphQL &amp; MCP live, no restart`,
+    plain: '✔ crm installed — REST, GraphQL & MCP live, no restart',
+  },
+  { kind: 'gap' },
+  { kind: 'cmd', text: 'curl "localhost:3000/api/v1/data/contacts?search=acme"' },
+  {
+    kind: 'out',
+    html: `<span class="t-dim">{</span> ${key('data')}<span class="t-dim">: [ … ],</span> ${key('pagination')}<span class="t-dim">: {</span> ${key('totalCount')}<span class="t-dim">: 42 } }</span>`,
+    plain: '{ "data": [ … ], "pagination": { "totalCount": 42 } }',
+  },
+];
+
+/** Build the timing plan: typed lines advance the clock, outputs print at it. */
+const CHAR_S = 0.028;
+const AFTER_CMD_S = 0.3;
+const AFTER_OUT_S = 0.35;
+let t = 0.4;
+const timed = lines.map((line) => {
+  if (line.kind === 'cmd') {
+    const start = t;
+    t += line.text.length * CHAR_S + AFTER_CMD_S;
+    return { line, start };
+  }
+  const start = t;
+  if (line.kind === 'out') t += AFTER_OUT_S;
+  return { line, start };
+});
+const caretDelay = t;
+---
+
+<div class="terminal" aria-label="Terminal session: scaffold, add a block, query the API">
+  <div class="terminal-header"><span class="star">✦</span> ~/my-app</div>
+  <div class="terminal-body">
+    {
+      timed.map(({ line, start }) =>
+        line.kind === 'cmd' ? (
+          <span class="term-line">
+            <span class="t-prompt">$ </span>
+            <span class="type" style={`--n:${line.text.length};--d:${start.toFixed(2)}s`}>
+              {line.text}
+            </span>
+          </span>
+        ) : line.kind === 'out' ? (
+          <span class="term-line out" style={`--d:${start.toFixed(2)}s`}>
+            <Fragment set:html={line.html} />
+          </span>
+        ) : (
+          <span class="term-line" />
+        ),
+      )
+    }
+    <span class="term-line">
+      <span class="t-prompt">$ </span><span
+        class="term-caret"
+        style={`--d:${caretDelay.toFixed(2)}s`}></span>
+    </span>
+  </div>
+</div>

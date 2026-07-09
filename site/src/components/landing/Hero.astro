@@ -1,0 +1,30 @@
+---
+/**
+ * Hero — the "Deep Field" thesis: a vast dark field where the only bright
+ * objects are the headline and the glowing terminal. Copy is lifted from
+ * README.md (the one-liner + the positioning triplet), never invented.
+ */
+import Terminal from './Terminal.astro';
+---
+
+<section class="hero">
+  <div class="container">
+    <h1>
+      The open-source platform for <span class="gradient-word">accelerated</span> business software
+      development
+    </h1>
+    <p class="tagline">
+      Define data objects, relationships, and logic at runtime — Ion Drive turns them into live
+      REST, GraphQL, and MCP APIs. Self-hosted, in your repo, one command.
+    </p>
+    <p class="triplet">
+      runtime-dynamic data objects · automatic REST/GraphQL/MCP · built for LLM agents
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="/docs/getting-started/">Get started</a>
+      <a class="btn external" href="https://github.com/jaredgrabill/ion-drive">GitHub</a>
+    </div>
+    <p class="license-line">Apache-2.0 · TypeScript · PostgreSQL 17 · Node 22+</p>
+    <Terminal />
+  </div>
+</section>

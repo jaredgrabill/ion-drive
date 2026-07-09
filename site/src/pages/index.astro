@@ -1,0 +1,219 @@
+---
+import { Code } from 'astro:components';
+/**
+ * The project page — README-grade directness in the "Deep Field" look.
+ * Every sample and claim is lifted from README.md / docs/**, never invented.
+ * Zero JS apart from the theme pre-paint/toggle script in the base layout.
+ */
+// The -default variants: their comment grays clear WCAG AA on our code
+// backgrounds (plain github-dark's #6a737d misses 4.5:1 — Lighthouse-caught).
+import githubDark from '@shikijs/themes/github-dark-default';
+import githubLight from '@shikijs/themes/github-light-default';
+import FeatureGrid from '../components/landing/FeatureGrid.astro';
+import Footer from '../components/landing/Footer.astro';
+import Hero from '../components/landing/Hero.astro';
+import Nav from '../components/landing/Nav.astro';
+import Pitch from '../components/landing/Pitch.astro';
+import Base from '../layouts/Base.astro';
+
+// Theme objects (not names): the prerender bundle ships no named-theme
+// registry, so the pair is imported directly and passed to <Code>.
+const themes = { light: githubLight, dark: githubDark };
+
+// docs/getting-started.md §2 — create a data object over the API.
+const createObjectSample = `curl -X POST http://localhost:3000/api/v1/schema/objects \\
+  -H 'content-type: application/json' \\
+  -d '{
+    "name": "contacts",
+    "displayName": "Contacts",
+    "fields": [
+      { "name": "full_name", "columnType": "text", "isRequired": true },
+      { "name": "email",     "columnType": "email" },
+      { "name": "status",    "columnType": "enum" }
+    ]
+  }'`;
+
+// docs/api/querying.md — search, operators, sorting + the response envelope.
+const querySample = `GET /api/v1/data/contacts?search=acme
+GET /api/v1/data/contacts?status[neq]=archived&age[gte]=21
+GET /api/v1/data/contacts?sort=-created_at&page=1
+
+{
+  "data": [ /* records */ ],
+  "pagination": { "page": 1, "pageSize": 25, "totalCount": 42, "hasNextPage": true }
+}`;
+
+// README.md Quick Start / docs/getting-started.md §6 — building blocks.
+const blocksSample = `npx ion-drive list             # browse the registry catalog
+npx ion-drive add crm          # schema-only: objects + APIs light up instantly
+npx ion-drive add invoicing    # vendored logic lands in blocks/invoicing/
+
+# edit blocks/invoicing/stripe.ts — it's your code, hot-reloaded`;
+
+// docs/api/mcp.md — query_data mirrors the REST/GraphQL query language.
+const mcpSample = `// POST /api/v1/mcp — tool: query_data
+{
+  "object_name": "contacts",
+  "search": "acme",
+  "filters": [{ "field": "status", "operator": "neq", "value": "archived" }],
+  "sort": [{ "field": "created_at", "direction": "desc" }],
+  "expand": ["company"]
+}`;
+
+// README.md Quick Start.
+const quickStartSample = `npx @ion-drive/cli init my-app
+cd my-app
+
+docker compose up -d    # PostgreSQL
+npm install
+npm run dev             # the whole backend + admin console, one command`;
+---
+
+<Base
+  title="Ion Drive — the open-source platform for accelerated business software development"
+  description="Self-hosted backend platform: define data objects at runtime and get automatic REST, GraphQL, and MCP APIs. Built for developers working with LLM agents."
+>
+  <Nav />
+  <main>
+    <Hero />
+
+    <section class="band">
+      <div class="container">
+        <Pitch
+          eyebrow="Runtime schema"
+          title="Define an object. Every API is already live."
+          codeTitle="create a data object"
+        >
+          <p>
+            Create tables through the admin console or one API call — no migrations, no deploys,
+            no downtime. The moment it returns, the object is live on every surface:
+          </p>
+          <ul class="starlist">
+            <li>REST — <code>GET/POST/PATCH/DELETE /api/v1/data/contacts</code></li>
+            <li>GraphQL — <code>contacts</code>, <code>create_contacts</code>, …</li>
+            <li>MCP — tools for any connected LLM agent</li>
+            <li>OpenAPI — reflected in <code>/api/v1/openapi.json</code></li>
+          </ul>
+          <p><a href="/docs/concepts/data-objects/">Data objects</a> explains the model.</p>
+          <Code slot="code" code={createObjectSample} lang="bash" themes={themes} />
+        </Pitch>
+
+        <Pitch
+          eyebrow="Querying"
+          title="One query language on every list endpoint"
+          flip
+          codeTitle="search + operators + pagination"
+        >
+          <p>
+            Full-text <code>search</code>, per-property operators, multi-sort, and two pagination
+            styles — readable in a URL and identical across REST, GraphQL, and MCP. The
+            zero-dependency <a href="/docs/api/querying/#the-client-query-builder">client SDK</a>
+            builds these queries for you, Supabase-style.
+          </p>
+          <p><a href="/docs/api/querying/">The querying guide</a> has the full operator table.</p>
+          <Code slot="code" code={querySample} lang="http" themes={themes} />
+        </Pitch>
+
+        <Pitch
+          eyebrow="Building blocks"
+          title="Blocks are yours. The engine is a dependency."
+          codeTitle="the ownership model"
+        >
+          <p>
+            Pulling in a building block applies its schema <strong>and</strong> drops its business
+            logic into <code>/blocks/&lt;name&gt;</code> in your repo — like shadcn/ui, but for
+            backend features. Core and the infrastructure plugins stay npm packages you upgrade;
+            future block updates arrive as diffs you review, never overwrites.
+          </p>
+          <p>
+            Every artifact in the registry is sha256-digest-verified before it touches your
+            project. <a href="/blocks/">Browse the registry</a> or read
+            <a href="/docs/concepts/building-blocks/">how blocks work</a>.
+          </p>
+          <Code slot="code" code={blocksSample} lang="bash" themes={themes} />
+        </Pitch>
+
+        <Pitch
+          eyebrow="Agent-first"
+          title="MCP is a first-class surface, not an add-on"
+          flip
+          codeTitle="an agent queries your data"
+        >
+          <p>
+            The built-in MCP server at <code>/api/v1/mcp</code> gives any MCP-compatible agent
+            schema introspection and CRUD with zero integration code — the same query semantics
+            your application uses, because the same object definitions drive all three surfaces.
+          </p>
+          <ul class="starlist">
+            <li>Schema tools — <code>list_objects</code>, <code>create_object</code>, <code>add_field</code>, …</li>
+            <li>Data tools — <code>query_data</code>, <code>get_record</code>, <code>create_record</code>, …</li>
+            <li>Block actions reflect as tools automatically</li>
+          </ul>
+          <p><a href="/docs/api/mcp/">MCP server reference</a>.</p>
+          <Code slot="code" code={mcpSample} lang="jsonc" themes={themes} />
+        </Pitch>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="container">
+        <p class="eyebrow">Everything included</p>
+        <h2>Batteries included, ownership retained</h2>
+        <div style="margin-top: 32px;">
+          <FeatureGrid />
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="container">
+        <div class="pitch">
+          <div class="prose">
+            <p class="eyebrow">Quick start</p>
+            <h2>Zero to live APIs in five minutes</h2>
+            <p>
+              Node 22+ and Docker are the only prerequisites. What you own is deliberately small —
+              a <code>server.ts</code> composition root and a <code>/blocks</code> directory; the
+              platform arrives as npm dependencies.
+            </p>
+            <p>
+              The first user to sign up in the admin console becomes the admin.
+              <a href="/docs/getting-started/">The full guide</a> takes it from here.
+            </p>
+          </div>
+          <div class="pitch-code">
+            <div class="code-panel">
+              <span class="code-title">terminal</span>
+              <Code code={quickStartSample} lang="bash" themes={themes} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="container">
+        <p class="eyebrow">Ecosystem</p>
+        <h2>Where everything lives</h2>
+        <div class="eco-strip" style="margin-top: 32px;">
+          <a class="eco-card card-link" href="https://github.com/jaredgrabill/ion-drive">
+            <span class="eco-kind">Source</span>
+            <span class="eco-name">github.com/jaredgrabill/ion-drive</span>
+            <p>Apache-2.0 monorepo — core, admin console, CLI, client SDK, plugins.</p>
+          </a>
+          <a class="eco-card card-link" href="/blocks/">
+            <span class="eco-kind">Block registry</span>
+            <span class="eco-name">registry.iondrive.dev</span>
+            <p>Digest-verified building blocks — browse them here, install with the CLI.</p>
+          </a>
+          <a class="eco-card card-link" href="https://www.npmjs.com/package/@ion-drive/cli">
+            <span class="eco-kind">npm</span>
+            <span class="eco-name">@ion-drive/cli</span>
+            <p><code>npx @ion-drive/cli init my-app</code> scaffolds a project you own.</p>
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>

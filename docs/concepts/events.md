@@ -8,7 +8,7 @@ plugins cooperate with **loose coupling**.
 
 The default bus is **durable and needs no broker**: it's a Postgres
 *transactional outbox*. A Redis Streams bus can replace it via a plugin without
-changing any of your code. See [ADR-015](../research/architecture-decisions.md).
+changing any of your code. See [ADR-015](https://github.com/jaredgrabill/ion-drive/blob/main/docs/research/architecture-decisions.md).
 
 ## The mental model
 

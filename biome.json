@@ -50,7 +50,10 @@
       "coverage",
       "*.min.js",
       "*.generated.*",
-      "packages/core/schemas"
+      "packages/core/schemas",
+      "site/dist",
+      "site/.astro",
+      "site/src/content/docs"
     ]
   }
 }

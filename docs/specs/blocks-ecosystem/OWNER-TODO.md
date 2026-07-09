@@ -176,3 +176,48 @@ items 1–2 — the blocks repo push + Pages/DNS):
    (`via search index` in the footer) and `ion-drive registry add @probe`
    must produce the not-in-directory hint against the live
    `registries.json`.
+
+## From spec-10 (iondrive.dev — project page, docs, blocks browser)
+
+The site builds, tests, and deploys from this repo (`site/` +
+`.github/workflows/site-deploy.yml`). The owner-run activation:
+
+1. **Enable GitHub Pages on `jaredgrabill/ion-drive`.** Repo → Settings →
+   Pages → *Build and deployment* → **Source: GitHub Actions** (this repo's
+   Pages slot is free — the registry uses the *blocks* repo's). Then run the
+   `Deploy site` workflow once (Actions → Deploy site → Run workflow) or push
+   any `site/**`/`docs/**` change to `main`.
+
+2. **Custom domain + DNS.** Settings → Pages → Custom domain: `iondrive.dev`
+   (no CNAME file is committed — this repo setting is the source of truth),
+   then check **Enforce HTTPS** once the cert issues. At the DNS host, apex
+   records pointing at GitHub Pages:
+
+   ```text
+   A     iondrive.dev  185.199.108.153
+   A     iondrive.dev  185.199.109.153
+   A     iondrive.dev  185.199.110.153
+   A     iondrive.dev  185.199.111.153
+   AAAA  iondrive.dev  2606:50c0:8000::153
+   AAAA  iondrive.dev  2606:50c0:8001::153
+   AAAA  iondrive.dev  2606:50c0:8002::153
+   AAAA  iondrive.dev  2606:50c0:8003::153
+   CNAME www.iondrive.dev  jaredgrabill.github.io   # optional; Pages then
+                                                    # auto-redirects www↔apex
+   ```
+
+3. **Verify the live site.** `https://iondrive.dev/` (landing),
+   `/docs/getting-started/` (docs), `/blocks/` + a `/blocks/crm` deep link
+   (browser + 404 fallback), and the canonical schemas:
+
+   ```bash
+   curl -fsS https://iondrive.dev/schemas/registry-index.v1.json | head -3
+   ```
+
+4. **Optional — Render instead of/alongside Pages.** `site/render.yaml` is a
+   complete static-site blueprint (immutable asset headers, `/blocks/*`
+   rewrite, www→apex redirect). Render's blueprint auto-discovery reads a
+   *root* render.yaml: copy `site/render.yaml` to the repo root (or configure
+   the service manually) when connecting the repo, then point DNS at Render
+   instead of the Pages IPs. Nothing else changes — the build output is
+   host-portable static files.

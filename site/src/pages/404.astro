@@ -1,0 +1,53 @@
+---
+/**
+ * 404 — the one full-starfield page ("This page drifted out of orbit").
+ *
+ * It doubles as the `/blocks/*` deep-link fallback on GitHub Pages (which has
+ * no rewrites): when the requested path is a `/blocks/*` one, the pre-paint
+ * script below flags the root element, CSS hides the 404 content, and the
+ * mounted island takes over (its router reads `location.pathname`, which
+ * Pages preserves on 404s). On any other path the island renders nothing and
+ * this is a plain 404. Render users get a real rewrite via `render.yaml`.
+ */
+import { BlocksBrowser } from '../components/blocks/BlocksBrowser.js';
+import Footer from '../components/landing/Footer.astro';
+import Nav from '../components/landing/Nav.astro';
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="404 — Ion Drive" description="This page drifted out of orbit.">
+  <script is:inline>
+    if (location.pathname.startsWith('/blocks')) {
+      document.documentElement.setAttribute('data-blocks-fallback', '');
+    }
+  </script>
+  <div class="void-page">
+    <p class="code">404</p>
+    <p class="drift">This page drifted out of orbit.</p>
+    <p class="moons" aria-hidden="true">🌑🌒🌓🌔🌕</p>
+    <nav aria-label="Escape routes">
+      <a href="/">Home</a>
+      <a href="/docs/getting-started/">Docs</a>
+      <a href="/blocks/">Blocks</a>
+    </nav>
+  </div>
+  <div class="blocks-fallback" hidden>
+    <Nav />
+    <main>
+      <BlocksBrowser client:only="react" />
+    </main>
+    <Footer />
+  </div>
+</Base>
+
+<style is:global>
+  :root[data-blocks-fallback] .blocks-fallback {
+    display: block;
+  }
+  .blocks-fallback[hidden] {
+    display: none;
+  }
+  :root[data-blocks-fallback] .blocks-fallback[hidden] {
+    display: block;
+  }
+</style>

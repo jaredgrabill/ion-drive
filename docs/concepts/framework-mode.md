@@ -91,4 +91,4 @@ fails fast with `Plugin "<name>" failed to load: …` naming the culprit.
   code; ideal for evaluating or for schema-only workloads. See
   [Deploying with Docker](../deployment/docker.md).
 - **Contributor mode** — clone the `jaredgrabill/ion-drive` monorepo and `pnpm dev`;
-  for working on the platform itself. See [CONTRIBUTING](../../CONTRIBUTING.md).
+  for working on the platform itself. See [CONTRIBUTING](https://github.com/jaredgrabill/ion-drive/blob/main/CONTRIBUTING.md).

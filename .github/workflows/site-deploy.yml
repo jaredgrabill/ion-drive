@@ -1,0 +1,74 @@
+# iondrive.dev — GitHub Pages deploy (spec-10 / ADR-023 second amendment).
+#
+# GitHub Pages is the primary host (this repo's Pages slot is free — the
+# registry uses the blocks repo's); Render remains the documented optional
+# alternative via site/render.yaml. Owner-run enablement (Pages source =
+# GitHub Actions, custom domain, DNS) is recorded in
+# docs/specs/blocks-ecosystem/OWNER-TODO.md.
+
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/**"
+      - "packages/core/schemas/**"
+      - ".github/workflows/site-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `--filter=site...` builds the site and its workspace deps (core).
+      - name: Build
+        run: pnpm exec turbo run build --filter=site...
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

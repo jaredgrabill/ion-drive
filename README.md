@@ -179,6 +179,10 @@ pnpm build
 
 ## Documentation
 
+Rendered docs live at **[iondrive.dev](https://iondrive.dev)** ([getting
+started](https://iondrive.dev/docs/getting-started/), plus a browser for the
+[block registry](https://iondrive.dev/blocks/)). The same pages in-repo:
+
 - [Getting Started](docs/getting-started.md)
 - Concepts: [Data Objects](docs/concepts/data-objects.md) · [Building Blocks](docs/concepts/building-blocks.md)
 - API: [Querying](docs/api/querying.md) · [REST](docs/api/rest.md) · [GraphQL](docs/api/graphql.md) · [MCP](docs/api/mcp.md)
