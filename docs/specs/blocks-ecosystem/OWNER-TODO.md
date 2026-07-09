@@ -3,14 +3,17 @@
 Items only the repo owner can complete (secrets, real CI runs, live publishes).
 Prune entries as they are done.
 
-**Sequencing (finalized 2026-07-08, M1+M1.5 shipped):** everything below is gated
+**Sequencing (updated 2026-07-09, M1+M1.5+M2 shipped):** everything below is gated
 on roadmap **F23** — the first npm publish of `@ion-drive/{core,cli,client,admin}`
 (`NPM_TOKEN` secret + `v0.x` tag → `release.yml`). Then, in order:
 spec-05 §1 (push + tag the blocks repo) → §2 (Pages + DNS) → §3 (dry-run
 dispatch) → §4 (first attested publish — also closes spec-04's fixture item and
 runs its live verify) → §5 (third-party flow) → spec-06 §1–2 (blocks CI green +
-the published-CLI dogfood loop). Both repos' Phase 18 commits are already made
-locally; nothing has been pushed.
+the published-CLI dogfood loop) → spec-08 §1 (live badge/search-index checks) →
+spec-10 §1–3 (site Pages + apex DNS — technically needs only the monorepo pushed,
+but the blocks browser is empty until the registry serves, so sequence it after
+spec-05 §2). Both repos' Phase 18 commits are already made locally; nothing has
+been pushed.
 
 ## From ADR-023 as amended (domain + hosting, 2026-07-09)
 

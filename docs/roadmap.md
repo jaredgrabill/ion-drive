@@ -146,32 +146,35 @@ Tenant provisioning/lifecycle APIs on the system DB, request→tenant routing (h
 ### Phase 17 — Authorization depth
 Field-level RBAC (column masking on read, reject on write), row-level policies (owner scoping via actor identity from Phase 12), policy editor in admin. (F12)
 
-### Phase 18 — Blocks registry ecosystem (ADR-022) — **M1 + M1.5 ✅ SHIPPED 2026-07-08** (specs 01–07)
-The shadcn-style distribution ecosystem shipped its core: registry protocol v1, manifest v1
-semver, multi-registry CLI resolution, digest verification + sigstore trust tiers,
-`registry build`/`block publish` + the reusable publish workflow (blocks repo migrated to
-versioned immutable artifacts), `block test`/`audit`, and `diff`/`update` with the installer
-upgrade mode. Every spec carries a status stamp + commit hash in
-`docs/specs/blocks-ecosystem/`; see CLAUDE.md's Phase 18 entry for the dense summary.
+### Phase 18 — Blocks registry ecosystem (ADR-022/023) — **M1 + M1.5 + M2 ✅ SHIPPED** (specs 01–08 + 10; 09 withdrawn)
+The shadcn-style distribution ecosystem shipped its core (M1/M1.5, 2026-07-08): registry
+protocol v1, manifest v1 semver, multi-registry CLI resolution, digest verification +
+sigstore trust tiers, `registry build`/`block publish` + the reusable publish workflow
+(blocks repo migrated to versioned immutable artifacts), `block test`/`audit`, and
+`diff`/`update` with the installer upgrade mode. M2 shipped 2026-07-09: the ADR-023
+domain warm-up (`ion-drive.dev` → `iondrive.dev`, pre-publish clean break), spec-08's
+registry data surfaces (`registry build` emissions, `ion-drive search`, directory-based
+`registry add @ns`, the `ion-drive mcp` registry MCP server), and spec-10's `iondrive.dev`
+static site (`site/` workspace package: project page, Starlight docs, blocks browser;
+GitHub Pages primary, Render optional). Spec-09 (hosted write API) is **withdrawn**
+(ADR-023 amendment) — publishing stays the shadcn git/PR model; revisit only on publish
+volume PRs can't absorb. Every spec carries a status stamp + commit hash in
+`docs/specs/blocks-ecosystem/`; see CLAUDE.md's Phase 18 entries for the dense summary.
 Remaining:
 - **Owner-run activation** (blocked on F23): push + tag the blocks repo, Pages/DNS for
-  `registry.iondrive.dev`, dry-run + first attested publish, third-party-flow rehearsal,
-  real sigstore fixtures — exact commands in `docs/specs/blocks-ecosystem/OWNER-TODO.md`.
-- **M2 — registry data surfaces** (spec-08, rewritten 2026-07-09): `registry build`
-  emissions (search-index + `searchUrl`, badges, README copies + `readmeUrl`),
-  `ion-drive search`, directory-based `registry add @ns`, registry MCP tools.
-  `registry.iondrive.dev` stays JSON-only — no web presence (ADR-023 amendment).
-- **iondrive.dev site** (spec-10, rewritten 2026-07-09): project page + Starlight
-  docs over `docs/` + client-rendered blocks browser, one static site in the
-  monorepo (`site/`) on Render. Includes the pre-publish **domain-unification
-  warm-up** (all hyphenated `ion-drive.dev` placeholders → `iondrive.dev`: schema
-  $ids, manifest $schema, scaffold, blocks repo re-pack).
-- ~~**M3 — hosted write API** (spec-09)~~ — **WITHDRAWN 2026-07-09** (ADR-023
-  amendment): publishing stays the shadcn git/PR model; revisit only on publish
-  volume PRs can't absorb.
-- Deferred small items: admin Blocks "update available" hint (needs M2's site/search
-  infra); `update --json` diff payload could embed the rendered previews verbatim;
-  streaming download cap in `fetchArtifact` (size is checked pre-parse, post-download).
+  `registry.iondrive.dev` **and** the site's Pages enablement + apex DNS for
+  `iondrive.dev`, dry-run + first attested publish, third-party-flow rehearsal, real
+  sigstore fixtures, live-URL badge/search checks — exact commands in
+  `docs/specs/blocks-ecosystem/OWNER-TODO.md`.
+- Deferred small items: admin Blocks "update available" hint (spec-08's search
+  index/MCP now provide the data — needs a client-side check in the admin);
+  `update --json` diff payload could embed the rendered previews verbatim; streaming
+  download cap in `fetchArtifact` (size is checked pre-parse, post-download); a core
+  Zod/JSON Schema for `search-index.json` (deferred in spec-08); per-page OG image
+  generation for the site; site deploy-hook rebuild for per-block SEO pages (noted
+  not built, ADR-023); align the one divergent JSDoc comment line between the site's
+  `reader.ts` and the CLI's `protocol.ts`; docs code blocks use plain `github-*`
+  Shiki themes vs the landing's AA-tuned `-default` variants (100 a11y today).
 
 ### Continuous (no phase)
 ~~External plugin packages (F19)~~ (✅ 2026-07-07), complexity-warning cleanup, remaining admin polish (§1.5), performance benchmarks. Plugin follow-ups if demanded: SMTP provider, RabbitMQ bus, a Redis-backed realtime bridge (the SSE stream stays outbox-only when the Redis bus is active).

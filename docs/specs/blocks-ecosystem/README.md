@@ -3,7 +3,9 @@
 **Status:** Accepted for implementation (2026-07-08). Decision record: ADR-022 in
 `docs/research/architecture-decisions.md`. Research basis:
 `docs/research/blocks-registry-ecosystem.md`. **M1 + M1.5 (specs 01–07) shipped
-2026-07-08** — each spec carries its status stamp + commit hash.
+2026-07-08; M2 (domain warm-up + specs 08 + 10) shipped 2026-07-09** — each spec
+carries its status stamp + commit hash. With spec-09 withdrawn, only the owner-run
+activation chain (OWNER-TODO, F23-gated) remains.
 
 **2026-07-09 — ADR-023 (domain + hosting, as amended):** the owner procured
 **`iondrive.dev`**. All hyphenated `ion-drive.dev` placeholder URLs in this suite and
@@ -76,11 +78,14 @@ verifies digests; trust badges render in `list`/`add`.
 **Exit criteria:** `block test` green in the official repo's CI for every block;
 `ion-drive diff`/`update` closes the slipped Phase-14 stretch item.
 
-**M2 — Read-side registry product (specs 08 + 10, per the ADR-023 amendment).**
-**Exit criteria:** `registry build` emits search index/badges/READMEs; `ion-drive
-search` + registry MCP tools work; PR-reviewed registries directory with
-`registry add @ns` discovery; `iondrive.dev` live with the project page, docs, and
-the blocks browser reading the live registry.
+**M2 — Read-side registry product (specs 08 + 10, per the ADR-023 amendment).
+✅ SHIPPED 2026-07-09** (spec-08 commit d995c0c / blocks db1aab7; spec-10 commit
+56cfc8a; warm-up a4e898b / blocks b8185cd).
+**Exit criteria:** `registry build` emits search index/badges/READMEs ✅; `ion-drive
+search` + registry MCP tools work ✅; PR-reviewed registries directory with
+`registry add @ns` discovery ✅; `iondrive.dev` live with the project page, docs, and
+the blocks browser reading the live registry — built and verified against a local
+fixture registry; *live* serving is the owner-run activation (OWNER-TODO, F23).
 
 **M3 — Hosted write side (spec 09): ⛔ WITHDRAWN 2026-07-09** (ADR-023 amendment).
 Publishing stays the shadcn git/PR model; revisit only on sustained third-party
