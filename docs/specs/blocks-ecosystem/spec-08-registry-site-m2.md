@@ -1,7 +1,7 @@
 # Spec 08 — Registry Data Surfaces, Search, Directory, and Registry MCP (M2)
 
-> **Status:** ✅ implemented 2026-07-09 (fresh-agent verifier sign-off; commit hash
-> stamped by the orchestrator in the sign-off commit).
+> **Status:** ✅ implemented 2026-07-09, commit d995c0c (blocks repo db1aab7);
+> fresh-agent verifier sign-off.
 > **Amendments adopted during implementation:**
 > - `index.json` also gains optional **`registriesUrl`** (spec-01 amended) — the Pages
 >   layout serves `registries.json` at the repo root, so sibling resolution alone
