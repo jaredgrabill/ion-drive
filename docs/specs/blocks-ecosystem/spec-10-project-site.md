@@ -1,7 +1,7 @@
 # Spec 10 — `iondrive.dev`: Project Page, Docs Site, and Blocks Browser
 
-> **Status:** ✅ implemented 2026-07-09 (fresh-agent verifier sign-off; commit hash
-> stamped in the follow-up docs commit).
+> **Status:** ✅ implemented 2026-07-09, commit 56cfc8a; fresh-agent verifier
+> sign-off.
 > **Amendments adopted during implementation:**
 > - **Docs pipeline:** Starlight's `docsSchema()` hard-requires `title` frontmatter
 >   (no repo doc has any) and Astro does not rewrite file-relative `.md` links, so
