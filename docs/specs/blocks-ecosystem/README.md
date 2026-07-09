@@ -5,14 +5,17 @@
 `docs/research/blocks-registry-ecosystem.md`. **M1 + M1.5 (specs 01–07) shipped
 2026-07-08** — each spec carries its status stamp + commit hash.
 
-**2026-07-09 — ADR-023 (domain + hosting):** the owner procured **`iondrive.dev`**.
-All hyphenated `ion-drive.dev` placeholder URLs in this suite and the code (schema
-`$id`s, manifest `$schema`, scaffold) migrate to `iondrive.dev` as a pre-publish
-clean-break warm-up. Hosting topology: `iondrive.dev` = project page (new repo,
-Render static, spec-10) + canonical `/schemas/*`; `registry.iondrive.dev` = protocol
-files + M2 site, static forever (GitHub Pages from ion-drive-blocks, generator
-in-repo at `/site`); `api.registry.iondrive.dev` = the M3 write service (new repo
-`ion-drive-registry`, Render web service, reads never depend on it).
+**2026-07-09 — ADR-023 (domain + hosting, as amended):** the owner procured
+**`iondrive.dev`**. All hyphenated `ion-drive.dev` placeholder URLs in this suite and
+the code (schema `$id`s, manifest `$schema`, scaffold) migrate to `iondrive.dev` as a
+pre-publish clean-break warm-up. Final topology: **`registry.iondrive.dev`** = JSON +
+artifacts only, static forever, **no web presence** (GitHub Pages from
+ion-drive-blocks, as shipped); **`iondrive.dev`** = one static site in the ion-drive
+monorepo (`site/`, Astro + Starlight, Render) carrying the project page, the docs,
+the canonical `/schemas/*`, and the client-rendered **blocks browser** that crawls
+the registry JSON at runtime. **Spec-09 (hosted write service) is WITHDRAWN** —
+publishing stays the shadcn git/PR model; third parties self-host registries and get
+listed in the `registries.json` directory.
 
 This suite specifies the shadcn-style distribution ecosystem for Ion Drive blocks: a main
 hosted registry run by us, third-party self-hosted registries (public or private), CLI
@@ -56,9 +59,9 @@ generates static files.
 | 05 | [Publishing pipeline](spec-05-publishing-pipeline.md) — `registry build`, `block publish`, reusable publish workflow (attest + immutability guard), official-repo flow, `registry.iondrive.dev` serving | ion-drive cli + ion-drive-blocks | 01, 02, 04 |
 | 06 | [Block test + CI](spec-06-block-test-and-ci.md) — `block test` (ephemeral server), regenerated `block new` scaffold, `ion-drive audit` | ion-drive cli | 02, 05 |
 | 07 | [Diff + update](spec-07-diff-and-update.md) — `ion-drive diff`/`update`, installer upgrade mode, `.new`-file convention | ion-drive cli + core | 02, 04 |
-| 08 | [Registry site (M2)](spec-08-registry-site-m2.md) — static directory/block pages, search index + `ion-drive search`, registries directory, registry MCP tools | ion-drive-blocks `/site` (confirmed in-repo, ADR-023) | 01, 05 |
-| 09 | [Hosted registry (M3) — DRAFT](spec-09-hosted-registry-m3.md) — accounts, name policy, publish API, OIDC trusted publishing, yank/takedown, verified-mark issuance | new repo `ion-drive-registry` → Render web service at `api.registry.iondrive.dev` (ADR-023) | 05, 08 |
-| 10 | [Project page](spec-10-project-site.md) — developer-first static site at `iondrive.dev` (Render), canonical `/schemas/*` hosting, redirects | new repo `iondrive.dev` | ADR-023 domain warm-up |
+| 08 | [Registry data surfaces (M2)](spec-08-registry-site-m2.md) — `registry build` emissions (search index, badges, READMEs), `ion-drive search`, registries directory + `registry add @ns`, registry MCP tools | ion-drive cli/core + ion-drive-blocks (regenerated output) | 01, 05 |
+| 09 | [Hosted registry (M3)](spec-09-hosted-registry-m3.md) — **⛔ WITHDRAWN 2026-07-09** (ADR-023 amendment): publishing stays the shadcn git/PR model; kept for the record with a revisit trigger | — | — |
+| 10 | [iondrive.dev site](spec-10-project-site.md) — project page + Starlight docs + client-rendered blocks browser, one static site on Render, canonical `/schemas/*` | ion-drive monorepo `site/` | ADR-023 warm-up; 08 (browser data) |
 
 ## Milestones
 
@@ -73,13 +76,15 @@ verifies digests; trust badges render in `list`/`add`.
 **Exit criteria:** `block test` green in the official repo's CI for every block;
 `ion-drive diff`/`update` closes the slipped Phase-14 stretch item.
 
-**M2 — Read-side registry product (spec 08).**
-**Exit criteria:** browsable site + search + registry MCP tools + PR-reviewed registries
-directory.
+**M2 — Read-side registry product (specs 08 + 10, per the ADR-023 amendment).**
+**Exit criteria:** `registry build` emits search index/badges/READMEs; `ion-drive
+search` + registry MCP tools work; PR-reviewed registries directory with
+`registry add @ns` discovery; `iondrive.dev` live with the project page, docs, and
+the blocks browser reading the live registry.
 
-**M3 — Hosted write side (spec 09, re-specced after M2 with real data).**
-**Exit criteria:** third parties publish to the main registry via tokens/OIDC without
-sending us PRs; verified marks issued; takedown runbook operational.
+**M3 — Hosted write side (spec 09): ⛔ WITHDRAWN 2026-07-09** (ADR-023 amendment).
+Publishing stays the shadcn git/PR model; revisit only on sustained third-party
+publish volume that PRs can't absorb.
 
 **Sequencing dependency (external):** specs 05/06 install `@ion-drive/cli` + `core` from
 npm inside workflows — roadmap **F23's owner-run first publish must complete first**

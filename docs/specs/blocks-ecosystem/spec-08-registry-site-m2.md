@@ -1,136 +1,136 @@
-# Spec 08 — Registry Site, Search, Directory, and Registry MCP (M2)
+# Spec 08 — Registry Data Surfaces, Search, Directory, and Registry MCP (M2)
 
-> **ADR-023 (2026-07-09):** the in-repo `/site` option is **confirmed** — the site is a
-> pure function of the registry JSON and must regenerate atomically with every publish.
-> Domain note: the canonical schema `$id`s move to `https://iondrive.dev/schemas/*`
-> (domain-unification warm-up); this site links to them and to the `iondrive.dev`
-> project page (spec-10).
+> **Rewritten 2026-07-09 per the ADR-023 amendment:** the statically generated site at
+> `registry.iondrive.dev` is **dropped** — that host serves JSON and artifacts only,
+> forever. The human browsing surface is the client-rendered blocks browser on
+> `iondrive.dev` (spec-10). What remains here is everything that *feeds* browsers,
+> search, and agents: registry-data emissions from `ion-drive registry build`, the
+> `ion-drive search` command, directory-based registry discovery, and the registry MCP
+> tools.
 
-**Lands in:** `jaredgrabill/ion-drive-blocks` (`/site` — in-repo, deploys with the same
-Pages site as the registry; confirmed by ADR-023) + small CLI additions.
-**Depends on:** spec-01 (protocol), spec-05 (live registry + Pages — the *serving* half
-is owner-gated on F23; the generator, search, MCP tools, and CLI additions are all
-buildable and testable against the local registry tree).
+**Lands in:** `jaredgrabill/ion-drive` (`packages/cli` + small core schema amendment)
+and `jaredgrabill/ion-drive-blocks` (regenerated registry output, PR template).
+**Depends on:** spec-01 (protocol), spec-05 (`registry build`). The *live-serving*
+half is owner-gated on F23; everything here is buildable and testable against the
+local registry tree.
 
 ## Scope
 
-The read-side product that turns "a directory of JSON files" into "an ecosystem you can
-browse": a statically generated site at `registry.iondrive.dev` (directory, per-block
-pages, trust badges), a prebuilt search index consumed by both the site and a new
-`ion-drive search`, the PR-reviewed third-party registries directory with
-`ion-drive registry add @ns` discovery, and MCP tools so agents can discover blocks —
-LLM-first DX is a product goal, and registry data being static JSON makes this cheap.
+Turn "a directory of JSON files" into "an ecosystem you can browse and query" without
+ever adding a server or a site build to the registry host: `registry build` emits the
+search index, badges, and per-block READMEs as more static files; `ion-drive search`
+and the spec-10 browser consume them; the PR-reviewed third-party registries directory
+gets its submission workflow and `ion-drive registry add @ns` discovery; and MCP tools
+give agents first-class registry access — LLM-first DX is a product goal, and registry
+data being static JSON makes this cheap.
 
 ## Non-goals
 
+- Any web UI (spec-10 owns the browser at `iondrive.dev`).
 - Anything requiring a server: accounts, publishing UI, download counts, ratings
-  (counts arrive with M3; ratings never — GitHub stars/issues do that job).
-- Rebuilding the admin console's Blocks page (separate surface; it may link here).
+  (M3 is withdrawn — see ADR-023 amendment; GitHub stars/issues cover ratings).
+- Rebuilding the admin console's Blocks page (separate surface; it may link out).
 
 ## Design
 
-### 1. Static site generator
+### 1. Registry-data emissions from `ion-drive registry build`
 
-A small SSG living in `site/` (implementer's choice of tool — constraints: TypeScript,
-zero-runtime output (plain HTML+CSS+minimal JS), builds from the registry JSON in the
-same repo checkout, no framework lock-in that fights the "just static files" posture;
-Astro or a hand-rolled generator both qualify — pick per taste, document the choice).
-Build runs in the publish workflow after `registry build` and deploys with Pages.
+Three new outputs, regenerated alongside the registry JSON (same append-only/`--check`
+discipline; all are **mutable** display data, not release artifacts — they never
+invalidate immutability guarantees):
 
-Pages:
+- **`registry/search-index.json`** — a plain documents array (or
+  minisearch-serialized if it stays small; keep the file < a few hundred KB): fields
+  `name, title, description, categories, latest, trust`. Advertised via a new
+  **optional `searchUrl`** field on `index.json` (spec-01 schema amendment:
+  backward-compatible optional field on `registryIndexSchema` + regenerated JSON
+  Schema, not a version bump).
+- **`registry/blocks/<name>.readme.md`** — a copy of the block dir's `README.md`
+  (when present), advertised via a new **optional `readmeUrl`** field on the per-block
+  doc (same amendment treatment). This keeps the browser same-origin and the protocol
+  self-contained — no raw-GitHub coupling.
+- **`badges/<name>.svg`** — shields-style static trust/version badges for third-party
+  READMEs, rendered from the index entry (display-hint trust only, per spec-01 §3).
 
-- **Home / directory** — block cards (title, description, categories, latest version,
-  trust badge), category filter, search box (client-side, §2).
-- **Block page** (`/blocks/<name>`) — rendered README (from the block dir), install
-  snippet (`ion-drive add crm`), version table (version, publishedAt, digest —
-  truncated with copy button, status, attestation link → Rekor/GitHub attestation UI),
-  advisories, dependency graph (deps + dependents computed across the registry),
-  **manifest browser**: objects/fields/relationships rendered as tables + a simple ERD
-  (the manifest is rich enough; SVG generated at build time — follow the repo's
-  dataviz conventions), declared actions/hooks/tasks/webhooks, `requires`.
-- **Registries directory page** (`/registries`) — renders `registries.json` with the
-  "listed ≠ audited" disclaimer and the submission process (PR checklist).
-- **Schemas** (`/schemas/*`) — the spec-01 JSON Schemas (already served; link them).
-- Trust badges as static SVGs (`/badges/<name>.svg`, generated at build) so third-party
-  READMEs can embed them shields-style.
+`--check` covers all three (drift fails CI). The blocks repo regenerates once and
+commits.
 
 ### 2. Search
 
-At build time, emit `search-index.json` (minisearch-serialized or a plain documents
-array — keep it < a few hundred KB; fields: name, title, description, categories,
-latest, trust). Consumers:
+Consumers of the index:
 
-- The site (client-side minisearch).
-- **`ion-drive search <term>`** (new CLI command): fetches the default registry's
-  `search-index.json` if present (URL advertised via an optional `searchUrl` field
-  added to `index.json` — spec-01 schema gains this optional field), else falls back to
-  substring match over `index.json` entries (works for every third-party registry with
-  zero extra requirements). `--registry @ns`, `--json`. Output rows include the badge
-  and an `ion-drive add` hint.
+- The `iondrive.dev` blocks browser (spec-10, client-side).
+- **`ion-drive search <term>`** (new CLI command): fetches the registry's
+  `searchUrl` index when advertised, else falls back to substring match over
+  `index.json` entries (works for every third-party registry with zero extra
+  requirements). `--registry @ns`, `--json`. Output rows include the badge hint and an
+  `ion-drive add` hint.
 
 ### 3. Registries directory + discovery
 
-- Submission: PR adding an entry to `registries.json` (shape in spec-01 §6) using the
-  PR template + review checklist from the operations runbook (spec-05): public HTTPS v1
-  index that parses, namespace not colliding/squatting, working owner contact,
-  description accurate. Review is a *listing* review, said explicitly.
-- **`ion-drive registry add @acme`** (no URL — the discovery form reserved in spec-03):
-  fetch the main registry's `registries.json`, find the namespace, show
+- Submission: PR adding an entry to `registries.json` (shape in spec-01 §6) using a
+  new PR template + the review checklist from the operations runbook (spec-05): public
+  HTTPS v1 index that parses, namespace not colliding/squatting, working owner
+  contact, description accurate. Review is a *listing* review, said explicitly.
+- **`ion-drive registry add @acme`** (no URL — the discovery form reserved in
+  spec-03): fetch the main registry's `registries.json`, find the namespace, show
   `owner/url/description`, confirm, write config. Unknown ⇒ "not in the directory —
   pass the URL explicitly" (which still works and is the private-registry path).
 
 ### 4. Registry MCP tools
 
-Give agents first-class registry access. Two deliveries, one implementation:
+Give agents first-class registry access. One implementation, transport-free handlers
+(`(args) → JSON`, no stdio assumptions):
 
 - **CLI-embedded MCP server**: `ion-drive mcp` (stdio) exposing `search_blocks(term)`,
-  `get_block(name)` (per-block JSON + README), `list_registries()`, and
-  `preview_install(ref)` (runs the spec-03 resolver + spec-04 verification dry —
+  `get_block(name)` (per-block JSON + README when advertised), `list_registries()`,
+  and `preview_install(ref)` (runs the spec-03 resolver + spec-04 verification dry —
   returns plan + trust verdicts, no changes). This composes with the *platform's*
-  existing MCP surface (which is per-server, at `/api/v1/mcp`): a coding agent uses the
-  CLI MCP to choose blocks, then the server MCP/REST to work with installed data.
-- The same tool handlers behind a thin adapter so the M3 service can host them
-  remotely later (design the handlers transport-free: `(args) → JSON`, no stdio
-  assumptions).
+  per-server MCP surface at `/api/v1/mcp`: a coding agent uses the CLI MCP to choose
+  blocks, then the server MCP/REST to work with installed data.
 
 Scaffolded projects' `AGENTS.md`/skills (from `ion-drive init`) gain a paragraph
 teaching agents these tools exist (`ion-add-block` skill update).
 
 ## Implementation notes (files)
 
-- `ion-drive-blocks/site/**` — generator + templates; `publish-block.yml` gains the
-  build+deploy step (spec-05's workflow, amended here).
-- Spec-01 schema amendment: optional `searchUrl` on `index.json` (add to
-  `registry-types.ts` + JSON Schema; backward-compatible optional field, not a version
-  bump).
+- `packages/cli/src/registry/build.ts` — the three emissions + `--check` coverage;
+  badge SVG rendering is a small pure template (follow the repo's dataviz conventions
+  for the palette).
+- `packages/core/src/blocks/registry-types.ts` — optional `searchUrl` (index) +
+  `readmeUrl` (block doc); `emit:schemas` regenerated; the CLI's lenient
+  `registry/protocol.ts` reader picks both up.
 - `packages/cli/src/commands/search.ts` — new; `commands/registry.ts` — the no-URL
-  `add @ns` form; `packages/cli/src/mcp/` — the MCP server (`@modelcontextprotocol/sdk`
-  is already a core dep; CLI adds it), `commands/mcp.ts`.
-- `ion-drive-blocks/.github/PULL_REQUEST_TEMPLATE/registry-listing.md` + runbook
+  `add @ns` form; `packages/cli/src/mcp/` — the MCP server
+  (`@modelcontextprotocol/sdk` becomes a CLI dep), `commands/mcp.ts`.
+- `ion-drive-blocks`: regenerated `registry/` output (+ badges, readmes,
+  search-index), `.github/PULL_REQUEST_TEMPLATE/registry-listing.md`, runbook
   checklist section.
-- Docs: `docs/concepts/building-blocks.md` discovery section; CLI README; site README.
+- Docs: `docs/concepts/building-blocks.md` discovery section; CLI README.
 
 ## Acceptance criteria
 
-1. The deployed site renders every official block's page with version table, digests,
-   attestation links, manifest browser + ERD, and correct badges; a broken README or
-   missing field degrades gracefully (build warns, page renders without the section).
-2. Site build is deterministic from the repo checkout and runs green inside the publish
-   workflow (no network beyond the checkout).
-3. `ion-drive search invoi` finds `invoicing` via the index on `@ion` and via substring
-   fallback on a fixture registry without `searchUrl`.
-4. `ion-drive registry add @acme` resolves through the directory fixture, confirms, and
+1. `registry build` on the blocks repo emits search-index, badges, and readme copies;
+   `--check` is a no-op on the regenerated tree and fails on hand-tampered emissions;
+   all emitted JSON still passes core's strict parsers (`searchUrl`/`readmeUrl`
+   round-trip; older indexes without them stay valid).
+2. `ion-drive search invoi` finds `invoicing` via the index on a fixture registry with
+   `searchUrl`, and via substring fallback on one without it.
+3. `ion-drive registry add @acme` resolves through a directory fixture, confirms, and
    writes config; unknown namespace produces the documented hint.
-5. MCP: from a stock MCP client, `search_blocks` → `get_block` → `preview_install`
-   round-trips against the live registry; `preview_install` reports the same plan and
-   trust verdicts as `ion-drive add --dry-run` (shared code path, asserted by test).
-6. Badge SVGs embed correctly in a third-party README (manual check, screenshot in PR).
+4. MCP: from a stock MCP client, `search_blocks` → `get_block` → `preview_install`
+   round-trips against a local fixture registry; `preview_install` reports the same
+   plan and trust verdicts as `ion-drive add --dry-run` (shared code path, asserted by
+   test).
+5. Badge SVGs render valid SVG and embed correctly in a third-party README (manual
+   check, screenshot in the run report).
 
 ## Test plan
 
-- Generator unit tests (fixture registry → HTML snapshots for one block page; ERD SVG
-  snapshot); search-index build test.
-- CLI unit tests: search fallback matrix, directory-based `registry add`, MCP handlers
+- Build unit tests (in-memory fs): emission shapes, `--check` matrix additions,
+  search-index build, badge snapshot.
+- Core unit: `searchUrl`/`readmeUrl` schema round-trip + JSON Schema drift regen.
+- CLI unit: search fallback matrix, directory-based `registry add`, MCP handlers
   (transport-free, straight function calls).
-- Live: deploy-preview of the site from a PR (Pages preview or artifact), linked in the
-  PR; the MCP round-trip recorded as a numbered smoke.
+- Live: the MCP round-trip against a locally served registry recorded as a numbered
+  smoke.

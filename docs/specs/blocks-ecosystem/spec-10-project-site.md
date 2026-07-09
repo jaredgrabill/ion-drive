@@ -1,142 +1,167 @@
-# Spec 10 — The Project Page at `iondrive.dev`
+# Spec 10 — `iondrive.dev`: Project Page, Docs Site, and Blocks Browser
 
-**Lands in:** a **new repo `jaredgrabill/iondrive.dev`** (created locally at
-`I:\ion-shift\iondrive.dev`, git-initialized, committed, never pushed — pushing and the
-Render setup are owner-run). Small touches in `jaredgrabill/ion-drive` (docs links) ride
-along.
-**Depends on:** nothing hard (parallel-safe with spec-08); the **domain-unification
-warm-up** (ADR-023: `ion-drive.dev` → `iondrive.dev` everywhere) must land first since
-this site serves the canonical `/schemas/*` URLs.
-**Implements the decisions in:** ADR-023.
+> **Rewritten 2026-07-09 per the ADR-023 amendment:** one static site, three surfaces
+> — project page, Starlight docs over the repo's `docs/`, and the client-rendered
+> blocks browser (absorbing the browsing UI dropped from `registry.iondrive.dev`).
+> Lives **in the ion-drive monorepo** (`site/`), not a separate repo.
+
+**Lands in:** `jaredgrabill/ion-drive` (`site/` — a private workspace package,
+excluded from the changesets fixed group and from npm publishing).
+**Depends on:** the ADR-023 **domain-unification warm-up** (this site serves the
+canonical `/schemas/*` URLs) and spec-08's registry emissions (`search-index.json`,
+`readmeUrl`) for the browser's search + README panels — the browser must degrade
+gracefully against registries without them.
+**Implements the decisions in:** ADR-023 (as amended).
 
 ## Scope
 
-The public face of the project: a developer-first static site at the apex domain in the
-style of good GitHub project pages (think Fastify/Vite/Biome project sites — README-grade
-directness, no marketing fluff), deployed on **Render as a static site**, plus the
-canonical JSON Schema hosting (`/schemas/*.v1.json`) and the redirect/header config.
+The public face at the apex domain, deployed on **Render as a static site**: a
+developer-first project page in the style of good GitHub project pages
+(Fastify/Vite/Biome — README-grade directness, no marketing fluff), the documentation
+rendered with **Astro + Starlight** directly from the repo's public `docs/` subset,
+and a **blocks browser** — client-side JS/React crawling the live registry JSON the
+same way the CLI's protocol reader does.
 
 ## Non-goals
 
-- A rendered documentation site. The repo's `docs/` stays canonical on GitHub; the page
-  links into it. (A docs site is a later iteration — leave an obvious seam, e.g. a
-  `/docs` path reserved via redirect to the GitHub docs tree.)
-- A blog, newsletter capture, analytics beyond a privacy-respecting page counter (skip
-  analytics entirely in v1).
-- Rebuilding anything the M2 registry site does (`registry.iondrive.dev` owns block
-  browsing; this page links to it).
-- Dynamic anything. Static output only; portable off Render with nothing lost but
-  redirects/headers.
+- Any server or API. Static output only; portable off Render with nothing lost but
+  redirects/headers (`render.yaml` is the only Render-specific file).
+- Prerendered per-block pages built from a registry checkout (the browser reads the
+  live registry at runtime — no site↔registry build coupling; a deploy-hook rebuild
+  is a possible later upgrade, noted not built).
+- Trust *verification* in the browser. It displays registry-asserted hints, digests,
+  and advisories, and points at `ion-drive block verify` / `ion-drive add` for real
+  verification (spec-04's client-computed-trust posture).
+- A blog, analytics, newsletter capture.
 
 ## Design
 
-### 1. Content (one long page + a few leaf pages)
-
-Structured like a strong project README, in order:
-
-1. **Hero** — name, one-sentence positioning (from CLAUDE.md: "self-hosted platform for
-   accelerated custom business software development — define data objects at runtime,
-   get REST/GraphQL/MCP APIs instantly"), the install one-liner
-   (`npm i -g @ion-drive/cli && ion-drive init my-app`), GitHub link, license badge.
-   A terminal-style animated snippet (CSS-only or tiny JS) showing
-   `ion-drive init` → `ion-drive add crm` → curl of a live endpoint is the ideal hero
-   visual — screenshots of the admin console are the fallback.
-2. **The pitch, developer-voiced** — three or four short sections mapping to real
-   surfaces: runtime schema → instant APIs (REST/GraphQL/MCP); building blocks
-   (shadcn-style vendored code, digest-verified registry); agent-first (MCP everywhere,
-   LLM-legible codebase); self-hosted/OSS (Apache-2.0, Postgres, single container).
-   Each with a real, runnable code sample (query-language, client SDK, manifest
-   snippet) — samples must be lifted from working docs, not invented.
-3. **Feature grid** — dense, factual (schema designer, RBAC, events/webhooks/realtime,
-   tasks, observability, plugins, multi-registry blocks…), each linking to the concept
-   doc on GitHub.
-4. **Quick start** — the `getting-started.md` opening steps inline, then "continue on
-   GitHub".
-5. **Ecosystem strip** — links: GitHub repo, `registry.iondrive.dev` (block registry),
-   the blocks repo, npm packages.
-6. **Footer** — IonShift Technologies LLC / trademark line (mirror `NOTICE`), license,
-   `security@ionshiftlabs.com`.
-
-Leaf pages/paths:
-- **`/schemas/*.v1.json`** — the canonical JSON Schemas (ADR-023): copied from
-  `packages/core/schemas/` with a drift-check documented in the repo README (re-copy on
-  core release; same pattern as the blocks repo's mirror).
-- **`/blocks`** → redirect to `https://registry.iondrive.dev/`.
-- **`/docs`** → redirect to the GitHub `docs/` tree (the reserved seam).
-- `404.html`, `favicon`, OG/social meta (title/description/OG image generated at build).
-
-### 2. Look & feel
-
-GitHub-project-page conventions, executed with intent: system font stack or one
-self-hosted variable font, dark **and** light (respect `prefers-color-scheme`, offer a
-toggle), the project's existing space-accent palette (`--ion-blue/purple/cyan` from the
-admin's `index.css` — reuse the tokens, don't invent a second brand), real code samples
-with syntax highlighting done **at build time** (no client-side highlighter). The
-implementer must load the repo's `frontend-design` skill before writing markup and keep
-the result out of "templated default" territory. Accessibility: keyboard nav, contrast
-AA, `prefers-reduced-motion` honored by the hero animation.
-
-### 3. Tech constraints
-
-- TypeScript build tooling; **zero-framework runtime output** (plain HTML+CSS+minimal
-  vanilla JS). Astro (static, zero-JS default) or a hand-rolled generator both qualify —
-  same constraint set as spec-08's SSG; document the choice in the repo README.
-- Performance budget: ≤ 100KB gz total transfer for the landing page excluding images;
-  Lighthouse ≥ 95 across the board on a local run.
-- **Render config in-repo**: `render.yaml` (static site: build command, publish dir,
-  custom headers incl. long-cache for hashed assets + `X-Content-Type-Options`,
-  redirects: `www.iondrive.dev` → apex, `/blocks`, `/docs`). Everything Render-specific
-  isolated to that file so GitHub Pages remains a viable fallback (ADR-023).
-- CI (GitHub Actions): build + link-check (internal anchors + the GitHub/registry URLs)
-  + the schemas drift check. Render deploys on push to `main` (owner connects the repo).
-
-### 4. Repo shape
+### 1. Site structure (Astro + Starlight)
 
 ```
-iondrive.dev/
-  README.md            # what this is, how to run/build, content-editing guide,
-                       # schemas re-copy procedure, Render + DNS notes
-  render.yaml
-  package.json         # build/dev/check scripts
-  src/ or site/        # generator input (pages, styles, components)
-  public/schemas/*.v1.json
-  .github/workflows/ci.yml
-  LICENSE (Apache-2.0), NOTICE (mirror the platform repo's trademark notice)
+site/                      # workspace package "site" (private)
+  astro.config.mjs         # Starlight integration; content from ../docs (curated)
+  src/pages/index.astro    # the project page (landing)
+  src/pages/blocks/…       # the blocks browser (React island(s))
+  src/components/, styles/
+  public/schemas/          # built from ../packages/core/schemas (build step, not a copy-commit)
+  render.yaml              # at repo root or site/ — Render static: build cmd, publish dir,
+                           # headers, redirects (www→apex), path-filtered builds
 ```
+
+- **`/`** — the project page (content spec in §2).
+- **`/docs/**`** — Starlight over a **curated subset** of the repo's `docs/`
+  (`getting-started.md`, `concepts/**`, `api/**`, `deployment/**`; explicitly NOT
+  `research/`, `specs/`, phase plans, roadmap). Docs stay canonical where they are —
+  Starlight consumes them via a content-collection loader pointing at `../docs`;
+  relative links between included docs must resolve (rewrite/check at build; a broken
+  or excluded-target link fails the build with a named error).
+- **`/blocks`** and **`/blocks/<name>`** — the browser (§3).
+- **`/schemas/*.v1.json`** — canonical JSON Schemas, emitted into the build output
+  from `packages/core/schemas/` (same-repo build step — no mirror, no drift).
+- `404`, favicon, OG/social meta per page (OG image generated at build).
+
+### 2. The project page
+
+Structured like a strong project README, in order: hero (one-sentence positioning
+from CLAUDE.md/README, the `npm i -g @ion-drive/cli && ion-drive init my-app`
+one-liner, GitHub link, license badge; a CSS-first terminal-style animated snippet —
+`init` → `add crm` → curl a live endpoint — degrading to a static code block);
+three-or-four developer-voiced pitch sections mapping to real surfaces (runtime
+schema → instant REST/GraphQL/MCP; vendored blocks + digest-verified registry;
+agent-first; self-hosted OSS on Postgres) each with a **runnable sample lifted from
+the docs, never invented**; a dense factual feature grid linking into `/docs`; quick
+start inline; ecosystem strip (GitHub, registry, npm); footer (IonShift trademark
+line per `NOTICE`, Apache-2.0, `security@ionshiftlabs.com`).
+
+Look & feel: GitHub-project-page conventions executed with intent — reuse the admin's
+existing space-accent tokens (`--ion-blue/purple/cyan` from `packages/admin/src/index.css`;
+one brand, don't invent a second), dark **and** light (`prefers-color-scheme` +
+toggle), build-time syntax highlighting (no client-side highlighter), self-hosted
+font or system stack, `prefers-reduced-motion` honored. The implementer must load the
+`frontend-design` skill before writing markup; any diagram follows `dataviz`.
+
+### 3. The blocks browser
+
+Client-rendered React island(s) reading `https://registry.iondrive.dev/registry/…`
+at runtime (CORS: GH Pages serves `access-control-allow-origin: *`):
+
+- **Directory** (`/blocks`) — cards from `index.json` (title, description,
+  categories, latest, trust *hint* badge), category filter, client-side search over
+  `search-index.json` when the index advertises `searchUrl` (spec-08), else substring
+  over the index — the exact CLI fallback.
+- **Block panel** (`/blocks/<name>`, client-routed) — from `blocks/<name>.json`:
+  version table (version, publishedAt, truncated digest with copy button, status,
+  advisory flags, attestation link when `attestationUrl` present), rendered README
+  when `readmeUrl` present (sanitized markdown render), dependency list with links,
+  `requires`, and the install snippet (`ion-drive add <name>`). Honest trust copy:
+  hints displayed, "verify locally with `ion-drive block verify`" linked.
+- **Registries directory** (`/blocks/registries`) — renders `registries.json` with
+  the "listed ≠ audited" disclaimer and the PR submission process.
+- The registry reader is a small local module **parity-tested against the CLI's
+  fixtures** (same lenient rules as `packages/cli/src/registry/protocol.ts` — keep a
+  KEEP-IN-SYNC comment both sides); registry base URL configurable at build time so
+  the browser can be pointed at a fixture registry in tests and previews.
+- Graceful degradation: registry unreachable ⇒ a clear offline notice (the rest of
+  the site is unaffected); missing optional fields ⇒ sections omitted, never errors.
+
+### 4. Tech constraints
+
+- Astro + Starlight + React islands only where interactivity demands (the browser);
+  the project page and docs ship **zero-JS** apart from the theme toggle/hero.
+- Performance budget: landing page ≤ 100KB gz transfer excluding images; the browser
+  island lazy-loads its JS on `/blocks` routes only. Lighthouse ≥ 95 across the board
+  on a local audit (landing + one docs page).
+- Accessibility: contrast AA both themes, keyboard nav, reduced-motion.
+- Monorepo integration: `site` joins the pnpm workspace + turbo (`build`, `dev`,
+  `check` tasks), Biome per repo conventions, excluded from changesets/publish and
+  from the Docker image. Root `pnpm build`/`lint`/`typecheck` must stay green and
+  reasonably fast (site build cacheable by turbo).
+- Render: static site, root directory `site/` (or repo root with `render.yaml`
+  `rootDir`), build filters so only `site/**`, `docs/**`, `packages/core/schemas/**`
+  changes trigger deploys; `www.iondrive.dev` → apex redirect; long-cache headers for
+  hashed assets. Everything Render-specific isolated to `render.yaml`.
 
 ## Implementation notes
 
-- Copy real copy: positioning language comes from `README.md`/`CLAUDE.md`/ADR-017 —
-  do not drift the product story. Code samples come from `docs/getting-started.md`,
-  `docs/api/querying.md`, `docs/concepts/building-blocks.md`.
-- The platform repo's `README.md` gains the site link; `docs/getting-started.md` header
-  mentions it. (Two-line touches, ride the same run.)
-- OG image: generate at build (SVG→PNG or a static asset) — dark background, logo
-  wordmark, one-liner.
-- The hero terminal animation must degrade to a static code block with JS disabled.
+- Copy real copy: positioning from `README.md`/`CLAUDE.md`/ADR-017; samples from
+  `docs/getting-started.md`, `docs/api/querying.md`, `docs/concepts/building-blocks.md`.
+- Docs curation is an explicit include list in the Astro config with a comment
+  explaining why `research/`/`specs/` stay out.
+- The platform `README.md` gains the site link; `docs/getting-started.md` header
+  mentions it.
+- CI: the site builds + link-checks in the existing `ci.yml` (new job or step);
+  Render deploy connection is owner-run.
 
 ## Acceptance criteria
 
-1. `pnpm build` (or equivalent) in the new repo emits a fully static tree; serving it
-   with any static file server renders the complete page — no Render-only behavior
-   except redirects/headers, which live only in `render.yaml`.
-2. All six content sections render with real, source-attributed copy and working code
-   samples; every outbound link resolves (link-check green in CI).
-3. `/schemas/registry-index.v1.json` (and siblings) served byte-identical to
-   `packages/core/schemas/*` — drift check proves it.
-4. Dark and light both pass contrast AA on the hero + code samples; reduced-motion
-   disables the terminal animation; Lighthouse ≥ 95 (performance/accessibility/best
-   practices/SEO) on a local audit of the built output.
-5. Landing page ≤ 100KB gz (excl. images), zero framework runtime, no client-side
-   syntax highlighter, no external requests (fonts/assets self-hosted).
-6. The repo is committed locally with CI green-by-construction (workflow runs are
-   owner-gated); Render + DNS steps recorded in OWNER-TODO with exact settings
-   (build command, publish dir, apex + www custom domains).
+1. `pnpm --filter site build` emits a fully static tree; serving it with any static
+   file server renders all three surfaces (Render-only behavior confined to
+   `render.yaml`).
+2. The docs surface renders the curated `docs/` subset with working inter-doc links
+   and navigation; a link to an excluded/missing doc fails the build with a named
+   error; excluded trees are absent from the output.
+3. The blocks browser, pointed at a **local fixture registry** (protocol-v1 tree
+   served over localhost), renders the directory, search (index + fallback), a block
+   panel with version table/digests/advisories/README, and the registries directory;
+   pointed at an unreachable registry it shows the offline notice with the rest of
+   the site intact.
+4. The browser's reader passes the CLI-parity fixture tests (lenient acceptance,
+   legacy-index rejection message, relative-URL resolution).
+5. `/schemas/*.v1.json` byte-identical to `packages/core/schemas/*` in the build
+   output (build-step test, no committed mirror).
+6. Landing page ≤ 100KB gz excl. images; browser JS loads only on `/blocks` routes;
+   Lighthouse ≥ 95 (perf/a11y/best-practices/SEO) on landing + one docs page; dark
+   and light pass contrast AA; reduced motion disables the hero animation.
+7. Root `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test` stay green with the
+   new workspace package; Render setup + DNS recorded in OWNER-TODO with exact
+   settings.
 
 ## Test plan
 
-- CI: build + internal/external link check + schemas drift diff.
-- Unit-level where the generator has logic (nav/anchor generation, OG meta).
-- Manual review pass recorded in the run report: screenshots (dark + light + mobile
-  width) via the browser tooling, Lighthouse scores, and the served-locally smoke
-  (numbered, per the platform repo's live-smoke conventions).
+- Site unit/build tests: docs curation + link check, schemas emission byte-check,
+  reader parity fixtures, browser component tests against fixture JSON (vitest +
+  testing-library, the admin's rig pattern).
+- Manual review pass recorded in the run report: dark/light/mobile screenshots via
+  the browser tooling of all three surfaces (browser pointed at the local fixture
+  registry), Lighthouse scores, and a numbered served-locally smoke.

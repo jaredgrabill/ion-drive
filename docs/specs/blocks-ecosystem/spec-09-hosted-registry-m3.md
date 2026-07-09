@@ -1,14 +1,19 @@
-# Spec 09 — The Hosted Registry Service (M3) — DRAFT
+# Spec 09 — The Hosted Registry Service (M3) — WITHDRAWN
 
-**Status: DRAFT / roadmap-grade.** This spec is intentionally lighter than 01–08: it is
-re-specced to full detail after M2 ships, with real usage data. It exists now so every
-earlier spec can be checked against it (nothing in M1/M2 may paint M3 into a corner) and
-so the end-state is visible to contributors.
+> **Status: ⛔ WITHDRAWN 2026-07-09** (ADR-023 amendment, owner decision). Publishing
+> to the main registry stays the shadcn git/PR model — spec-05's workflow — and third
+> parties publish by self-hosting registries and getting listed in the PR-reviewed
+> `registries.json` directory (spec-08). No service repo, no
+> `api.registry.iondrive.dev`, no hosted tokens/OIDC endpoint, no download counts;
+> verified marks remain client-computed (spec-04). **Revisit trigger:** sustained
+> third-party publish volume that repo PRs demonstrably can't absorb. The draft below
+> is kept for the record — if revived, re-spec from scratch against then-current
+> reality; do not implement from this text.
 
-**Lands in:** a new repo — **`jaredgrabill/ion-drive-registry`**, an `ion-drive init`
-framework project deployed as a Render **web service** at `api.registry.iondrive.dev`
-(ADR-023; the read host `registry.iondrive.dev` stays static and never depends on it).
-**Depends on:** specs 05, 08.
+**Original draft status:** intentionally lighter than 01–08; was to be re-specced
+after M2 with real usage data.
+
+**Lands in:** a new repo (service). **Depends on:** specs 05, 08.
 
 ## Scope (target state)
 

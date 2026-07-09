@@ -12,18 +12,19 @@ runs its live verify) → §5 (third-party flow) → spec-06 §1–2 (blocks CI 
 the published-CLI dogfood loop). Both repos' Phase 18 commits are already made
 locally; nothing has been pushed.
 
-## From ADR-023 (domain + hosting, 2026-07-09)
+## From ADR-023 as amended (domain + hosting, 2026-07-09)
 
-1. **DNS for the apex + www** (domain `iondrive.dev` is procured): after the
-   project-page repo (`jaredgrabill/iondrive.dev`, spec-10) is pushed and connected
-   to Render as a **static site** (build command + publish dir per its README):
-   apex `A`/`ALIAS` records → Render, `www` CNAME → Render (the `render.yaml`
-   redirects www → apex). Sanity: `curl -fsSI https://iondrive.dev` → 200;
-   `curl -fsS https://iondrive.dev/schemas/registry-index.v1.json | jq '.["$id"]'`.
+1. **Connect the site to Render + DNS for apex/www** (domain `iondrive.dev` is
+   procured; the site lives in the ion-drive monorepo at `site/`, spec-10): create a
+   Render **static site** from the `ion-drive` repo (root directory / build command /
+   publish dir / path filters per `site/render.yaml` and the site README), then apex
+   `A`/`ALIAS` records → Render and `www` CNAME → Render (the config redirects
+   www → apex). Sanity: `curl -fsSI https://iondrive.dev` → 200;
+   `curl -fsS https://iondrive.dev/schemas/registry-index.v1.json | jq '.["$id"]'`;
+   open `/blocks` and confirm the browser renders the live registry.
 2. **`registry` CNAME → GitHub Pages** — unchanged, already item 2 under
-   "From spec-05" below.
-3. **`api.registry` CNAME → Render** — only when M3 (spec-09) ships its service
-   from `jaredgrabill/ion-drive-registry`; nothing to do until then.
+   "From spec-05" below. (`registry.iondrive.dev` serves JSON/artifacts only —
+   no site to set up there; `api.registry` was dropped with spec-09's withdrawal.)
 
 ## From spec-04 (integrity, provenance, trust)
 

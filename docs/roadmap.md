@@ -157,14 +157,18 @@ Remaining:
 - **Owner-run activation** (blocked on F23): push + tag the blocks repo, Pages/DNS for
   `registry.iondrive.dev`, dry-run + first attested publish, third-party-flow rehearsal,
   real sigstore fixtures — exact commands in `docs/specs/blocks-ecosystem/OWNER-TODO.md`.
-- **M2 — registry site/search/MCP tools** (spec-08, not started; in-repo `/site`
-  confirmed by ADR-023).
-- **M3 — hosted write API** (spec-09, draft; re-spec after M2; new repo
-  `ion-drive-registry` → Render web service at `api.registry.iondrive.dev`, ADR-023).
-- **Project page** (spec-10, new — ADR-023): `iondrive.dev` procured; new repo
-  `jaredgrabill/iondrive.dev` on Render (static); includes the pre-publish
-  **domain-unification warm-up** (all hyphenated `ion-drive.dev` placeholders →
-  `iondrive.dev`: schema $ids, manifest $schema, scaffold, blocks repo re-pack).
+- **M2 — registry data surfaces** (spec-08, rewritten 2026-07-09): `registry build`
+  emissions (search-index + `searchUrl`, badges, README copies + `readmeUrl`),
+  `ion-drive search`, directory-based `registry add @ns`, registry MCP tools.
+  `registry.iondrive.dev` stays JSON-only — no web presence (ADR-023 amendment).
+- **iondrive.dev site** (spec-10, rewritten 2026-07-09): project page + Starlight
+  docs over `docs/` + client-rendered blocks browser, one static site in the
+  monorepo (`site/`) on Render. Includes the pre-publish **domain-unification
+  warm-up** (all hyphenated `ion-drive.dev` placeholders → `iondrive.dev`: schema
+  $ids, manifest $schema, scaffold, blocks repo re-pack).
+- ~~**M3 — hosted write API** (spec-09)~~ — **WITHDRAWN 2026-07-09** (ADR-023
+  amendment): publishing stays the shadcn git/PR model; revisit only on publish
+  volume PRs can't absorb.
 - Deferred small items: admin Blocks "update available" hint (needs M2's site/search
   infra); `update --json` diff payload could embed the rendered previews verbatim;
   streaming download cap in `fetchArtifact` (size is checked pre-parse, post-download).
