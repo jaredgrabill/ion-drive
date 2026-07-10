@@ -8,7 +8,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadCoreValidator } from '../registry/core-loader.js';
 import { computeDigest, packBytes } from '../registry/verify.js';
 import {
   type CommandRunner,
@@ -77,6 +78,15 @@ function materializeClone(cloneDir: string | undefined): { stdout: string } {
   );
   return { stdout: '' };
 }
+
+// blockPublishCommand's first call pays the one-time dynamic import of the
+// full @ion-drive/core barrel — ~6s cold on CI runners when core's dist/ is
+// built (release.yml builds before testing; ci.yml doesn't, so the loader
+// returns null there and the cost never shows). Warm it once so individual
+// tests keep the default timeout.
+beforeAll(async () => {
+  await loadCoreValidator();
+}, 30_000);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'ion-publish-test-'));
