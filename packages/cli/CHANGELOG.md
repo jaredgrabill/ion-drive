@@ -1,5 +1,17 @@
 # @ion-drive/cli
 
+## 0.4.0
+
+### Minor Changes
+
+- Blocks registry ecosystem (Phase 18, specs 01–08 + 10, ADR-022/ADR-023).
+
+  Core: registry protocol v1 (Zod schemas, parsers, generated JSON Schemas at `schemas/*.v1.json`), block manifest v1 (strict semver, `dependencies` ranges, `requires.core` enforced at install), manifest diffing + `BlockEngine.upgrade`, install provenance columns (`artifact_digest`, `trust_tier`, …).
+
+  CLI: multi-registry config + `[@ns/]name[@selector]` refs with digest verification and sigstore trust tiers (`registry list/add/remove/ping`, `block verify`), the registry generator + publishing toolchain (`registry build/yank/deprecate`, `block new/validate/pack/publish`), ephemeral-server `block test` + `audit`, `diff`/`update` with the `.new`-file convention, `search`, registry MCP server (`ion-drive mcp`), and the iondrive.dev domain unification.
+
+  Admin and client ride along via the fixed version group.
+
 ## 0.3.0
 
 ## 0.2.0
