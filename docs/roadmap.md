@@ -30,6 +30,7 @@ Legend: 🔴 broken/misleading today · 🟠 gap vs. our own stated conventions 
 | F3 | ✅ **Observability overlay overpromised** | Fixed 2026-07-06: Prometheus scrape config (`/metrics` via host-gateway), Grafana datasources + Ion Drive Overview dashboard provisioning, Loki/Tempo single-binary configs, mounts wired, broken image tags corrected. Validated (`compose config`, YAML/JSON parse) but not yet live-tested against a running stack. |
 | F4 | ✅ **Docs drift: block catalog** | Fixed 2026-07-06 in `docs/getting-started.md` and both README spots. The `new-block` skill now ends with a catalog-enumeration checklist step. |
 | F5 | ✅ **No `.env.example`** | Added 2026-07-06, every var cross-checked against `config/index.ts` (including the new `ION_RATE_LIMIT_*`). |
+| F25 | 🔴 **Insecure framework-mode defaults** | 2026-07-11 audit ([`security-audit-2026-07-framework-mode.md`](research/security-audit-2026-07-framework-mode.md)): the Phase 14 hardening knobs are all **off in the scaffolded `.env`**, so a default `ion-drive init` project runs auth-off (V1) and with wide-open credentialed CORS (V2), plus a bootstrap double-admin race (V3) and lesser gaps (V4–V7). The line 78 "hardening gaps closed" note holds only when the knobs are enabled — the defaults invert it. Remediation goal prompt in the audit doc. |
 
 ### 1.2 Surface-parity gaps 🟠
 
