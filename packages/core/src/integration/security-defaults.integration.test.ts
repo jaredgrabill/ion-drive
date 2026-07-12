@@ -1,0 +1,209 @@
+/**
+ * Security defaults integration suite (2026-07 framework-mode audit).
+ *
+ * Regression coverage for the "insecure defaults" findings — each test boots
+ * the **real** server via `createServer()` against a throwaway scratch database
+ * and asserts on runtime behaviour, not env-parsing in isolation.
+ *
+ *   V1 — a server with RBAC disabled must refuse to boot in production unless
+ *        the operator explicitly acknowledges an open deployment
+ *        (`ION_ALLOW_OPEN=true`). The companion test documents *why*: in open
+ *        mode an anonymous caller can mint an admin-bound API key.
+ *   V2 — credentialed CORS with a wildcard origin must be refused at boot.
+ *
+ * Run with a reachable Postgres 17 (defaults match CI's service container):
+ *
+ *   ION_DATABASE_URL=postgresql://ion:ion@localhost:5432/ion_drive \
+ *     pnpm --filter @ion-drive/core test:integration
+ */
+
+import { randomBytes } from 'node:crypto';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createServer } from '../server.js';
+
+// ---------------------------------------------------------------------------
+// Scratch database plumbing (mirrors platform.integration.test.ts)
+// ---------------------------------------------------------------------------
+
+const ADMIN_URL = process.env.ION_DATABASE_URL ?? 'postgresql://ion:ion@localhost:5432/ion_drive';
+const SCRATCH_DB = `ion_sec_${randomBytes(6).toString('hex')}`;
+
+function scratchUrl(): string {
+  const url = new URL(ADMIN_URL);
+  url.pathname = `/${SCRATCH_DB}`;
+  return url.toString();
+}
+
+type Json = Record<string, unknown>;
+type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+type IonApp = Awaited<ReturnType<typeof createServer>>;
+
+let adminClient: pg.Client | undefined;
+let app: IonApp | undefined;
+
+/** Injects a request into the running Fastify instance (no port binding). */
+async function request(
+  method: Method,
+  url: string,
+  options: { body?: unknown; headers?: Record<string, string> } = {},
+): Promise<{ status: number; body: Json }> {
+  if (!app) throw new Error('Server not booted');
+  const res = await app.server.inject({
+    method,
+    url,
+    headers: {
+      ...(options.body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...options.headers,
+    },
+    ...(options.body !== undefined ? { payload: JSON.stringify(options.body) } : {}),
+  });
+  const body = res.body ? (JSON.parse(res.body) as Json) : {};
+  return { status: res.statusCode, body };
+}
+
+beforeAll(async () => {
+  adminClient = new pg.Client({ connectionString: ADMIN_URL, connectionTimeoutMillis: 5000 });
+  try {
+    await adminClient.connect();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Integration suite requires a reachable Postgres at ${ADMIN_URL} (start one with \`docker compose -f docker/docker-compose.yml up -d\` or set ION_DATABASE_URL). Connection failed: ${reason}`,
+    );
+  }
+  await adminClient.query(`CREATE DATABASE ${SCRATCH_DB}`);
+
+  // Boot in OPEN mode, but only via the explicit acknowledgement — this is the
+  // deployment the V1 exploit test dissects. Development node env so the dev
+  // fallback key applies; rate limiting off so the burst never 429s.
+  app = await createServer({
+    databaseUrl: scratchUrl(),
+    requireAuth: false,
+    allowOpen: true,
+    nodeEnv: 'development',
+    rateLimitEnabled: false,
+    otelEnabled: false,
+    metricsEnabled: false,
+    logLevel: 'fatal',
+  });
+}, 120_000);
+
+afterAll(async () => {
+  await app?.close();
+  // pg-pool's end() resolves before each client's socket finishes closing, so
+  // wait until Postgres sees no sessions on the scratch DB before the FORCE
+  // drop — otherwise it terminates the stragglers and their 57P01 events
+  // surface as unhandled errors that can fail the run.
+  await drainThenDrop(adminClient, SCRATCH_DB);
+  await adminClient?.end();
+}, 60_000);
+
+/** Waits for the scratch DB to have no sessions, then FORCE-drops it. */
+async function drainThenDrop(client: pg.Client | undefined, db: string): Promise<void> {
+  const started = Date.now();
+  while (client && Date.now() - started < 10_000) {
+    const res = await client.query(
+      'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1',
+      [db],
+    );
+    if (res.rows[0].n === 0) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  await client?.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+}
+
+// ---------------------------------------------------------------------------
+// V1 — auth-off default
+// ---------------------------------------------------------------------------
+
+describe('V1 — safe auth default', () => {
+  it('refuses to boot with RBAC disabled in production unless open mode is acknowledged', async () => {
+    await expect(
+      createServer({
+        databaseUrl: scratchUrl(),
+        requireAuth: false,
+        nodeEnv: 'production',
+        encryptionKey: 'a'.repeat(64),
+      }),
+    ).rejects.toThrow(/ION_REQUIRE_AUTH|ION_ALLOW_OPEN/);
+  });
+
+  it('exposes admin endpoints to anonymous callers in open mode (the V1 exploit)', async () => {
+    // Anonymous read of the role catalogue succeeds with enforcement off.
+    const roles = await request('GET', '/api/v1/roles');
+    expect(roles.status).toBe(200);
+    const adminRole = (roles.body.data as Json[]).find((r) => r.name === 'admin');
+    expect(adminRole).toBeDefined();
+
+    // An anonymous caller mints an API key bound straight to the admin role.
+    const minted = await request('POST', '/api/v1/api-keys', {
+      body: { name: 'attacker-key', roleId: (adminRole as Json).id },
+    });
+    expect(minted.status).toBe(201);
+    const plaintext = (minted.body.data as Json).key as string;
+    expect(plaintext).toMatch(/^iond_/);
+
+    // The self-minted key now wields admin — no credentials were ever presented.
+    const me = await request('GET', '/api/v1/me', { headers: { 'x-api-key': plaintext } });
+    expect(me.status).toBe(200);
+    expect(me.body.roles).toContain('admin');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V2 — credentialed CORS
+// ---------------------------------------------------------------------------
+
+describe('V2 — credentialed CORS', () => {
+  it('does not reflect a cross-origin credentialed request by default (same-origin)', async () => {
+    // The booted server uses the default corsOrigins. A foreign Origin must
+    // NOT be echoed back, and credentials must NOT be granted to it — otherwise
+    // any site an authenticated user visits could drive credentialed calls.
+    const res = await app?.server.inject({
+      method: 'GET',
+      url: '/api/v1',
+      headers: { origin: 'https://evil.example.com' },
+    });
+    expect(res?.statusCode).toBe(200);
+    expect(res?.headers['access-control-allow-origin']).not.toBe('https://evil.example.com');
+    expect(res?.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res?.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+
+  it('refuses to boot with a wildcard CORS origin while credentials are enabled', async () => {
+    await expect(
+      createServer({
+        databaseUrl: scratchUrl(),
+        requireAuth: true,
+        corsOrigins: true,
+      }),
+    ).rejects.toThrow(/reflects every origin/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 — bootstrap admin race
+// ---------------------------------------------------------------------------
+
+describe('V3 — bootstrap admin race', () => {
+  it('grants admin to at most one user under concurrent first-boot signups', async () => {
+    if (!app) throw new Error('Server not booted');
+    const rm = app.roleManager;
+    // Nothing has signed up in this suite, so the bootstrap window is open.
+    expect(await rm.assignmentCount()).toBe(0);
+
+    // Fire many bootstrap grants at once, as two+ sign-ups racing in the
+    // first-boot window would. The pre-fix count-then-assign lets them all
+    // observe an empty table and each become admin.
+    const userIds = Array.from({ length: 25 }, (_, i) => `race-user-${i}`);
+    const results = await Promise.all(userIds.map((id) => rm.grantAdminIfFirstUser(id)));
+
+    // Exactly one call performed the grant, and exactly one admin exists.
+    expect(results.filter(Boolean).length).toBe(1);
+    const admin = await rm.getByName('admin');
+    expect(admin).toBeDefined();
+    const admins = await rm.getUsersForRole((admin as { id: string }).id);
+    expect(admins.length).toBe(1);
+  });
+});

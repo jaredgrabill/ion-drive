@@ -23,6 +23,26 @@ defaults, not code bugs.
 
 ---
 
+## Remediation status (2026-07-12)
+
+All seven findings are **fixed**, each as its own commit on branch
+`security/framework-mode-audit-fixes` with a regression test:
+
+| Finding | Severity | Fixing commit | Summary of fix |
+| --- | --- | --- | --- |
+| V1 | Critical | `0270267` | Refuse open-mode boot in production (unless `ION_ALLOW_OPEN=true`); scaffold `ION_REQUIRE_AUTH=true`. |
+| V2 | Critical | `b813fc2` | Refuse wildcard credentialed CORS at boot; default same-origin; explicit allowlist otherwise. |
+| V3 | High | `2a0222d` | Serialize the first-admin bootstrap with a transaction-scoped advisory lock. |
+| V5 | High | `36000b7` | Move signup lockout into Better Auth's own router (a `before` hook); fuzzing found no live bypass in 1.6.23. |
+| V4 | Medium | `9490175` | Gate the signup lockout on a durable `_ion_config` marker, not a live assignment count. |
+| V6 | Medium | `8dc4756` | Boot-time warnings for open `/metrics` and non-production posture (loopback-only metrics rejected — see below). |
+| V7 | Medium | `8dc4756` | One-shot runtime warning when `X-Forwarded-For` arrives while `trustProxy` is off. |
+
+**Deferred sub-item:** V6's "loopback-only metrics when no token" was considered and **not**
+implemented — restricting `/metrics` to loopback source IPs would break the shipped docker
+observability overlay's cross-host scrape (`host.docker.internal`); the bearer token plus the
+boot-time warning are the recommended controls instead.
+
 ## Findings
 
 Severity: **Critical** = exploitable in the default deployment; **High** = exploitable under a
@@ -45,6 +65,8 @@ defense-in-depth gap.
 - **Fix direction:** scaffold `ION_REQUIRE_AUTH=true` by default, and/or have `createServer`
   refuse to boot with RBAC off unless `NODE_ENV=development` (or an explicit
   `ION_ALLOW_OPEN=true` acknowledgement), logging at `error` not `warn`.
+- **Fixed** (`0270267`): `assertSafeAuthPosture` refuses the production open boot; scaffold + docs
+  set `ION_REQUIRE_AUTH=true`. Regression: `security-defaults.integration.test.ts` (exploit + guard).
 
 ### V2 — Wide-open credentialed CORS by default (`origin: true` + `credentials: true`)  ·  Critical
 - `corsOrigins` defaults to `true` (`config/index.ts:42`); `server.ts:320-323` registers
@@ -57,6 +79,8 @@ defense-in-depth gap.
   mutations (schema, API-key creation, data) — cross-site data-exfil / CSRF.
 - **Fix direction:** refuse (hard error) `origin:true` together with `credentials:true`; default
   to same-origin; require an explicit allowlist when credentials are enabled.
+- **Fixed** (`b813fc2`): `resolveCorsOptions` throws on a wildcard origin; default `false`
+  (same-origin). Regression: `cors-options.test.ts` + `security-defaults.integration.test.ts`.
 
 ### V3 — TOCTOU race: `ION_DISABLE_SIGNUP` + bootstrap can mint multiple admins  ·  High
 - The signup guard (`server.ts` `buildSignupGuard` → `assignmentCount() > 0`) and the bootstrap
@@ -68,6 +92,8 @@ defense-in-depth gap.
   both are granted admin. Violates "only the first user is admin, then signup locks."
 - **Fix direction:** single transaction with `SELECT … FOR UPDATE` / a PG advisory lock around
   the check-create-grant, or a unique partial index enforcing exactly one bootstrap admin.
+- **Fixed** (`2a0222d`): `RoleManager.grantAdminIfFirstUser` runs the check-and-grant under a
+  transaction-scoped `pg_advisory_xact_lock`. Regression: 25 concurrent grants → one admin.
 
 ### V4 — Signup lockout silently re-opens if role assignments reach zero  ·  Medium
 - The guard keys on `assignmentCount() > 0`, not "signup ever completed" (documented as
@@ -75,6 +101,9 @@ defense-in-depth gap.
   an attacker with `manage` on `roles`), public signup re-opens and the next signup becomes admin.
 - **Fix direction:** gate on a durable "bootstrap complete" flag (e.g. a `_ion_config` marker) set
   once, instead of a live count; keep the count only for the first-ever boot.
+- **Fixed** (`9490175`): durable `_ion_config` marker `bootstrap.completed` set atomically with the
+  first grant + backfilled at boot; the guard reads it, not the count. Regression:
+  `signup-lockout.integration.test.ts` (still 403 after all assignments removed).
 
 ### V5 — Signup match uses a second router; divergence = lockout bypass  ·  High (unverified)
 - The guard matches `request.url.startsWith('/api/auth/sign-up')` on Fastify's parsed URL, then
@@ -84,6 +113,11 @@ defense-in-depth gap.
   account. **Plausible, not yet PoC'd** — needs fuzzing against Better Auth's routing.
 - **Fix direction:** enforce the block inside the same router that dispatches signup (a Better
   Auth hook / `before` handler), not a prefix check in the outer scope.
+- **Fixed** (`36000b7`): enforcement moved to a Better Auth `before` hook keyed on `ctx.path`; the
+  outer prefix check removed. Fuzzing (mixed-case, percent-encoded, double-slash, dot-segment)
+  found **no** live bypass in better-auth 1.6.23 — better-call is case-sensitive and does not
+  percent-decode before matching — but the two-router hazard is eliminated regardless. Regression:
+  `signup-lockout.integration.test.ts`.
 
 ### V6 — `/metrics` open by default; helmet CSP only in production  ·  Medium
 - `ION_METRICS_TOKEN` unset by default (`config/index.ts:132`) → `/metrics` served to anyone
@@ -94,6 +128,10 @@ defense-in-depth gap.
   same-origin admin SPA, verbose logging).
 - **Fix direction:** document/require `NODE_ENV=production` for deploys; consider defaulting the
   metrics endpoint to loopback-only when no token is set.
+- **Fixed** (`8dc4756`): boot-time warnings for open `/metrics` and non-production posture
+  (`collectBootAdvisories`); docs updated. Loopback-only metrics **deferred** — it would break the
+  shipped docker observability overlay's cross-host scrape; token + warning are the controls.
+  Regression: `security-advisories.test.ts`.
 
 ### V7 — `trustProxy=false` default is an availability footgun behind a proxy  ·  Medium
 - Default `false` is correct against IP spoofing, but the rate limiter keys on `request.ip`
@@ -103,6 +141,9 @@ defense-in-depth gap.
   mode and the default one is silent.
 - **Fix direction:** detect "behind a proxy but `trustProxy=false`" at boot (e.g. warn when
   `X-Forwarded-For` is present but not trusted) and document the correct setting prominently.
+- **Fixed** (`8dc4756`): one-shot `onRequest` warning when `X-Forwarded-For` arrives while
+  `trustProxy` is off (`isUntrustedForwardedFor`); checklist §6 documents the correct setting.
+  Regression: `security-advisories.test.ts`.
 
 ---
 

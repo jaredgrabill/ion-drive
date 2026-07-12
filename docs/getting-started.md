@@ -29,8 +29,15 @@ npm run dev               # tsx watch server.ts
 - Admin console: `http://localhost:3000/admin`
 
 The **first user to sign up becomes the admin**. Open the admin console and
-create your account. (`.env` was generated with fresh secrets; production
+create your account. (`.env` was generated with fresh secrets and
+`ION_REQUIRE_AUTH=true`, so the API is authenticated from the first request —
+after you sign up, other calls need your session or an API key. Production
 hardening knobs are documented in `.env.example`.)
+
+> Ion Drive will **refuse to boot in production** (`NODE_ENV=production`) with
+> authentication disabled, unless you set `ION_ALLOW_OPEN=true` to acknowledge
+> a deliberately open deployment. Keep `ION_REQUIRE_AUTH=true` for anything
+> reachable by others.
 
 > **Contributor path:** working on Ion Drive itself? Clone
 > `jaredgrabill/ion-drive` and `pnpm dev` — see [CONTRIBUTING](https://github.com/jaredgrabill/ion-drive/blob/main/CONTRIBUTING.md).

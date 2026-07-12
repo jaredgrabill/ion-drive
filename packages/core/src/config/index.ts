@@ -38,8 +38,15 @@ const configSchema = z.object({
   /** PostgreSQL connection URL for the system database */
   databaseUrl: z.string().url().default('postgresql://ion:ion@localhost:5432/ion_drive'),
 
-  /** CORS allowed origins */
-  corsOrigins: z.union([z.string(), z.array(z.string()), z.boolean()]).default(true),
+  /**
+   * CORS allowed origins. Defaults to **`false`** — same-origin only (no
+   * `Access-Control-Allow-Origin` header), because Ion Drive always sends
+   * credentials (cookie auth) and a reflected/wildcard origin combined with
+   * credentials is a cross-site request-forgery hole (audit V2). Set an
+   * explicit allowlist (`ION_CORS_ORIGINS=https://app.example.com`) to permit a
+   * separate frontend origin. A wildcard (`true`/`'*'`) is refused at boot.
+   */
+  corsOrigins: z.union([z.string(), z.array(z.string()), z.boolean()]).default(false),
 
   /**
    * Fastify `trustProxy` setting — controls whether `X-Forwarded-*` headers
@@ -69,6 +76,16 @@ const configSchema = z.object({
 
   /** When true, RBAC is enforced on data/schema/admin endpoints. */
   requireAuth: z.coerce.boolean().default(false),
+
+  /**
+   * Explicit acknowledgement that this server is intended to run with RBAC
+   * disabled ("open mode") — every endpoint anonymous. Required to boot in
+   * production when {@link requireAuth} is off; ignored otherwise. Open mode is
+   * always safe to boot in development/test (dev friction), but even then a
+   * loud error is logged. Never set this on an internet-facing deployment
+   * unless you truly mean "no authentication at all".
+   */
+  allowOpen: envBoolean(false),
 
   /**
    * When true, public signup closes once the first admin exists: the very
@@ -219,6 +236,7 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     encryptionKey: process.env.ION_ENCRYPTION_KEY,
     authSecret: process.env.ION_AUTH_SECRET,
     requireAuth: process.env.ION_REQUIRE_AUTH,
+    allowOpen: process.env.ION_ALLOW_OPEN,
     disableSignup: process.env.ION_DISABLE_SIGNUP,
     rateLimitEnabled: process.env.ION_RATE_LIMIT_ENABLED,
     rateLimitMax: process.env.ION_RATE_LIMIT_MAX,

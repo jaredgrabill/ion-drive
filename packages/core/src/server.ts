@@ -1,7 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import Fastify, { type FastifyInstance } from 'fastify';
 import pg from 'pg';
@@ -10,6 +9,7 @@ import pretty from 'pino-pretty';
 import { registerAdminRoutes } from './api/admin-routes.js';
 import { installAdminStatic } from './api/admin-static.js';
 import { registerBlockRoutes } from './api/block-routes.js';
+import { installCors, resolveCorsOptions } from './api/cors-options.js';
 import { registerDataRoutes } from './api/data-routes.js';
 import { registerEventRoutes } from './api/event-routes.js';
 import { registerGraphQLRoutes } from './api/graphql/plugin.js';
@@ -64,6 +64,7 @@ import { ServiceRegistry, loadPlugins } from './runtime/index.js';
 import type { IonPlugin, PluginContext } from './runtime/index.js';
 import { SchemaDoctor } from './schema/doctor.js';
 import { SchemaManager } from './schema/index.js';
+import { installSecurityAdvisories } from './security-advisories.js';
 import { LocalStorage, STORAGE_SERVICE } from './storage/index.js';
 import { TaskEngine } from './tasks/index.js';
 import type { TaskLogger } from './tasks/index.js';
@@ -85,6 +86,27 @@ const SHUTDOWN_GRACE_MS = 10_000;
 const PACKAGE_VERSION: string = (
   createRequire(import.meta.url)('../package.json') as { version: string }
 ).version;
+
+/**
+ * Guards against the framework-mode "insecure default" (audit V1): a server
+ * with RBAC enforcement disabled leaves **every** endpoint anonymous — anyone
+ * can mint an admin-bound API key, drop tables, or read secrets. That is only
+ * acceptable for local development, so in production we refuse to boot unless
+ * the operator explicitly acknowledges an open deployment via
+ * `ION_ALLOW_OPEN=true`. Called before any resource is acquired so the throw is
+ * clean. Development/test still boot open (dev friction) but the caller logs a
+ * loud error once Fastify exists.
+ */
+function assertSafeAuthPosture(config: IonDriveConfig): void {
+  if (config.requireAuth || config.nodeEnv !== 'production' || config.allowOpen) return;
+  throw new Error(
+    'Refusing to boot: RBAC enforcement is disabled (ION_REQUIRE_AUTH is not set) in ' +
+      'production, which leaves every endpoint anonymous — any caller could mint an ' +
+      'admin API key, drop tables, or read secrets. Set ION_REQUIRE_AUTH=true. If (and ' +
+      'only if) you truly intend an open, unauthenticated deployment, acknowledge it ' +
+      'explicitly with ION_ALLOW_OPEN=true.',
+  );
+}
 
 /**
  * Resolves the master secret for encryption and auth signing. Prefers an
@@ -170,7 +192,9 @@ function buildSignupGuard(
   roleManager: RoleManager,
 ): (() => Promise<boolean>) | undefined {
   if (!config.disableSignup) return undefined;
-  return async () => (await roleManager.assignmentCount()) > 0;
+  // Gate on the durable "bootstrap complete" marker, not a live count, so
+  // removing every role assignment can't re-open public signup (audit V4).
+  return async () => roleManager.isBootstrapComplete();
 }
 
 /**
@@ -292,6 +316,12 @@ export async function createServer(
 ) {
   const config = loadConfig(configOverrides);
 
+  // Fail fast on the insecure defaults (audit V1/V2) before acquiring any
+  // resource: a production server with RBAC off must explicitly opt into open
+  // mode, and a wildcard CORS origin with credentials is always refused.
+  assertSafeAuthPosture(config);
+  resolveCorsOptions(config);
+
   // In-memory log buffer for the admin console's instant-logs view. Created
   // before Fastify so the logger can fan out into it from the first line.
   const logBuffer = new LogBuffer(config.logBufferSize);
@@ -317,10 +347,9 @@ export async function createServer(
   }
 
   // --- Security ---
-  await server.register(cors, {
-    origin: config.corsOrigins,
-    credentials: true,
-  });
+  // CORS: same-origin by default, explicit allowlist when a separate frontend
+  // origin needs credentialed access; a wildcard origin is refused (audit V2).
+  await installCors(server, config);
 
   await server.register(helmet, {
     contentSecurityPolicy: config.nodeEnv === 'production',
@@ -330,6 +359,10 @@ export async function createServer(
   // bucket plus a stricter one for the Better Auth catch-all at /api/auth/*.
   // See api/rate-limit-options.ts for the bucket mechanics.
   await installRateLimit(server, config);
+
+  // Boot-time security advisories (audit V6: open /metrics, non-production
+  // posture) + a one-shot untrusted-proxy warning (audit V7).
+  installSecurityAdvisories(server, config);
 
   // --- Database connections ---
   const systemDb = createSystemDb({ connectionString: config.databaseUrl });
@@ -411,6 +444,9 @@ export async function createServer(
   const apiKeyManager = new ApiKeyManager(systemDb);
   const roleManager = new RoleManager(systemDb);
   await roleManager.seedDefaults();
+  // Backfill the durable bootstrap marker for pre-marker deployments that
+  // already have an admin, so the signup lockout is durable for them (V4).
+  await roleManager.ensureBootstrapMarker();
   const permissionEngine = new PermissionEngine(roleManager);
 
   // --- Phase 12: outbound webhooks (signed event push, riding the bus) ---
@@ -465,14 +501,12 @@ export async function createServer(
     // admin exists.
     isSignupBlocked: buildSignupGuard(config, roleManager),
     // First-run bootstrap: the very first user to sign up becomes an admin,
-    // so there is always a way in without a pre-seeded account.
+    // so there is always a way in without a pre-seeded account. The grant is
+    // serialized (see RoleManager.grantAdminIfFirstUser) so concurrent
+    // first-boot sign-ups can't both become admin (audit V3).
     onUserCreated: async (userId) => {
-      if ((await roleManager.assignmentCount()) === 0) {
-        const admin = await roleManager.getByName('admin');
-        if (admin) {
-          await roleManager.assign(userId, admin.id);
-          server.log.info(`Granted admin role to first user ${userId}`);
-        }
+      if (await roleManager.grantAdminIfFirstUser(userId)) {
+        server.log.info(`Granted admin role to first user ${userId}`);
       }
     },
   });
@@ -485,7 +519,13 @@ export async function createServer(
     installRbacEnforcement(server, permissionEngine);
     server.log.info('RBAC enforcement enabled');
   } else {
-    server.log.warn('RBAC enforcement disabled (ION_REQUIRE_AUTH not set) — all endpoints open');
+    // Open mode is only reachable here in development/test, or in production
+    // with an explicit ION_ALLOW_OPEN acknowledgement (assertSafeAuthPosture).
+    // Either way it is a security-relevant posture — log at error, not warn.
+    server.log.error(
+      'RBAC enforcement is DISABLED (ION_REQUIRE_AUTH not set) — every endpoint is ' +
+        'anonymous. Set ION_REQUIRE_AUTH=true before exposing this server.',
+    );
   }
 
   // --- Decorate Fastify with core services ---

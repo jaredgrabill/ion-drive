@@ -6,16 +6,29 @@ top to bottom before exposing a server to the internet.
 
 ## 1. Turn authentication on
 
-`ION_REQUIRE_AUTH` defaults to **`false`** — out of the box, every data,
-schema, and admin endpoint is open. That is a deliberate local-development
-default and must be flipped in production:
+`ION_REQUIRE_AUTH` defaults to **`false`** at the config level — but a project
+scaffolded with `ion-drive init` ships an `.env` that sets it to **`true`**, and
+in **production a server with RBAC off refuses to boot** unless you explicitly
+acknowledge an open deployment. So the safe posture is the default; you have to
+go out of your way to run open:
 
 ```bash
-ION_REQUIRE_AUTH=true
+ION_REQUIRE_AUTH=true          # enforce RBAC everywhere (scaffold default)
 ```
 
-With it on, RBAC is enforced across REST, GraphQL, MCP, schema, and admin
-routes. A few endpoints stay public by design: `/health`, `/api/v1` (the
+Leaving it unset (or `false`) leaves **every** data, schema, and admin endpoint
+anonymous — anyone can mint an admin-bound API key, drop tables, or read
+secrets. That is only tolerated for local development. With `NODE_ENV=production`
+the server throws at boot in that state; the escape hatch, for a deliberately
+public read/write sandbox, is a loud explicit acknowledgement:
+
+```bash
+ION_ALLOW_OPEN=true            # DANGER: boot open in production anyway. Never
+                               # on an internet-facing deployment.
+```
+
+With enforcement on, RBAC is applied across REST, GraphQL, MCP, schema, and
+admin routes. A few endpoints stay public by design: `/health`, `/api/v1` (the
 endpoint index), `/api/v1/openapi.json`, and `/api/auth/*`. Note that the
 OpenAPI spec reveals your schema's shape — if that matters to you, keep the
 server off the public internet or behind your own gateway.
@@ -49,6 +62,9 @@ Beyond the boot guard above, production mode:
   with RBAC on, the playground *page* loads over GET by design; the actual
   GraphQL operations are POSTs and are guarded.)
 
+The server logs a boot-time warning whenever it starts outside production, so a
+deploy that forgot to set `NODE_ENV` is noticeable in the logs.
+
 ## 4. Terminate TLS in front of the server
 
 The container speaks plain HTTP. Put a reverse proxy or ingress
@@ -57,16 +73,22 @@ the public HTTPS URL so the auth provider issues correct base URLs.
 
 ## 5. Lock down CORS
 
-The default `ION_CORS_ORIGINS` is allow-all (`true`) **with credentials
-enabled** — any website could make authenticated requests on behalf of a
-logged-in user's browser. Pin it to your frontend's origin:
+Ion Drive always sends credentials (cookie auth), so CORS defaults to
+**same-origin only** (`ION_CORS_ORIGINS` unset → no `Access-Control-Allow-Origin`
+header; browsers block cross-origin credentialed access). A **wildcard/reflecting
+origin (`true` or `*`) is refused at boot** — combined with credentials it would
+let any website make authenticated requests on behalf of a logged-in user's
+browser (CSRF / data exfiltration).
+
+If your frontend runs on a **separate origin**, pin CORS to it explicitly:
 
 ```bash
 ION_CORS_ORIGINS=https://app.example.com
 ```
 
-(The env var takes a single origin string; multiple origins require
-programmatic configuration via `createServer`.)
+The same-origin admin console at `/admin` needs no CORS configuration. The env
+var takes a single origin string; multiple origins require programmatic
+configuration via `createServer` (`corsOrigins: ['https://a', 'https://b']`).
 
 ## 6. Tune rate limiting
 
@@ -96,11 +118,18 @@ Only enable it when a proxy you control is the sole way to reach the server —
 trusting forwarded headers from arbitrary clients lets them spoof their IP
 and rotate rate-limit buckets.
 
+The server watches for the opposite mistake: if a request arrives carrying
+`X-Forwarded-For` while `ION_TRUST_PROXY` is off, it logs a one-time warning —
+`request.ip` is then the proxy's address, so every client collapses into a
+single rate-limit bucket and one actor can lock everyone out. If you see that
+warning, set `ION_TRUST_PROXY` to match your proxy.
+
 ## 7. Protect `/metrics`
 
 When `ION_METRICS_ENABLED=true` (the default), `GET /metrics` serves
 Prometheus text with no rate limiting and — by default — no authentication.
-It leaks operational detail (routes, error rates, task names). Either keep it
+It leaks operational detail (routes, error rates, task names), and the server
+logs a boot-time warning when it starts in this open state. Either keep it
 network-internal (cluster-only, a firewall rule, or a proxy block), require a
 bearer token, or disable it with `ION_METRICS_ENABLED=false` if you don't
 scrape it:
