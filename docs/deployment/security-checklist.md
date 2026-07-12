@@ -6,16 +6,29 @@ top to bottom before exposing a server to the internet.
 
 ## 1. Turn authentication on
 
-`ION_REQUIRE_AUTH` defaults to **`false`** — out of the box, every data,
-schema, and admin endpoint is open. That is a deliberate local-development
-default and must be flipped in production:
+`ION_REQUIRE_AUTH` defaults to **`false`** at the config level — but a project
+scaffolded with `ion-drive init` ships an `.env` that sets it to **`true`**, and
+in **production a server with RBAC off refuses to boot** unless you explicitly
+acknowledge an open deployment. So the safe posture is the default; you have to
+go out of your way to run open:
 
 ```bash
-ION_REQUIRE_AUTH=true
+ION_REQUIRE_AUTH=true          # enforce RBAC everywhere (scaffold default)
 ```
 
-With it on, RBAC is enforced across REST, GraphQL, MCP, schema, and admin
-routes. A few endpoints stay public by design: `/health`, `/api/v1` (the
+Leaving it unset (or `false`) leaves **every** data, schema, and admin endpoint
+anonymous — anyone can mint an admin-bound API key, drop tables, or read
+secrets. That is only tolerated for local development. With `NODE_ENV=production`
+the server throws at boot in that state; the escape hatch, for a deliberately
+public read/write sandbox, is a loud explicit acknowledgement:
+
+```bash
+ION_ALLOW_OPEN=true            # DANGER: boot open in production anyway. Never
+                               # on an internet-facing deployment.
+```
+
+With enforcement on, RBAC is applied across REST, GraphQL, MCP, schema, and
+admin routes. A few endpoints stay public by design: `/health`, `/api/v1` (the
 endpoint index), `/api/v1/openapi.json`, and `/api/auth/*`. Note that the
 OpenAPI spec reveals your schema's shape — if that matters to you, keep the
 server off the public internet or behind your own gateway.

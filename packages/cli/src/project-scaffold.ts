@@ -110,6 +110,11 @@ function envFile(): string {
 ION_PORT=3000
 ION_DATABASE_URL=postgresql://ion:ion@localhost:5432/ion_drive
 
+# Enforce RBAC on every surface. Safe default: the first user to sign up
+# becomes admin, then authentication is required. Set to false only for a
+# throwaway local sandbox — an open server lets anyone mint an admin key.
+ION_REQUIRE_AUTH=true
+
 # Generated for this project — keep them secret, rotate if leaked.
 ION_ENCRYPTION_KEY=${randomBytes(32).toString('hex')}
 ION_AUTH_SECRET=${randomBytes(32).toString('hex')}
@@ -125,8 +130,15 @@ ION_DATABASE_URL=postgresql://ion:ion@localhost:5432/ion_drive
 ION_ENCRYPTION_KEY=
 ION_AUTH_SECRET=
 
+# Enforce RBAC on every surface (the scaffolded .env sets this to true). The
+# first user to sign up becomes admin; after that, authentication is required.
+ION_REQUIRE_AUTH=true
+# ION_ALLOW_OPEN=true            # DANGER: acknowledge an open (no-auth) deploy.
+                                 # Only then will a production server boot with
+                                 # ION_REQUIRE_AUTH unset. Never use internet-facing.
+
 # --- Production hardening (see the Ion Drive security checklist) ---
-# ION_REQUIRE_AUTH=true          # enforce RBAC on every surface
+# NODE_ENV=production            # enables the helmet CSP + refuses open-mode boot
 # ION_DISABLE_SIGNUP=true        # close public signup once the first admin exists
 # ION_TRUST_PROXY=true           # honour X-Forwarded-* behind a reverse proxy
 # ION_METRICS_TOKEN=             # bearer token protecting GET /metrics

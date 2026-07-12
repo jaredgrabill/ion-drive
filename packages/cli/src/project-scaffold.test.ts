@@ -61,6 +61,17 @@ describe('scaffoldProject', () => {
     expect(pkg.dependencies['@ion-drive/admin']).toBe(pkg.dependencies['@ion-drive/core']);
   });
 
+  it('enforces RBAC by default in the generated .env (audit V1)', () => {
+    scaffoldProject(dir);
+    const env = readFileSync(join(dir, '.env'), 'utf8');
+    // A fresh project is authenticated out of the box — not an open server.
+    expect(env).toMatch(/^ION_REQUIRE_AUTH=true$/m);
+    // The example file documents the safe default and the open-mode escape hatch.
+    const example = readFileSync(join(dir, '.env.example'), 'utf8');
+    expect(example).toMatch(/^ION_REQUIRE_AUTH=true$/m);
+    expect(example).toContain('ION_ALLOW_OPEN');
+  });
+
   it('scaffolds project CI with the audit step and a weekly schedule (spec-06)', () => {
     scaffoldProject(dir);
     const ci = readFileSync(join(dir, '.github', 'workflows', 'ci.yml'), 'utf8');

@@ -87,6 +87,27 @@ const PACKAGE_VERSION: string = (
 ).version;
 
 /**
+ * Guards against the framework-mode "insecure default" (audit V1): a server
+ * with RBAC enforcement disabled leaves **every** endpoint anonymous — anyone
+ * can mint an admin-bound API key, drop tables, or read secrets. That is only
+ * acceptable for local development, so in production we refuse to boot unless
+ * the operator explicitly acknowledges an open deployment via
+ * `ION_ALLOW_OPEN=true`. Called before any resource is acquired so the throw is
+ * clean. Development/test still boot open (dev friction) but the caller logs a
+ * loud error once Fastify exists.
+ */
+function assertSafeAuthPosture(config: IonDriveConfig): void {
+  if (config.requireAuth || config.nodeEnv !== 'production' || config.allowOpen) return;
+  throw new Error(
+    'Refusing to boot: RBAC enforcement is disabled (ION_REQUIRE_AUTH is not set) in ' +
+      'production, which leaves every endpoint anonymous — any caller could mint an ' +
+      'admin API key, drop tables, or read secrets. Set ION_REQUIRE_AUTH=true. If (and ' +
+      'only if) you truly intend an open, unauthenticated deployment, acknowledge it ' +
+      'explicitly with ION_ALLOW_OPEN=true.',
+  );
+}
+
+/**
  * Resolves the master secret for encryption and auth signing. Prefers an
  * explicitly-configured key; falls back to an insecure dev key with a warning.
  */
@@ -292,6 +313,10 @@ export async function createServer(
 ) {
   const config = loadConfig(configOverrides);
 
+  // Fail fast on the insecure default (audit V1) before acquiring any resource:
+  // a production server with RBAC off must explicitly opt into open mode.
+  assertSafeAuthPosture(config);
+
   // In-memory log buffer for the admin console's instant-logs view. Created
   // before Fastify so the logger can fan out into it from the first line.
   const logBuffer = new LogBuffer(config.logBufferSize);
@@ -485,7 +510,13 @@ export async function createServer(
     installRbacEnforcement(server, permissionEngine);
     server.log.info('RBAC enforcement enabled');
   } else {
-    server.log.warn('RBAC enforcement disabled (ION_REQUIRE_AUTH not set) — all endpoints open');
+    // Open mode is only reachable here in development/test, or in production
+    // with an explicit ION_ALLOW_OPEN acknowledgement (assertSafeAuthPosture).
+    // Either way it is a security-relevant posture — log at error, not warn.
+    server.log.error(
+      'RBAC enforcement is DISABLED (ION_REQUIRE_AUTH not set) — every endpoint is ' +
+        'anonymous. Set ION_REQUIRE_AUTH=true before exposing this server.',
+    );
   }
 
   // --- Decorate Fastify with core services ---
