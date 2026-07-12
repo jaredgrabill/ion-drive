@@ -491,14 +491,12 @@ export async function createServer(
     // admin exists.
     isSignupBlocked: buildSignupGuard(config, roleManager),
     // First-run bootstrap: the very first user to sign up becomes an admin,
-    // so there is always a way in without a pre-seeded account.
+    // so there is always a way in without a pre-seeded account. The grant is
+    // serialized (see RoleManager.grantAdminIfFirstUser) so concurrent
+    // first-boot sign-ups can't both become admin (audit V3).
     onUserCreated: async (userId) => {
-      if ((await roleManager.assignmentCount()) === 0) {
-        const admin = await roleManager.getByName('admin');
-        if (admin) {
-          await roleManager.assign(userId, admin.id);
-          server.log.info(`Granted admin role to first user ${userId}`);
-        }
+      if (await roleManager.grantAdminIfFirstUser(userId)) {
+        server.log.info(`Granted admin role to first user ${userId}`);
       }
     },
   });

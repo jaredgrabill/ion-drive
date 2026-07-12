@@ -16,6 +16,14 @@ export interface RoleInput {
   permissions: PermissionGrant[];
 }
 
+/**
+ * Stable key for the transaction-scoped advisory lock that serializes the
+ * first-boot admin bootstrap ({@link RoleManager.grantAdminIfFirstUser}).
+ * Arbitrary but fixed — the ASCII of "IONA" — so every instance contends on
+ * the same lock across the cluster.
+ */
+const BOOTSTRAP_ADMIN_LOCK_KEY = 0x494f_4e41; // 1_229_870_657
+
 export class RoleManager {
   constructor(private readonly db: Kysely<SystemDatabase>) {}
 
@@ -111,6 +119,41 @@ export class RoleManager {
       .selectAll('_ion_roles')
       .where('_ion_user_roles.user_id', '=', userId)
       .execute();
+  }
+
+  /**
+   * First-boot bootstrap grant: assigns the admin role to `userId` **iff no
+   * role assignment exists yet**, and reports whether it did. Guarantees at
+   * most one bootstrap admin even under concurrent sign-ups (audit V3) —
+   * without this, two sign-ups racing in the first-boot window both observe an
+   * empty `_ion_user_roles` and both become admin.
+   *
+   * The check-and-grant runs inside a single transaction serialized by a
+   * transaction-scoped Postgres advisory lock: the first attempt holds the
+   * lock through commit; every concurrent attempt blocks on it, then observes
+   * the now-non-empty table and returns false.
+   */
+  async grantAdminIfFirstUser(userId: string): Promise<boolean> {
+    return this.db.transaction().execute(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(${BOOTSTRAP_ADMIN_LOCK_KEY})`.execute(trx);
+      const countRow = await trx
+        .selectFrom('_ion_user_roles')
+        .select((eb) => eb.fn.countAll<string>().as('count'))
+        .executeTakeFirst();
+      if (Number(countRow?.count ?? 0) > 0) return false;
+      const admin = await trx
+        .selectFrom('_ion_roles')
+        .selectAll()
+        .where('name', '=', 'admin')
+        .executeTakeFirst();
+      if (!admin) return false;
+      await trx
+        .insertInto('_ion_user_roles')
+        .values({ user_id: userId, role_id: admin.id })
+        .onConflict((oc) => oc.columns(['user_id', 'role_id']).doNothing())
+        .execute();
+      return true;
+    });
   }
 
   /** Total number of user↔role assignments (used to detect first-run). */

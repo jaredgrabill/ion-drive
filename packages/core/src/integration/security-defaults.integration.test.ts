@@ -163,3 +163,29 @@ describe('V2 — credentialed CORS', () => {
     ).rejects.toThrow(/reflects every origin/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// V3 — bootstrap admin race
+// ---------------------------------------------------------------------------
+
+describe('V3 — bootstrap admin race', () => {
+  it('grants admin to at most one user under concurrent first-boot signups', async () => {
+    if (!app) throw new Error('Server not booted');
+    const rm = app.roleManager;
+    // Nothing has signed up in this suite, so the bootstrap window is open.
+    expect(await rm.assignmentCount()).toBe(0);
+
+    // Fire many bootstrap grants at once, as two+ sign-ups racing in the
+    // first-boot window would. The pre-fix count-then-assign lets them all
+    // observe an empty table and each become admin.
+    const userIds = Array.from({ length: 25 }, (_, i) => `race-user-${i}`);
+    const results = await Promise.all(userIds.map((id) => rm.grantAdminIfFirstUser(id)));
+
+    // Exactly one call performed the grant, and exactly one admin exists.
+    expect(results.filter(Boolean).length).toBe(1);
+    const admin = await rm.getByName('admin');
+    expect(admin).toBeDefined();
+    const admins = await rm.getUsersForRole((admin as { id: string }).id);
+    expect(admins.length).toBe(1);
+  });
+});
