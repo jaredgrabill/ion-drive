@@ -132,3 +132,34 @@ describe('V1 — safe auth default', () => {
     expect(me.body.roles).toContain('admin');
   });
 });
+
+// ---------------------------------------------------------------------------
+// V2 — credentialed CORS
+// ---------------------------------------------------------------------------
+
+describe('V2 — credentialed CORS', () => {
+  it('does not reflect a cross-origin credentialed request by default (same-origin)', async () => {
+    // The booted server uses the default corsOrigins. A foreign Origin must
+    // NOT be echoed back, and credentials must NOT be granted to it — otherwise
+    // any site an authenticated user visits could drive credentialed calls.
+    const res = await app?.server.inject({
+      method: 'GET',
+      url: '/api/v1',
+      headers: { origin: 'https://evil.example.com' },
+    });
+    expect(res?.statusCode).toBe(200);
+    expect(res?.headers['access-control-allow-origin']).not.toBe('https://evil.example.com');
+    expect(res?.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res?.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+
+  it('refuses to boot with a wildcard CORS origin while credentials are enabled', async () => {
+    await expect(
+      createServer({
+        databaseUrl: scratchUrl(),
+        requireAuth: true,
+        corsOrigins: true,
+      }),
+    ).rejects.toThrow(/reflects every origin/i);
+  });
+});

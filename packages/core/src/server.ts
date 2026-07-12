@@ -1,7 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import Fastify, { type FastifyInstance } from 'fastify';
 import pg from 'pg';
@@ -10,6 +9,7 @@ import pretty from 'pino-pretty';
 import { registerAdminRoutes } from './api/admin-routes.js';
 import { installAdminStatic } from './api/admin-static.js';
 import { registerBlockRoutes } from './api/block-routes.js';
+import { installCors, resolveCorsOptions } from './api/cors-options.js';
 import { registerDataRoutes } from './api/data-routes.js';
 import { registerEventRoutes } from './api/event-routes.js';
 import { registerGraphQLRoutes } from './api/graphql/plugin.js';
@@ -313,9 +313,11 @@ export async function createServer(
 ) {
   const config = loadConfig(configOverrides);
 
-  // Fail fast on the insecure default (audit V1) before acquiring any resource:
-  // a production server with RBAC off must explicitly opt into open mode.
+  // Fail fast on the insecure defaults (audit V1/V2) before acquiring any
+  // resource: a production server with RBAC off must explicitly opt into open
+  // mode, and a wildcard CORS origin with credentials is always refused.
   assertSafeAuthPosture(config);
+  resolveCorsOptions(config);
 
   // In-memory log buffer for the admin console's instant-logs view. Created
   // before Fastify so the logger can fan out into it from the first line.
@@ -342,10 +344,9 @@ export async function createServer(
   }
 
   // --- Security ---
-  await server.register(cors, {
-    origin: config.corsOrigins,
-    credentials: true,
-  });
+  // CORS: same-origin by default, explicit allowlist when a separate frontend
+  // origin needs credentialed access; a wildcard origin is refused (audit V2).
+  await installCors(server, config);
 
   await server.register(helmet, {
     contentSecurityPolicy: config.nodeEnv === 'production',

@@ -53,7 +53,7 @@ important ones:
 | `ION_REQUIRE_AUTH` | `false` | Enforce RBAC on data/schema/admin endpoints. |
 | `ION_DISABLE_SIGNUP` | `false` | Close public signup once the first admin exists. |
 | `ION_PUBLIC_URL` | — | Public base URL (used as the auth base URL). |
-| `ION_CORS_ORIGINS` | `true` | Allowed CORS origins. |
+| `ION_CORS_ORIGINS` | _(unset)_ | Allowed CORS origins. Default: same-origin only. Set an explicit origin (e.g. `https://app.example.com`) for a separate frontend; a wildcard (`true`/`*`) is refused at boot. |
 | `ION_TRUST_PROXY` | `false` | Honor `X-Forwarded-*` behind a reverse proxy (`true`, hop count, or CIDR list). |
 | `ION_ADMIN_ENABLED` | `true` | Serve the admin console at `/admin`. |
 | `ION_RATE_LIMIT_ENABLED` | `true` | Per-IP HTTP rate limiting (429 beyond the limits below). |

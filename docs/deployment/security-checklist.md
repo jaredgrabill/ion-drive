@@ -70,16 +70,22 @@ the public HTTPS URL so the auth provider issues correct base URLs.
 
 ## 5. Lock down CORS
 
-The default `ION_CORS_ORIGINS` is allow-all (`true`) **with credentials
-enabled** — any website could make authenticated requests on behalf of a
-logged-in user's browser. Pin it to your frontend's origin:
+Ion Drive always sends credentials (cookie auth), so CORS defaults to
+**same-origin only** (`ION_CORS_ORIGINS` unset → no `Access-Control-Allow-Origin`
+header; browsers block cross-origin credentialed access). A **wildcard/reflecting
+origin (`true` or `*`) is refused at boot** — combined with credentials it would
+let any website make authenticated requests on behalf of a logged-in user's
+browser (CSRF / data exfiltration).
+
+If your frontend runs on a **separate origin**, pin CORS to it explicitly:
 
 ```bash
 ION_CORS_ORIGINS=https://app.example.com
 ```
 
-(The env var takes a single origin string; multiple origins require
-programmatic configuration via `createServer`.)
+The same-origin admin console at `/admin` needs no CORS configuration. The env
+var takes a single origin string; multiple origins require programmatic
+configuration via `createServer` (`corsOrigins: ['https://a', 'https://b']`).
 
 ## 6. Tune rate limiting
 

@@ -38,8 +38,15 @@ const configSchema = z.object({
   /** PostgreSQL connection URL for the system database */
   databaseUrl: z.string().url().default('postgresql://ion:ion@localhost:5432/ion_drive'),
 
-  /** CORS allowed origins */
-  corsOrigins: z.union([z.string(), z.array(z.string()), z.boolean()]).default(true),
+  /**
+   * CORS allowed origins. Defaults to **`false`** — same-origin only (no
+   * `Access-Control-Allow-Origin` header), because Ion Drive always sends
+   * credentials (cookie auth) and a reflected/wildcard origin combined with
+   * credentials is a cross-site request-forgery hole (audit V2). Set an
+   * explicit allowlist (`ION_CORS_ORIGINS=https://app.example.com`) to permit a
+   * separate frontend origin. A wildcard (`true`/`'*'`) is refused at boot.
+   */
+  corsOrigins: z.union([z.string(), z.array(z.string()), z.boolean()]).default(false),
 
   /**
    * Fastify `trustProxy` setting — controls whether `X-Forwarded-*` headers
