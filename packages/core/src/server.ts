@@ -191,7 +191,9 @@ function buildSignupGuard(
   roleManager: RoleManager,
 ): (() => Promise<boolean>) | undefined {
   if (!config.disableSignup) return undefined;
-  return async () => (await roleManager.assignmentCount()) > 0;
+  // Gate on the durable "bootstrap complete" marker, not a live count, so
+  // removing every role assignment can't re-open public signup (audit V4).
+  return async () => roleManager.isBootstrapComplete();
 }
 
 /**
@@ -437,6 +439,9 @@ export async function createServer(
   const apiKeyManager = new ApiKeyManager(systemDb);
   const roleManager = new RoleManager(systemDb);
   await roleManager.seedDefaults();
+  // Backfill the durable bootstrap marker for pre-marker deployments that
+  // already have an admin, so the signup lockout is durable for them (V4).
+  await roleManager.ensureBootstrapMarker();
   const permissionEngine = new PermissionEngine(roleManager);
 
   // --- Phase 12: outbound webhooks (signed event push, riding the bus) ---

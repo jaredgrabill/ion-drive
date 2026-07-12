@@ -91,9 +91,27 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app?.close();
-  await adminClient?.query(`DROP DATABASE IF EXISTS ${SCRATCH_DB} WITH (FORCE)`);
+  // pg-pool's end() resolves before each client's socket finishes closing, so
+  // wait until Postgres sees no sessions on the scratch DB before the FORCE
+  // drop — otherwise it terminates the stragglers and their 57P01 events
+  // surface as unhandled errors that can fail the run.
+  await drainThenDrop(adminClient, SCRATCH_DB);
   await adminClient?.end();
 }, 60_000);
+
+/** Waits for the scratch DB to have no sessions, then FORCE-drops it. */
+async function drainThenDrop(client: pg.Client | undefined, db: string): Promise<void> {
+  const started = Date.now();
+  while (client && Date.now() - started < 10_000) {
+    const res = await client.query(
+      'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1',
+      [db],
+    );
+    if (res.rows[0].n === 0) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  await client?.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+}
 
 // ---------------------------------------------------------------------------
 // V1 — auth-off default

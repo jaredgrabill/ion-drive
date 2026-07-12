@@ -87,6 +87,18 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app?.close();
+  // Wait for the scratch DB's sessions to drain before the FORCE drop, so it
+  // never terminates a lingering pool socket (its 57P01 would surface as an
+  // unhandled error). Mirrors platform.integration.test.ts.
+  const started = Date.now();
+  while (adminClient && Date.now() - started < 10_000) {
+    const res = await adminClient.query(
+      'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1',
+      [SCRATCH_DB],
+    );
+    if (res.rows[0].n === 0) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
   await adminClient?.query(`DROP DATABASE IF EXISTS ${SCRATCH_DB} WITH (FORCE)`);
   await adminClient?.end();
 }, 60_000);
@@ -133,5 +145,31 @@ describe('V5 — signup lockout cannot be bypassed by path mangling', () => {
       expect(res.status, `variant ${path} created an account`).not.toBe(200);
       expect(await userCount(), `variant ${path} leaked an account`).toBe(1);
     }
+  });
+});
+
+describe('V4 — signup lockout is durable across zero role assignments', () => {
+  it('stays closed after every role assignment is removed', async () => {
+    if (!app) throw new Error('Server not booted');
+    const rm = app.roleManager;
+
+    // The first admin from the V5 test still exists; remove their admin role so
+    // the assignment count drops back to zero (migration to API-key-only access,
+    // or an attacker with `manage` on roles).
+    const admin = await rm.getByName('admin');
+    expect(admin).toBeDefined();
+    const adminId = (admin as { id: string }).id;
+    const adminUsers = await rm.getUsersForRole(adminId);
+    for (const userId of adminUsers) await rm.unassign(userId, adminId);
+    expect(await rm.assignmentCount()).toBe(0);
+
+    // Public signup must NOT re-open: the next signup would otherwise become
+    // admin all over again. The durable bootstrap marker keeps it closed.
+    const reopened = await signup('/api/auth/sign-up/email', {
+      email: 'late-admin@ion.test',
+      password: 'lockout-Passw0rd',
+    });
+    expect(reopened.status).toBe(403);
+    expect(await userCount()).toBe(1);
   });
 });

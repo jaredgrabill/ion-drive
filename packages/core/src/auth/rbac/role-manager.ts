@@ -24,6 +24,14 @@ export interface RoleInput {
  */
 const BOOTSTRAP_ADMIN_LOCK_KEY = 0x494f_4e41; // 1_229_870_657
 
+/**
+ * `_ion_config` key for the durable "the first-admin bootstrap has completed"
+ * marker (audit V4). Once set it is never cleared, so removing every role
+ * assignment cannot re-open public signup or re-grant admin to the next
+ * sign-up. The live assignment count only gates the very first boot.
+ */
+const BOOTSTRAP_COMPLETE_KEY = 'bootstrap.completed';
+
 export class RoleManager {
   constructor(private readonly db: Kysely<SystemDatabase>) {}
 
@@ -136,11 +144,27 @@ export class RoleManager {
   async grantAdminIfFirstUser(userId: string): Promise<boolean> {
     return this.db.transaction().execute(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(${BOOTSTRAP_ADMIN_LOCK_KEY})`.execute(trx);
+
+      // Durable gate: once bootstrap has ever completed, never grant again —
+      // even if every assignment was later removed (audit V4).
+      const marker = await trx
+        .selectFrom('_ion_config')
+        .select('key')
+        .where('key', '=', BOOTSTRAP_COMPLETE_KEY)
+        .executeTakeFirst();
+      if (marker) return false;
+
+      // No marker yet. If assignments already exist (a pre-marker deployment),
+      // record the marker but do NOT grant a second admin.
       const countRow = await trx
         .selectFrom('_ion_user_roles')
         .select((eb) => eb.fn.countAll<string>().as('count'))
         .executeTakeFirst();
-      if (Number(countRow?.count ?? 0) > 0) return false;
+      if (Number(countRow?.count ?? 0) > 0) {
+        await this.writeBootstrapMarker(trx);
+        return false;
+      }
+
       const admin = await trx
         .selectFrom('_ion_roles')
         .selectAll()
@@ -152,8 +176,54 @@ export class RoleManager {
         .values({ user_id: userId, role_id: admin.id })
         .onConflict((oc) => oc.columns(['user_id', 'role_id']).doNothing())
         .execute();
+      // Close the bootstrap window atomically with the grant.
+      await this.writeBootstrapMarker(trx);
       return true;
     });
+  }
+
+  /**
+   * Whether the first-admin bootstrap has completed (audit V4). True when the
+   * durable marker is set; falls back to "any assignment exists" for
+   * deployments predating the marker (which {@link ensureBootstrapMarker}
+   * backfills at boot). Used by the signup lockout so it never re-opens.
+   */
+  async isBootstrapComplete(): Promise<boolean> {
+    const marker = await this.db
+      .selectFrom('_ion_config')
+      .select('key')
+      .where('key', '=', BOOTSTRAP_COMPLETE_KEY)
+      .executeTakeFirst();
+    if (marker) return true;
+    return (await this.assignmentCount()) > 0;
+  }
+
+  /**
+   * Backfills the durable bootstrap marker at boot for deployments that already
+   * have role assignments but predate the marker — so the signup lockout is
+   * durable for them from the next boot onward. No-op once the marker exists.
+   */
+  async ensureBootstrapMarker(): Promise<void> {
+    const marker = await this.db
+      .selectFrom('_ion_config')
+      .select('key')
+      .where('key', '=', BOOTSTRAP_COMPLETE_KEY)
+      .executeTakeFirst();
+    if (marker) return;
+    if ((await this.assignmentCount()) > 0) await this.writeBootstrapMarker(this.db);
+  }
+
+  /** Writes the durable bootstrap-complete marker (idempotent). */
+  private async writeBootstrapMarker(db: Kysely<SystemDatabase>): Promise<void> {
+    await db
+      .insertInto('_ion_config')
+      .values({
+        key: BOOTSTRAP_COMPLETE_KEY,
+        value: JSON.stringify(true),
+        description: 'First-admin bootstrap has completed; public signup stays closed.',
+      })
+      .onConflict((oc) => oc.column('key').doNothing())
+      .execute();
   }
 
   /** Total number of user↔role assignments (used to detect first-run). */
