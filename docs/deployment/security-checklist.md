@@ -62,6 +62,9 @@ Beyond the boot guard above, production mode:
   with RBAC on, the playground *page* loads over GET by design; the actual
   GraphQL operations are POSTs and are guarded.)
 
+The server logs a boot-time warning whenever it starts outside production, so a
+deploy that forgot to set `NODE_ENV` is noticeable in the logs.
+
 ## 4. Terminate TLS in front of the server
 
 The container speaks plain HTTP. Put a reverse proxy or ingress
@@ -115,11 +118,18 @@ Only enable it when a proxy you control is the sole way to reach the server —
 trusting forwarded headers from arbitrary clients lets them spoof their IP
 and rotate rate-limit buckets.
 
+The server watches for the opposite mistake: if a request arrives carrying
+`X-Forwarded-For` while `ION_TRUST_PROXY` is off, it logs a one-time warning —
+`request.ip` is then the proxy's address, so every client collapses into a
+single rate-limit bucket and one actor can lock everyone out. If you see that
+warning, set `ION_TRUST_PROXY` to match your proxy.
+
 ## 7. Protect `/metrics`
 
 When `ION_METRICS_ENABLED=true` (the default), `GET /metrics` serves
 Prometheus text with no rate limiting and — by default — no authentication.
-It leaks operational detail (routes, error rates, task names). Either keep it
+It leaks operational detail (routes, error rates, task names), and the server
+logs a boot-time warning when it starts in this open state. Either keep it
 network-internal (cluster-only, a firewall rule, or a proxy block), require a
 bearer token, or disable it with `ION_METRICS_ENABLED=false` if you don't
 scrape it:

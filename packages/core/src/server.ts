@@ -64,6 +64,7 @@ import { ServiceRegistry, loadPlugins } from './runtime/index.js';
 import type { IonPlugin, PluginContext } from './runtime/index.js';
 import { SchemaDoctor } from './schema/doctor.js';
 import { SchemaManager } from './schema/index.js';
+import { installSecurityAdvisories } from './security-advisories.js';
 import { LocalStorage, STORAGE_SERVICE } from './storage/index.js';
 import { TaskEngine } from './tasks/index.js';
 import type { TaskLogger } from './tasks/index.js';
@@ -358,6 +359,10 @@ export async function createServer(
   // bucket plus a stricter one for the Better Auth catch-all at /api/auth/*.
   // See api/rate-limit-options.ts for the bucket mechanics.
   await installRateLimit(server, config);
+
+  // Boot-time security advisories (audit V6: open /metrics, non-production
+  // posture) + a one-shot untrusted-proxy warning (audit V7).
+  installSecurityAdvisories(server, config);
 
   // --- Database connections ---
   const systemDb = createSystemDb({ connectionString: config.databaseUrl });
