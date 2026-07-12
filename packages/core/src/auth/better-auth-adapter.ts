@@ -13,6 +13,7 @@
 
 import type { IncomingHttpHeaders } from 'node:http';
 import { betterAuth } from 'better-auth';
+import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { getMigrations } from 'better-auth/db/migration';
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node';
 import type { FastifyInstance } from 'fastify';
@@ -46,6 +47,7 @@ export interface BetterAuthProviderOptions {
  * `Auth<BetterAuthOptions>` is not assignable from the specialized instance).
  */
 function createAuthInstance(options: BetterAuthProviderOptions, basePath: string) {
+  const isSignupBlocked = options.isSignupBlocked;
   return betterAuth({
     database: options.pool,
     secret: options.secret,
@@ -53,6 +55,21 @@ function createAuthInstance(options: BetterAuthProviderOptions, basePath: string
     basePath,
     emailAndPassword: { enabled: true, autoSignIn: true },
     trustedOrigins: options.trustedOrigins,
+    hooks: {
+      // Signup lockout (ION_DISABLE_SIGNUP) is enforced **inside Better Auth's
+      // own router** (audit V5): `ctx.path` is the endpoint better-call already
+      // matched (e.g. `/sign-up/email`), so this cannot diverge from an outer
+      // Fastify prefix check on case/encoding. Any sign-up endpoint is rejected
+      // with a 403 before an account is created.
+      before: createAuthMiddleware(async (ctx) => {
+        if (!isSignupBlocked) return;
+        if (ctx.path === '/sign-up' || ctx.path.startsWith('/sign-up/')) {
+          if (await isSignupBlocked()) {
+            throw new APIError('FORBIDDEN', { message: 'Signup is disabled on this server' });
+          }
+        }
+      }),
+    },
     databaseHooks: {
       user: {
         create: {
@@ -90,13 +107,11 @@ export class BetterAuthProvider implements AuthProvider {
   readonly auth: BetterAuthInstance;
   private readonly nodeHandler: (req: unknown, res: unknown) => void;
   private readonly basePath: string;
-  private readonly isSignupBlocked?: () => boolean | Promise<boolean>;
 
   constructor(options: BetterAuthProviderOptions) {
     this.basePath = options.basePath ?? '/api/auth';
     this.auth = createAuthInstance(options, this.basePath);
     this.nodeHandler = toNodeHandler(this.auth) as (req: unknown, res: unknown) => void;
-    this.isSignupBlocked = options.isSignupBlocked;
   }
 
   async initialize(): Promise<void> {
@@ -108,20 +123,12 @@ export class BetterAuthProvider implements AuthProvider {
   async registerRoutes(fastify: FastifyInstance): Promise<void> {
     const basePath = this.basePath;
     const nodeHandler = this.nodeHandler;
-    const isSignupBlocked = this.isSignupBlocked;
     await fastify.register(async (scope) => {
       // Better Auth reads the raw request body, so stop Fastify from consuming it.
       scope.addContentTypeParser('application/json', {}, (_req, _payload, done) => done(null));
+      // Signup lockout is enforced inside Better Auth's router via a `before`
+      // hook (see createAuthInstance), so there is no fragile prefix check here.
       scope.all(`${basePath}/*`, async (request, reply) => {
-        // Signup lockout (ION_DISABLE_SIGNUP): reject before handing the
-        // request to Better Auth so no account is ever created.
-        if (isSignupBlocked && request.url.startsWith(`${basePath}/sign-up`)) {
-          if (await isSignupBlocked()) {
-            return reply
-              .code(403)
-              .send({ error: 'Forbidden', message: 'Signup is disabled on this server' });
-          }
-        }
         reply.hijack();
         nodeHandler(request.raw, reply.raw);
       });
