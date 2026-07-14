@@ -142,6 +142,11 @@ curated "awesome-mcp-servers" lists.
 
 ## Demo asset script (Lane 3 §5 — owner records or approves)
 
+> **Prepared:** an animated terminal SVG of this transcript is on PR #5 as
+> `docs/assets/golden-path.svg`, already embedded in the README hero —
+> approving the PR satisfies this item. Record a real GIF from the shot list
+> below only if you prefer live footage; the embed swaps 1:1.
+
 One take, ~35s, in a clean terminal (or asciinema→gif). Font ≥16px, dark theme:
 
 ```text
