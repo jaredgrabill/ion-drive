@@ -212,6 +212,9 @@ No new subsystems until this lane closes. The deliverable is *evidence of use*, 
 
 ## Progress ledger
 
+**Lane status (2026-07-14): Lanes 0–3 COMPLETE. Lane 4 is open — owner posts, agent
+tracks `launch_log.md` and ships friction fixes as `v0.4.x` patches.**
+
 | Date | Lane/step | Evidence |
 |:--|:--|:--|
 | 2026-07-13 | Plan adopted | This document. |
@@ -231,6 +234,7 @@ No new subsystems until this lane closes. The deliverable is *evidence of use*, 
 | 2026-07-14 | Lane 1 §5 fixtures (spec-04 §1 closed) | Exact audit@0.1.2 artifact bytes + genuine sigstore bundle + hand-corrupted copies committed as CLI fixtures; `real-bundle.test.ts` (4 offline / 6 with `ION_SIGSTORE_NETWORK_TESTS=1` — genuine bundle **verified**, truncated signature **invalid**) (54bc3fb). |
 | 2026-07-14 | Lane 1 §6 complete | Blocks CI green on main for all five blocks (post-push runs incl. the attested publish); AC6 dogfood (earlier row); live badge/search/readme + `@probe` hint (earlier row); `search invoicing` via live index. §7 third-party rehearsal stays deferred (owner, optional). **Lane 1 done** — the stranger flow was proven on 0.4.0 and re-proven authenticated on 0.4.1: init 11.7s + install 45.4s + boot 5.7s + `add audit`+`add crm` 11.6s ≈ **75s tool time**. |
 | 2026-07-14 | Lane 3 §1 timing (published, authenticated) | Golden path on published 0.4.1 with auth on: scaffold → sign-up → role-bound key → MCP create/insert/query → blocks installed — ~75s of tool time + human admin steps; well under the 5-minute promise. Incidental: site BlocksBrowser routing test de-flaked (54bc3fb — async README duplicated the queried text; failed CI once on 7ab84fa). |
+| 2026-07-14 | **Lane 3 COMPLETE** (PR #5 merged = §6 owner review) | Merge d794b29; Deploy site + CI green. Live-verified: `iondrive.dev` hero opens with the wedge, terminal shows the MCP connect, old pitch gone, getting-started leads agent-first. README + demo asset (`docs/assets/golden-path.svg`) on `main`. Golden path timed on published 0.4.1 (~75s tool time, earlier row). |
 | 2026-07-14 | Lane 0 §3 (local rehearsal) | The workflow's publish step rehearsed locally: LICENSE/NOTICE copied in, `npm publish --dry-run` green for **all seven** packages — client (36 files/32.4 kB), admin (48/1.7 MB), core (464/438.1 kB), cli (288/333.0 kB), plugin-redis (44/33.3 kB), plugin-sendgrid (16/11.7 kB), plugin-storage-s3 (16/15.1 kB). Remaining §3 risk is CI-environment-only; the owner dispatch confirms it. |
 | 2026-07-13 | Lane 2 §1–2 freeze + litmus | Roadmap banner (Phases 15–17, plugin-redis test TODO, §1.5 polish, Phase 18 leftovers frozen until ≥5 external users) + litmus test recorded in roadmap.md and CLAUDE.md status. |
 | 2026-07-13 | Lane 2 §3 stragglers | `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1, contact = SECURITY.md address). Audit block `changed_by: payload.actorId` shipped as audit@0.1.1 in ion-drive-blocks (fa9ad95; block test 7/7). Incidental fix surfaced by the repack: `.gitattributes` now pins `*/code/**` `-text` — CRLF checkouts drifted every code-carrying artifact digest (a967a95). |
