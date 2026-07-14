@@ -7,7 +7,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from './index.js';
 
-const ENV_KEYS = ['ION_TRUST_PROXY', 'ION_DISABLE_SIGNUP', 'ION_METRICS_TOKEN'] as const;
+const ENV_KEYS = [
+  'ION_TRUST_PROXY',
+  'ION_DISABLE_SIGNUP',
+  'ION_METRICS_TOKEN',
+  'ION_REQUIRE_AUTH',
+] as const;
 
 afterEach(() => {
   for (const key of ENV_KEYS) delete process.env[key];
@@ -49,6 +54,19 @@ describe('loadConfig hardening knobs', () => {
   ] as const)('parses ION_DISABLE_SIGNUP=%j as %j', (raw, expected) => {
     process.env.ION_DISABLE_SIGNUP = raw;
     expect(loadConfig().disableSignup).toBe(expected);
+  });
+
+  // Regression (launch-plan Lane 0): requireAuth was parsed with
+  // z.coerce.boolean(), which treats every non-empty string — including
+  // "false" — as true, silently ignoring the documented off switch.
+  it.each([
+    ['true', true],
+    ['false', false],
+    ['0', false],
+    ['off', false],
+  ] as const)('parses ION_REQUIRE_AUTH=%j as %j', (raw, expected) => {
+    process.env.ION_REQUIRE_AUTH = raw;
+    expect(loadConfig().requireAuth).toBe(expected);
   });
 
   it('accepts ION_METRICS_TOKEN', () => {

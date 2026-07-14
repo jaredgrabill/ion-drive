@@ -154,6 +154,10 @@ defense-in-depth gap.
 - `admin-static.ts` delegates traversal defense to `@fastify/static`; asset-404 vs SPA-fallback
   split is sound. No traversal issue found.
 - `envBoolean` correctly handles falsy spellings (avoids the `z.coerce.boolean` all-truthy trap).
+  *Post-audit correction (2026-07-13, launch-plan Lane 0):* `requireAuth` itself was still parsed
+  with `z.coerce.boolean()`, so `ION_REQUIRE_AUTH=false` silently enforced auth (safe direction,
+  but the documented off switch was a no-op and the V1 production refusal was unobservable when
+  the var was set to a falsy spelling). Switched to `envBoolean(false)`.
 - The two recent test commits are legitimate, not disabled tests.
 
 ---

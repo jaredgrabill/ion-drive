@@ -74,8 +74,13 @@ const configSchema = z.object({
   /** Secret used to sign auth sessions/tokens. Falls back to the encryption key. */
   authSecret: z.string().min(16).optional(),
 
-  /** When true, RBAC is enforced on data/schema/admin endpoints. */
-  requireAuth: z.coerce.boolean().default(false),
+  /**
+   * When true, RBAC is enforced on data/schema/admin endpoints. Parsed with
+   * `envBoolean` so `ION_REQUIRE_AUTH=false` actually disables enforcement
+   * (`z.coerce.boolean()` treats every non-empty string — including "false" —
+   * as true, which silently ignored the documented off switch).
+   */
+  requireAuth: envBoolean(false),
 
   /**
    * Explicit acknowledgement that this server is intended to run with RBAC
