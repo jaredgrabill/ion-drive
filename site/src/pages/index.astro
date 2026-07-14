@@ -60,6 +60,18 @@ const mcpSample = `// POST /api/v1/mcp — tool: query_data
   "expand": ["company"]
 }`;
 
+// The boot refusals + signup lockout, verbatim from the live V1–V5 checks
+// against the published 0.4.1 artifacts (messages trimmed with …).
+const secureSample = `$ NODE_ENV=production node server.ts        # auth accidentally off?
+✖ Refusing to boot: RBAC enforcement is disabled (ION_REQUIRE_AUTH is
+  not set) in production, which leaves every endpoint anonymous …
+
+$ ION_CORS_ORIGINS='*' node server.ts       # wildcard CORS + cookies?
+✖ Refusing to boot: Unsafe CORS configuration …
+
+POST /api/auth/sign-up/email                # second signup after bootstrap
+→ 403 { "message": "Signup is disabled on this server" }`;
+
 // README.md hero — the four-command golden path.
 const quickStartSample = `npx @ion-drive/cli init my-app && cd my-app
 docker compose up -d && npm install
@@ -149,6 +161,31 @@ npx ion-drive add crm    # domain blocks land as editable code in blocks/`;
           </ul>
           <p><a href="/docs/api/mcp/">MCP server reference</a>.</p>
           <Code slot="code" code={mcpSample} lang="jsonc" themes={themes} />
+        </Pitch>
+
+        <Pitch
+          eyebrow="Secure by default"
+          title="Ship fast without shipping the classic holes"
+          codeTitle="the platform refuses, so you don't leak"
+        >
+          <p>
+            A fresh <code>init</code> enforces auth and RBAC on <strong>every</strong> surface —
+            REST, GraphQL, and MCP all resolve the caller (session or role-bound API key) and
+            check role permissions before touching data. The pitfalls of shipping fast are the
+            platform's job to catch, not yours:
+          </p>
+          <ul class="starlist">
+            <li>Production <strong>refuses to boot</strong> with auth off or wildcard credentialed CORS</li>
+            <li>Signup locks after the first admin; rate limiting is on out of the box</li>
+            <li>Secrets encrypted at rest (AES-256-GCM), never listed back; API keys stored as hashes</li>
+            <li>Outbound webhooks HMAC-signed; registry blocks digest-verified and sigstore-attested</li>
+          </ul>
+          <p>
+            Next on this front: user-scoped row-level policies and per-tenant data scoping —
+            <a href="https://github.com/jaredgrabill/ion-drive/blob/main/docs/roadmap.md">roadmap</a>.
+            Hardening knobs: <a href="/docs/deployment/security-checklist/">the security checklist</a>.
+          </p>
+          <Code slot="code" code={secureSample} lang="text" themes={themes} />
         </Pitch>
       </div>
     </section>

@@ -21,6 +21,12 @@ proposed future phases. When a phase ships, move its note into `implementation_p
 > more true (*"the self-hostable, MCP-native backend an AI agent stands up in minutes — with
 > domain blocks you own as editable code"*), (b) unblocks a real external user, or (c) fixes
 > something broken. A real user's ask beats any roadmap entry; no roadmap entry beats the freeze.
+>
+> **Owner-designated first unfreeze candidate (2026-07-14):** user-scoped **row-level security**
+> and per-tenant data scoping (the F12/F10 authz-depth slice of Phases 16–17) — the next step of
+> the "secure by default" promise now on the landing page: APIs scoped to the logged-in user's
+> rows, not just object-level roles. Still gated on the ≥5-external-users bar; this note only
+> stages what gets thawed first.
 
 Legend: 🔴 broken/misleading today · 🟠 gap vs. our own stated conventions · 🟡 planned-but-missing capability · ⚪ polish · ✅ resolved.
 

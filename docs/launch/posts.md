@@ -37,9 +37,12 @@ registry + site live) and the Lane 3 copy PR is merged.
 >    the Stripe integration into blocks/invoicing/ in your repo — shadcn-style.
 >    You edit it; updates arrive as diffs you review, never overwrites.
 >    Artifacts are digest-verified and sigstore-attested.
-> 2. *Auth is on by default.* First user to sign up becomes admin, signup can
->    lock after bootstrap, and a production boot with auth off refuses to
->    start unless you explicitly acknowledge an open deployment.
+> 2. *Secure by default.* Auth + RBAC are enforced on every surface (REST,
+>    GraphQL, MCP) from the first request; the first user to sign up becomes
+>    admin, signup locks after bootstrap, and a production boot with auth off
+>    or wildcard credentialed CORS refuses to start. The idea is to catch the
+>    holes vibe-coded fast-ships leak — exposed data, open secrets — before
+>    they reach the internet. (User-scoped row-level policies are next.)
 >
 > Site: https://iondrive.dev · Source: https://github.com/jaredgrabill/ion-drive
 > (Apache-2.0). It's early — I want the first ten real users' friction reports

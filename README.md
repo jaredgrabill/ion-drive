@@ -29,6 +29,15 @@ Every object it creates is instantly a REST endpoint, a GraphQL type, an MCP
 tool, and a row in the admin console. **Your agent gets REST + GraphQL + MCP
 for free; blocks are code you own, not a marketplace lock-in.**
 
+And it's **secure by default** — shipping fast shouldn't mean shipping the
+classic holes. Every surface (REST, GraphQL, MCP) resolves the caller and
+enforces role permissions from the first request; production **refuses to
+boot** with auth off or wildcard credentialed CORS; signup locks after the
+first admin; secrets are encrypted at rest and API keys stored as hashes; rate
+limiting is on out of the box. The platform catches the pitfalls so your
+prototype can go straight to the internet — see the
+[security checklist](docs/deployment/security-checklist.md).
+
 ---
 
 ## The five minutes, spelled out
