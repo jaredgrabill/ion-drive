@@ -10,6 +10,18 @@ item found in a full review of the codebase after Phase 10 shipped, and organize
 proposed future phases. When a phase ships, move its note into `implementation_plan.md` /
 `CLAUDE.md` as usual and prune it here.
 
+> [!IMPORTANT]
+> **BREADTH FREEZE (2026-07-13, [launch_plan.md](launch_plan.md)) — everything below is FROZEN
+> until Ion Drive has ≥5 real external users.** Frozen explicitly: Phase 15 (file field UX),
+> Phase 16 (multi-tenancy), Phase 17 (authz depth), the plugin-redis integration-test TODO, all
+> §1.5 admin polish, and every "deferred small item" under Phase 18. Exempt: bugfixes, security
+> issues, and launch blockers.
+>
+> **Litmus test for new work while frozen** — admissible only if it (a) makes the wedge sentence
+> more true (*"the self-hostable, MCP-native backend an AI agent stands up in minutes — with
+> domain blocks you own as editable code"*), (b) unblocks a real external user, or (c) fixes
+> something broken. A real user's ask beats any roadmap entry; no roadmap entry beats the freeze.
+
 Legend: 🔴 broken/misleading today · 🟠 gap vs. our own stated conventions · 🟡 planned-but-missing capability · ⚪ polish · ✅ resolved.
 
 > [!NOTE]
@@ -25,7 +37,7 @@ Legend: 🔴 broken/misleading today · 🟠 gap vs. our own stated conventions 
 
 | # | Finding | Detail |
 |:--|:--|:--|
-| F1 | ✅ **No CI pipeline** | Fixed 2026-07-06: `.github/workflows/ci.yml` (lint/typecheck/test/build + a Postgres-17 integration job), PR/issue templates, `SECURITY.md`. Still missing: `CODE_OF_CONDUCT.md`. |
+| F1 | ✅ **No CI pipeline** | Fixed 2026-07-06: `.github/workflows/ci.yml` (lint/typecheck/test/build + a Postgres-17 integration job), PR/issue templates, `SECURITY.md`. `CODE_OF_CONDUCT.md` added 2026-07-13 (launch-plan Lane 2). |
 | F2 | ✅ **`pnpm test:integration` was broken** | Script fixed 2026-07-06 (`vitest.integration.config.ts` created). Suite seeded 2026-07-06: `packages/core/src/integration/platform.integration.test.ts` (scratch-DB-per-run, real `createServer()` over `.inject()`; auth bootstrap, schema/CRUD/constraints, expand, GraphQL, outbox events, block lifecycle, RBAC — `passWithNoTests` removed). Further scenarios (tasks, MCP, snapshot/doctor, secrets) still welcome. |
 | F3 | ✅ **Observability overlay overpromised** | Fixed 2026-07-06: Prometheus scrape config (`/metrics` via host-gateway), Grafana datasources + Ion Drive Overview dashboard provisioning, Loki/Tempo single-binary configs, mounts wired, broken image tags corrected. Validated (`compose config`, YAML/JSON parse) but not yet live-tested against a running stack. |
 | F4 | ✅ **Docs drift: block catalog** | Fixed 2026-07-06 in `docs/getting-started.md` and both README spots. The `new-block` skill now ends with a catalog-enumeration checklist step. |
@@ -49,7 +61,7 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 | # | Finding | Detail |
 |:--|:--|:--|
 | F10 | **Multi-tenancy is aspirational** | Positioning says "database-per-tenant by default"; the plan's verification scenarios (create tenant → isolated DB) are unmet. Today: `createTenantDb` exists but there is exactly one tenant DB from config — no tenant provisioning, routing, lifecycle, or per-tenant migrations. |
-| F11 | ✅ **Actor identity** (carried from Phase 9) | Fixed 2026-07-06 (Phase 12 / ADR-019): ambient `AsyncLocalStorage` request actor (no signature threading); `created_by`/`updated_by` system fields + boot migration; `actor` on event payloads; `persist_event` gains `payload.actorId`; `_ion_migrations.applied_by` populated. Remaining: point the audit block's `changed_by` map at `payload.actorId` in `ion-drive-blocks`. |
+| F11 | ✅ **Actor identity** (carried from Phase 9) | Fixed 2026-07-06 (Phase 12 / ADR-019): ambient `AsyncLocalStorage` request actor (no signature threading); `created_by`/`updated_by` system fields + boot migration; `actor` on event payloads; `persist_event` gains `payload.actorId`; `_ion_migrations.applied_by` populated. Audit block's `changed_by` map pointed at `payload.actorId` 2026-07-13 (`ion-drive-blocks` audit@0.1.1, launch-plan Lane 2). |
 | F12 | **Field-level RBAC** | `permission-engine.ts` says "field-level scoping is a future extension". Object-level only today. Row-level policies (owner-scoped reads) are also absent — relevant for the app-backend positioning. |
 | F13 | ✅ **No rate limiting / brute-force protection** | Fixed 2026-07-06: `@fastify/rate-limit`, config-gated `ION_RATE_LIMIT_*` (default on: 300/min global per IP, 20/min on `/api/auth/*` via an independent keyed bucket), `/health`+`/metrics` exempt. Live-smoked against Postgres. |
 | F14 | ✅ **No realtime** | Fixed 2026-07-06 (Phase 12): `GET /api/v1/events/stream` (SSE, per-event RBAC) via `RealtimeBridge`; client SDK `ion.events.stream()`; admin live feed. GraphQL `Subscription.events` landed 2026-07-07 (Phase 13) over the same bridge. |
@@ -89,7 +101,7 @@ Ordered by value-per-effort and dependency. Numbers continue from Phase 10.
 2. ~~Real integration test suite~~ ✅ seeded 2026-07-06 (`platform.integration.test.ts`: auth, schema, CRUD, expand, GraphQL, events, blocks, RBAC) — extend with tasks/MCP/snapshot-doctor/secrets scenarios as they earn their keep. (F2)
 3. ~~Observability overlay provisioning~~ ✅ 2026-07-06 — remaining: live-test the stack once against real traffic and iterate the dashboard. (F3)
 4. ~~Rate limiting~~ ✅ 2026-07-06. (F13)
-5. ~~Repo hygiene~~ ✅ 2026-07-06 (`CODE_OF_CONDUCT.md` still optional). (F4, F5)
+5. ~~Repo hygiene~~ ✅ 2026-07-06 (`CODE_OF_CONDUCT.md` added 2026-07-13). (F4, F5)
 6. Release pipeline: changesets (or similar), npm publish workflow for `core`/`cli`/`client`/`blocks`, Docker image publish. (F23) → **moved to Phase 14 Tier 0** — publishing is a hard prerequisite for framework mode (ADR-018).
 7. ~~Docs: `deployment/kubernetes.md`, backup/restore, security checklist~~ ✅ 2026-07-06 (cross-linked from README/getting-started/docker.md; manifests are reference-grade, not cluster-certified). (⚪)
 

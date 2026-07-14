@@ -12,6 +12,7 @@ The core product is the **self-hosted OSS version**. A hosted variant will exist
 
 ## Current Status
 
+- **ACTIVE PHASE (2026-07-13): [`docs/launch_plan.md`](docs/launch_plan.md) — "Launch Now & Narrow Hard."** It supersedes all phase work until its Definition of Done is met (packages published, users acquired). A **breadth freeze** is in force: Phases 15–17 and all Phase 18 leftovers are frozen until ≥5 real external users (banner in [`docs/roadmap.md`](docs/roadmap.md)). Litmus test for any new work: admissible only if it (a) makes the wedge sentence more true (*"the self-hostable, MCP-native backend an AI agent stands up in minutes — with domain blocks you own as editable code"*), (b) unblocks a real external user, or (c) fixes something broken. A real user's ask beats any roadmap entry; no roadmap entry beats the freeze.
 - **License:** Apache 2.0 (core/cli/client/admin); MIT (blocks). **Org/naming:** GitHub `jaredgrabill/ion-drive` (hosted on the founder's personal account for now); npm scope `@ion-drive/*` (e.g. `@ion-drive/core`). Trademarks: IonShift, IonShift Labs, IonShift Technologies LLC, Ion Drive — see `NOTICE`. Multi-tenancy: **database-per-tenant** by default (schema-per-tenant is a planned lighter option).
 - **Phase 0 (Scaffolding): done.** Monorepo, tooling, Docker, configs all in place.
 - **Phase 1 (Schema Engine): done and wired.** `SchemaManager` and friends work; `/api/v1/schema` routes are live in `server.ts`.
