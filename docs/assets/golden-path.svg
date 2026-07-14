@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 264" width="760" height="264" role="img" aria-label="Terminal session: scaffold an Ion Drive app, connect an agent over MCP, add a block">
+  <!--
+    The golden-path demo asset (launch plan Lane 3 §5). Transcript matches the
+    live rehearsal (17 tools is the real tools/list count). Pure CSS animation:
+    renderers without CSS support show the full static transcript instead.
+  -->
+  <style>
+    text { font-family: ui-monospace, 'Cascadia Code', Consolas, 'SF Mono', Menlo, monospace; font-size: 13px; }
+    .fg  { fill: #e6edf3; }
+    .dim { fill: #8b949e; }
+    .ok  { fill: #34d399; }
+    .key { fill: #22d3ee; }
+    .pr  { fill: #a78bfa; }
+    .type { animation: type linear forwards; clip-path: inset(0 100% 0 0); }
+    .out  { animation: show .01s linear both; }
+    .t1 { animation-duration: .9s;  animation-delay: .4s;  animation-timing-function: steps(30, end); }
+    .o1 { animation-delay: 1.5s; }
+    .t2 { animation-duration: .35s; animation-delay: 2.1s; animation-timing-function: steps(11, end); }
+    .o2 { animation-delay: 2.7s; }
+    .t3 { animation-duration: 1.7s; animation-delay: 3.4s; animation-timing-function: steps(56, end); }
+    .o3 { animation-delay: 5.3s; }
+    .t4 { animation-duration: .7s;  animation-delay: 5.9s; animation-timing-function: steps(21, end); }
+    .o4 { animation-delay: 6.8s; }
+    .caret { animation: blink 1.1s step-end infinite; animation-delay: 7.2s; opacity: 0; }
+    @keyframes type  { to { clip-path: inset(0 0 0 0); } }
+    @keyframes show  { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .type, .out { animation: none; clip-path: none; }
+      .caret { animation: none; opacity: 1; }
+    }
+  </style>
+
+  <!-- frame -->
+  <rect x="0.5" y="0.5" width="759" height="263" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <rect x="0.5" y="0.5" width="759" height="34" rx="10" fill="#161b22"/>
+  <rect x="0.5" y="24" width="759" height="11" fill="#161b22"/>
+  <circle cx="22" cy="17.5" r="5" fill="#f87171"/>
+  <circle cx="40" cy="17.5" r="5" fill="#fbbf24"/>
+  <circle cx="58" cy="17.5" r="5" fill="#34d399"/>
+  <text x="380" y="22" text-anchor="middle" class="dim">✦ ~/my-app</text>
+
+  <!-- transcript -->
+  <text x="20" y="62" class="fg type t1">$ npx @ion-drive/cli init my-app</text>
+
+  <text x="20" y="84" class="out o1"><tspan class="ok">✔</tspan><tspan class="fg" dx="6">my-app scaffolded</tspan><tspan class="dim" dx="6">— server.ts + blocks/ are yours</tspan></text>
+
+  <text x="20" y="112" class="fg type t2">$ npm run dev</text>
+  <text x="20" y="134" class="out o2"><tspan class="ok">➜</tspan><tspan class="fg" dx="6">API</tspan><tspan class="key" dx="6">http://localhost:3000</tspan><tspan class="dim" dx="6">· admin console</tspan><tspan class="key" dx="6">/admin</tspan></text>
+
+  <text x="20" y="162" class="fg type t3">$ claude mcp add -t http ion-drive localhost:3000/api/v1/mcp</text>
+  <text x="20" y="184" class="out o3"><tspan class="ok">✔</tspan><tspan class="fg" dx="6">agent connected — 17 tools:</tspan><tspan class="key" dx="6">create_object</tspan><tspan class="dim">,</tspan><tspan class="key" dx="6">query_data</tspan><tspan class="dim">, …</tspan></text>
+
+  <text x="20" y="212" class="fg type t4">$ npx ion-drive add crm</text>
+  <text x="20" y="234" class="out o4"><tspan class="ok">✔</tspan><tspan class="fg" dx="6">crm installed</tspan><tspan class="dim" dx="6">— REST, GraphQL &amp; MCP live, no restart</tspan></text>
+
+  <rect x="20" y="244" width="8" height="14" fill="#22d3ee" class="caret"/>
+</svg>

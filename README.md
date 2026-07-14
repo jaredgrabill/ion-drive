@@ -19,6 +19,10 @@ npm run dev              # REST + GraphQL + MCP + admin console, live at :3000
 npx ion-drive add crm    # domain blocks land as editable code in blocks/
 ```
 
+<div align="center">
+<img src="docs/assets/golden-path.svg" alt="Terminal: scaffold an Ion Drive app, connect an agent over MCP, add a block" width="760">
+</div>
+
 Point a coding agent at **`http://localhost:3000/api/v1/mcp`** and it can define
 tables, insert records, and query them — no migrations, no codegen, no deploy.
 Every object it creates is instantly a REST endpoint, a GraphQL type, an MCP
