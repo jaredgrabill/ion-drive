@@ -3,10 +3,15 @@
 Items only the repo owner can complete (secrets, real CI runs, live publishes).
 Prune entries as they are done.
 
-**Sequencing (updated 2026-07-13):** everything below is gated
-on roadmap **F23** — the first npm publish of `@ion-drive/{core,cli,client,admin}`
-(npm **Trusted Publishing/OIDC** — no `NPM_TOKEN` secret; register trusted
-publishers for all seven packages, then `v0.x` tag → `release.yml`). Then, in order:
+**Sequencing (updated 2026-07-14): F23 is DONE** — `v0.4.0` was tagged and
+published 2026-07-10 (all seven packages on npm via Trusted Publishing/OIDC),
+the blocks repo is pushed, and `registry.iondrive.dev` + `iondrive.dev` are
+live (agent-verified 2026-07-14, launch-plan ledger). ⚠️ The 0.4.0 artifacts
+predate the V1–V7 security fixes — **`v0.4.1` is staged on main and must be
+tagged** (see the launch plan). Remaining below: the blocks `v1` tag, the
+attested publish (push the two local blocks commits — audit@0.1.1 is the new
+artifact that exercises the attest step), GHCR image visibility, and the
+optional third-party rehearsal. Then, in order:
 spec-05 §1 (push + tag the blocks repo) → §2 (Pages + DNS) → §3 (dry-run
 dispatch) → §4 (first attested publish — also closes spec-04's fixture item and
 runs its live verify) → §5 (third-party flow) → spec-06 §1–2 (blocks CI green +
@@ -89,21 +94,20 @@ Prereq for all of these: **F23's first npm publish** (`@ion-drive/cli` +
 `@ion-drive/core` on npm — the workflows `npm i -g @ion-drive/cli@^0.4
 @ion-drive/core@^0.4`).
 
-1. **Push the migrated blocks repo + tag the reusable workflow.** The
-   migration (versioned `dist/<version>/` artifacts, protocol-v1
-   `registry/`, workflows, runbook, schemas, `.nojekyll`) is committed locally
-   in `C:\home\work\ion-shift\ion-drive-blocks` (commits `f5c1ef9` spec-05 + `d2f897e` spec-06):
+1. **Push the migrated blocks repo + tag the reusable workflow.**
+   ✅ Pushed 2026-07-10 (ci/publish/pages runs green on `main`). **Remaining:**
+   the `v1` tag (only `v0.2.0` exists) and pushing the two local commits from
+   2026-07-13 (`a967a95` CRLF `.gitattributes` fix + `fa9ad95` audit@0.1.1):
 
    ```bash
    cd C:\home\work\ion-shift\ion-drive-blocks
-   git remote add origin https://github.com/jaredgrabill/ion-drive-blocks.git   # if not already
-   git push -u origin main
+   git push origin main                 # publishes audit@0.1.1 → first attested artifact
    git tag v1 && git push origin v1     # third parties: uses: jaredgrabill/ion-drive-blocks/.github/workflows/publish-block.yml@v1
    ```
 
-2. **Enable Pages + DNS, then curl-sanity the live registry.** Repo Settings →
-   Pages → Source: *GitHub Actions*; custom domain `registry.iondrive.dev`
-   (DNS CNAME → `jaredgrabill.github.io`), enforce HTTPS. Then:
+2. **Enable Pages + DNS, then curl-sanity the live registry.**
+   ✅ DONE — live and agent-verified 2026-07-14: all five checks below green
+   plus search-index/badge/readme (spec-08). Kept for reference:
 
    ```bash
    curl -fsS https://registry.iondrive.dev/registry/index.json | jq .schemaVersion   # → 1
@@ -183,8 +187,11 @@ items 1–2 — the blocks repo push + Pages/DNS):
 
 ## From spec-10 (iondrive.dev — project page, docs, blocks browser)
 
-The site builds, tests, and deploys from this repo (`site/` +
-`.github/workflows/site-deploy.yml`). The owner-run activation:
+✅ **§1–3 DONE and agent-verified 2026-07-14**: `iondrive.dev` live — landing,
+`/docs/getting-started/`, `/blocks/` all 200; `/blocks/crm` deep link serves
+the 404-status SPA fallback with the BlocksBrowser island (Pages semantics,
+as designed); `/schemas/registry-index.v1.json` 200. §4 (Render) remains
+optional. Original steps kept for reference:
 
 1. **Enable GitHub Pages on `jaredgrabill/ion-drive`.** Repo → Settings →
    Pages → *Build and deployment* → **Source: GitHub Actions** (this repo's
