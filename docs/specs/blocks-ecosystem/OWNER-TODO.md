@@ -3,9 +3,10 @@
 Items only the repo owner can complete (secrets, real CI runs, live publishes).
 Prune entries as they are done.
 
-**Sequencing (updated 2026-07-09, M1+M1.5+M2 shipped):** everything below is gated
+**Sequencing (updated 2026-07-13):** everything below is gated
 on roadmap **F23** — the first npm publish of `@ion-drive/{core,cli,client,admin}`
-(`NPM_TOKEN` secret + `v0.x` tag → `release.yml`). Then, in order:
+(npm **Trusted Publishing/OIDC** — no `NPM_TOKEN` secret; register trusted
+publishers for all seven packages, then `v0.x` tag → `release.yml`). Then, in order:
 spec-05 §1 (push + tag the blocks repo) → §2 (Pages + DNS) → §3 (dry-run
 dispatch) → §4 (first attested publish — also closes spec-04's fixture item and
 runs its live verify) → §5 (third-party flow) → spec-06 §1–2 (blocks CI green +

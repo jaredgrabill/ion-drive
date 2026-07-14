@@ -76,10 +76,14 @@ This is the OWNER-TODO sequencing, restated as a checklist. Exact commands live 
 [OWNER-TODO.md](specs/blocks-ecosystem/OWNER-TODO.md) — that doc remains the source of truth
 for command syntax; this lane is the tracking order.
 
-1. **[OWNER] npm + GHCR prerequisites.** Add `NPM_TOKEN` repo secret to
-   `jaredgrabill/ion-drive`; register npm **Trusted Publishers** for
-   `@ion-drive/plugin-redis`, `@ion-drive/plugin-sendgrid`, `@ion-drive/plugin-storage-s3`
-   (one-time, per ADR-021).
+1. **[OWNER] npm prerequisites.** `release.yml` publishes **tokenless** via npm
+   Trusted Publishing (OIDC) — there is no `NPM_TOKEN` secret. Register a Trusted
+   Publisher (owner `jaredgrabill`, repo `ion-drive`, workflow `release.yml`) for **all
+   seven** packages: `@ion-drive/{core,cli,client,admin,plugin-redis,plugin-sendgrid,plugin-storage-s3}`.
+   If npm won't accept a Trusted Publisher for a never-published name, first-publish
+   each package once locally (`npm publish --access public` from `packages/<pkg>` after
+   `pnpm build`), then wire the Trusted Publisher. GHCR needs no setup (built-in
+   `GITHUB_TOKEN`).
 2. **[OWNER] First publish.** Tag `v0.4.0` on `main` → `release.yml` publishes
    `@ion-drive/{core,cli,client,admin}` to npm (provenance) + the GHCR image
    (amd64+arm64).
