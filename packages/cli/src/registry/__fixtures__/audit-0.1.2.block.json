@@ -1,0 +1,95 @@
+{
+  "$schema": "https://iondrive.dev/schemas/block-manifest.v1.json",
+  "name": "audit",
+  "version": "0.1.2",
+  "title": "Audit Log",
+  "description": "Records every record create/update/delete into an audit_log table, with a system-field-free diff.",
+  "author": "Ion Shift Labs <hello@ionshiftlabs.com>",
+  "categories": [
+    "observability",
+    "compliance"
+  ],
+  "meta": {
+    "icon": "🛰️",
+    "docs": "https://iondrive.dev/blocks/audit"
+  },
+  "requires": {
+    "core": ">=0.2.0 <1.0.0"
+  },
+  "objects": [
+    {
+      "name": "audit_log",
+      "displayName": "Audit Log",
+      "description": "One row per data change, written by the audit event consumer.",
+      "fields": [
+        {
+          "name": "object_name",
+          "displayName": "Object",
+          "columnType": "short_text",
+          "isRequired": true,
+          "isIndexed": true
+        },
+        {
+          "name": "record_id",
+          "displayName": "Record ID",
+          "columnType": "uuid",
+          "isIndexed": true
+        },
+        {
+          "name": "operation",
+          "displayName": "Operation",
+          "columnType": "enum",
+          "isIndexed": true,
+          "constraints": {
+            "enumValues": [
+              "created",
+              "updated",
+              "deleted"
+            ]
+          }
+        },
+        {
+          "name": "diff",
+          "displayName": "Diff",
+          "columnType": "json"
+        },
+        {
+          "name": "snapshot",
+          "displayName": "Snapshot",
+          "columnType": "json"
+        },
+        {
+          "name": "event_id",
+          "displayName": "Event ID",
+          "columnType": "uuid",
+          "isUnique": true,
+          "isIndexed": true
+        },
+        {
+          "name": "changed_by",
+          "displayName": "Changed By",
+          "columnType": "short_text"
+        }
+      ]
+    }
+  ],
+  "subscriptions": [
+    {
+      "event": "data.#",
+      "consumer": "audit",
+      "handler": "persist_event",
+      "config": {
+        "object": "audit_log",
+        "map": {
+          "object_name": "payload.object",
+          "record_id": "payload.id",
+          "operation": "payload.op",
+          "diff": "payload.diff",
+          "snapshot": "payload.record",
+          "event_id": "event.id",
+          "changed_by": "payload.actorId"
+        }
+      }
+    }
+  ]
+}

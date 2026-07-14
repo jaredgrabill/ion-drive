@@ -51,6 +51,7 @@
       "*.min.js",
       "*.generated.*",
       "packages/core/schemas",
+      "packages/cli/src/registry/__fixtures__/*.json",
       "site/dist",
       "site/.astro",
       "site/src/content/docs"

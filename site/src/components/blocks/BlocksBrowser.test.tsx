@@ -76,7 +76,9 @@ describe('routing', () => {
 
     await user.click(await screen.findByRole('button', { name: /CRM/ }));
     expect(window.location.pathname).toBe('/blocks/crm');
-    expect(await screen.findByText(/ion-drive add crm/)).toBeInTheDocument();
+    // findAllByText: the install command also appears in the async-rendered
+    // README, so a single-element query is a race (flaked in CI 2026-07-14).
+    expect((await screen.findAllByText(/ion-drive add crm/)).length).toBeGreaterThan(0);
 
     await user.click(screen.getByRole('button', { name: 'blocks' }));
     expect(window.location.pathname).toBe('/blocks/');
