@@ -6,14 +6,14 @@ description: Workflow for authoring or modifying an official building block — 
 # Authoring an official building block
 
 Official blocks live in the **separate `jaredgrabill/ion-drive-blocks` repo** (locally at
-`I:\ion-shift\blocks`), one directory per block — NOT in this monorepo
+`C:\home\work\ion-shift\ion-drive-blocks`), one directory per block — NOT in this monorepo
 (packages/blocks retired in Phase 14, ADR-018 re-amendment). Read these first:
 
 - `packages/core/src/blocks/block-types.ts` — `blockManifestSchema` (the authoritative Zod
   schema, incl. Phase 14 `actions`/`hooks`/`requires`/`code`).
 - `packages/core/src/blocks/action-registry.ts` — the handler contract vendored code
   registers against (`registerAction`/`registerHook`).
-- An existing block, e.g. `I:\ion-shift\blocks\invoicing\` (the vendored-logic exemplar).
+- An existing block, e.g. `C:\home\work\ion-shift\ion-drive-blocks\invoicing\` (the vendored-logic exemplar).
 
 ## Block layout (same for official and third-party)
 
@@ -39,7 +39,7 @@ Official blocks live in the **separate `jaredgrabill/ion-drive-blocks` repo** (l
 2. **Author** `block.json` (+ `code/` if logic). Cross-block needs → `dependencies`.
 3. **Validate**: `ion-drive block validate <dir>` (platform Zod schema + code checks).
 4. **Block test (required before any registry entry)**: `ion-drive block test <dir>
-   --deps-from I:\ion-shift\blocks` (spec-06) — boots an ephemeral server on a scratch DB,
+   --deps-from C:\home\work\ion-shift\ion-drive-blocks` (spec-06) — boots an ephemeral server on a scratch DB,
    installs for real, asserts (install report, data endpoints, action reachability,
    uninstall-leaves-no-residue), and runs the block's own `test/*.test.ts` under the
    `ION_TEST_SERVER_URL`/`ION_TEST_API_KEY` env contract. Add `test/fixtures.json` action

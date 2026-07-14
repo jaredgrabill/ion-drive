@@ -58,7 +58,7 @@ been pushed.
 ## From spec-06 (block test + CI)
 
 Prereq: **F23's first npm publish** (the workflows install
-`@ion-drive/cli@^0.3 @ion-drive/core@^0.3` from npm) and the blocks repo
+`@ion-drive/cli@^0.4 @ion-drive/core@^0.4` from npm) and the blocks repo
 pushed to GitHub (spec-05 item 1).
 
 1. **AC1 Linux leg — blocks-repo CI goes green.** After pushing
@@ -85,16 +85,16 @@ pushed to GitHub (spec-05 item 1).
 ## From spec-05 (publishing pipeline)
 
 Prereq for all of these: **F23's first npm publish** (`@ion-drive/cli` +
-`@ion-drive/core` on npm — the workflows `npm i -g @ion-drive/cli@^0.3
-@ion-drive/core@^0.3`).
+`@ion-drive/core` on npm — the workflows `npm i -g @ion-drive/cli@^0.4
+@ion-drive/core@^0.4`).
 
 1. **Push the migrated blocks repo + tag the reusable workflow.** The
    migration (versioned `dist/<version>/` artifacts, protocol-v1
    `registry/`, workflows, runbook, schemas, `.nojekyll`) is committed locally
-   in `I:\ion-shift\blocks` (commits `f5c1ef9` spec-05 + `d2f897e` spec-06):
+   in `C:\home\work\ion-shift\ion-drive-blocks` (commits `f5c1ef9` spec-05 + `d2f897e` spec-06):
 
    ```bash
-   cd I:\ion-shift\blocks
+   cd C:\home\work\ion-shift\ion-drive-blocks
    git remote add origin https://github.com/jaredgrabill/ion-drive-blocks.git   # if not already
    git push -u origin main
    git tag v1 && git push origin v1     # third parties: uses: jaredgrabill/ion-drive-blocks/.github/workflows/publish-block.yml@v1
