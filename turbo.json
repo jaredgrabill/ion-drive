@@ -19,7 +19,8 @@
       "dependsOn": ["build"],
       "outputs": [],
       "inputs": ["src/**", "tests/**"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["ION_DATABASE_URL"]
     },
     "typecheck": {
       "dependsOn": ["^build"],
