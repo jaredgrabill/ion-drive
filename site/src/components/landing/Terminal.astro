@@ -7,8 +7,9 @@
  * full transcript is in the DOM (SEO / screen readers), and reduced motion
  * collapses to the static transcript (see tokens.css + landing.css).
  *
- * The transcript is lifted from docs/getting-started.md §1–4 plus
- * `ion-drive add crm` and the querying envelope — never invented output.
+ * The transcript is lifted from docs/getting-started.md §1–4 (scaffold, MCP
+ * connect — the 17-tool count is the live tools/list — and `ion-drive add
+ * crm`) — never invented output.
  */
 
 type Line =
@@ -18,7 +19,6 @@ type Line =
 
 const OK = '<span class="t-ok">✔</span>';
 const ARROW = '<span class="t-arrow">➜</span>';
-const key = (k: string) => `<span class="t-key">"${k}"</span>`;
 
 const lines: Line[] = [
   { kind: 'cmd', text: 'npx @ion-drive/cli init my-app' },
@@ -34,18 +34,18 @@ const lines: Line[] = [
     plain: '➜ API http://localhost:3000 · admin console /admin',
   },
   { kind: 'gap' },
+  { kind: 'cmd', text: 'claude mcp add -t http ion-drive localhost:3000/api/v1/mcp' },
+  {
+    kind: 'out',
+    html: `${OK} agent connected — 17 tools: <span class="t-key">create_object</span><span class="t-dim">,</span> <span class="t-key">query_data</span><span class="t-dim">, …</span>`,
+    plain: '✔ agent connected — 17 tools: create_object, query_data, …',
+  },
+  { kind: 'gap' },
   { kind: 'cmd', text: 'npx ion-drive add crm' },
   {
     kind: 'out',
     html: `${OK} crm installed — REST, GraphQL &amp; MCP live, no restart`,
     plain: '✔ crm installed — REST, GraphQL & MCP live, no restart',
-  },
-  { kind: 'gap' },
-  { kind: 'cmd', text: 'curl "localhost:3000/api/v1/data/contacts?search=acme"' },
-  {
-    kind: 'out',
-    html: `<span class="t-dim">{</span> ${key('data')}<span class="t-dim">: [ … ],</span> ${key('pagination')}<span class="t-dim">: {</span> ${key('totalCount')}<span class="t-dim">: 42 } }</span>`,
-    plain: '{ "data": [ … ], "pagination": { "totalCount": 42 } }',
   },
 ];
 
@@ -67,7 +67,7 @@ const timed = lines.map((line) => {
 const caretDelay = t;
 ---
 
-<div class="terminal" aria-label="Terminal session: scaffold, add a block, query the API">
+<div class="terminal" aria-label="Terminal session: scaffold, connect an agent over MCP, add a block">
   <div class="terminal-header"><span class="star">✦</span> ~/my-app</div>
   <div class="terminal-body">
     {

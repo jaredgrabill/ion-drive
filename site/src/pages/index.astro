@@ -60,18 +60,16 @@ const mcpSample = `// POST /api/v1/mcp — tool: query_data
   "expand": ["company"]
 }`;
 
-// README.md Quick Start.
-const quickStartSample = `npx @ion-drive/cli init my-app
-cd my-app
-
-docker compose up -d    # PostgreSQL
-npm install
-npm run dev             # the whole backend + admin console, one command`;
+// README.md hero — the four-command golden path.
+const quickStartSample = `npx @ion-drive/cli init my-app && cd my-app
+docker compose up -d && npm install
+npm run dev              # REST + GraphQL + MCP + admin console, live at :3000
+npx ion-drive add crm    # domain blocks land as editable code in blocks/`;
 ---
 
 <Base
-  title="Ion Drive — the open-source platform for accelerated business software development"
-  description="Self-hosted backend platform: define data objects at runtime and get automatic REST, GraphQL, and MCP APIs. Built for developers working with LLM agents."
+  title="Ion Drive — the MCP-native backend an AI agent stands up in minutes"
+  description="Self-hostable, open-source backend: your agent defines tables at runtime and gets REST, GraphQL, and MCP for free — with domain blocks you own as editable code."
 >
   <Nav />
   <main>
@@ -170,14 +168,15 @@ npm run dev             # the whole backend + admin console, one command`;
         <div class="pitch">
           <div class="prose">
             <p class="eyebrow">Quick start</p>
-            <h2>Zero to live APIs in five minutes</h2>
+            <h2>Zero to an agent building, in five minutes</h2>
             <p>
               Node 22+ and Docker are the only prerequisites. What you own is deliberately small —
               a <code>server.ts</code> composition root and a <code>/blocks</code> directory; the
               platform arrives as npm dependencies.
             </p>
             <p>
-              The first user to sign up in the admin console becomes the admin.
+              Sign up in the admin console (the first user becomes admin), mint a role-bound API
+              key, and point any MCP client at <code>/api/v1/mcp</code>.
               <a href="/docs/getting-started/">The full guide</a> takes it from here.
             </p>
           </div>

@@ -2,9 +2,8 @@
 
 # ⚡ Ion Drive
 
-**The open-source platform for accelerated business software development.**
-
-Runtime-dynamic data objects · Automatic REST/GraphQL/MCP APIs · Built for LLM agents
+**The self-hostable, MCP-native backend an AI agent stands up in minutes —
+with domain blocks you own as editable code.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://typescriptlang.org)
@@ -13,79 +12,53 @@ Runtime-dynamic data objects · Automatic REST/GraphQL/MCP APIs · Built for LLM
 
 </div>
 
----
-
-## What is Ion Drive?
-
-> **Supabase's instant APIs. Payload's code-first ownership. shadcn's take-the-code distribution.**
-> Self-hosted, in your repo, one command.
-
-Ion Drive is a **self-hosted, open-source platform** that lets you define custom data objects, relationships, and business logic at runtime — then automatically generates REST, GraphQL, and MCP APIs for them. Think **self-hosted Firebase meets infinitely configurable ERP**, built from the ground up for AI-driven development.
-
-Build business software at super speed — without reinventing the wheel, and without giving up the ability to customize and override *anything*.
-
-### Key Features
-
-- **🧩 Runtime Data Objects** — Create, modify, and delete tables through the admin console or API. No migrations, no deploys, no downtime.
-- **🔌 Automatic API Surface** — Every data object instantly gets REST endpoints, GraphQL types, and MCP tools. Download an always-current OpenAPI spec.
-- **🔎 Rich Querying** — Full-text `search`, per-property operators (`status[neq]=archived&age[gt]=21`), sorting, and pagination on every list endpoint — with a typed client SDK that builds the queries for you.
-- **🤖 LLM/Agent Native** — Built-in MCP server lets AI agents introspect your schema and CRUD data with zero integration code.
-- **📦 Building Blocks** — Pull in pre-built modules (CRM, invoicing, communications, audit) like `shadcn/ui` — you own the code, customize freely.
-- **🏢 Multi-Tenant** — Designed for per-tenant database isolation (tenant management is on the [roadmap](docs/roadmap.md)).
-- **📊 Built-in Observability** — OpenTelemetry instrumentation with optional Grafana stack. Pre-built dashboards included.
-- **🔐 Pluggable Auth** — Better Auth (self-hosted) by default, swap to WorkOS/Auth0/Clerk via config.
-- **⚙️ Admin Console** — Visual schema designer, Airtable-like data grid, user management, secrets vault, monitoring dashboards.
-
-### Why Ion Drive?
-
-| Problem | Ion Drive Solution |
-|:---|:---|
-| CMS platforms can't handle dynamic business logic | Runtime schema + automatic APIs |
-| ERPs are rigid, dated, and painful to customize | Building blocks you own and modify |
-| Every platform lacks AI/LLM integration | MCP server is a first-class citizen |
-| Self-hosted = second-class citizen | Self-hosted is the primary target |
-| Observability is always "add Datadog yourself" | OpenTelemetry + Grafana stack included |
-| Multi-tenancy is always an afterthought | Database-per-tenant by design |
-
-### The Ownership Model
-
-The core idea is a clean split between **what you upgrade** and **what you own**:
-
-- **The engine is a dependency.** Core, admin console, and infrastructure plugins (Redis, email, telemetry) are npm packages — `pnpm up` gets you fixes and features without ever touching your code.
-- **Blocks are yours.** Pulling in a building block applies its schema *and* drops its business logic into `/blocks/<name>` in **your repo** — like `shadcn/ui`, but for backend features. Tweak the Stripe integration, rewrite an endpoint, or leave it stock. Future CLI updates arrive as diffs you review, never overwrites.
-- **Everything is batteries-included.** One `pnpm dev` in your project boots the whole backend and admin console, with every API live and ready for whatever frontend you're building.
-
-Because nothing ever forces a merge between "framework upgrade" and "my business logic," you get the speed of a platform with the ownership of hand-written code.
-
-> **Status:** the full ownership model is implemented — project scaffolding, vendored-logic blocks (actions + webhooks), and the block registry all work end-to-end (see [Quick Start](#quick-start)). First npm publish is imminent; track the remainder in the [roadmap](docs/roadmap.md).
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- [Node.js 22+](https://nodejs.org)
-- [Docker](https://docker.com) (for PostgreSQL)
-
-### Scaffold your backend
-
 ```bash
-npx @ion-drive/cli init my-app
-cd my-app
-
-docker compose up -d    # PostgreSQL
-npm install
-npm run dev             # the whole backend + admin console, one command
+npx @ion-drive/cli init my-app && cd my-app
+docker compose up -d && npm install
+npm run dev              # REST + GraphQL + MCP + admin console, live at :3000
+npx ion-drive add crm    # domain blocks land as editable code in blocks/
 ```
 
-The API runs at `http://localhost:3000` with the admin console at
-`http://localhost:3000/admin`. The first user to sign up becomes the admin.
-What you own is deliberately small — a `server.ts` composition root and a
-`/blocks` directory; the platform arrives as npm dependencies
-([framework mode](docs/concepts/framework-mode.md)).
+<div align="center">
+<img src="docs/assets/golden-path.svg" alt="Terminal: scaffold an Ion Drive app, connect an agent over MCP, add a block" width="760">
+</div>
 
-### Add building blocks
+Point a coding agent at **`http://localhost:3000/api/v1/mcp`** and it can define
+tables, insert records, and query them — no migrations, no codegen, no deploy.
+Every object it creates is instantly a REST endpoint, a GraphQL type, an MCP
+tool, and a row in the admin console. **Your agent gets REST + GraphQL + MCP
+for free; blocks are code you own, not a marketplace lock-in.**
+
+---
+
+## The five minutes, spelled out
+
+**Prerequisites:** [Node.js 22+](https://nodejs.org) and [Docker](https://docker.com) (for PostgreSQL).
+
+1. **Scaffold + boot** (the four commands above). What you own is deliberately
+   small — a `server.ts` composition root and a `/blocks` directory; the
+   platform arrives as npm dependencies
+   ([framework mode](docs/concepts/framework-mode.md)).
+2. **Open `http://localhost:3000/admin`** and sign up — the first user becomes
+   admin, then signup can be locked. Auth is **on by default**.
+3. **Mint your agent's key:** admin console → API Keys → create a key **with a
+   role** (e.g. `admin`). Then connect any MCP client:
+
+   ```bash
+   # Claude Code, for example:
+   claude mcp add --transport http ion-drive http://localhost:3000/api/v1/mcp \
+     --header "X-API-Key: iond_…"
+   ```
+
+4. **Ask the agent to build.** "Create a `launch_notes` object with title, body
+   and priority; add three records; show me the high-priority ones." Watch the
+   data appear in the admin grid. The scaffold ships an `AGENTS.md` so agents
+   already know the ropes.
+
+The full tour lives in [Getting Started](docs/getting-started.md)
+([rendered](https://iondrive.dev/docs/getting-started/)).
+
+## Blocks: domain features as code you own
 
 ```bash
 npx ion-drive list             # browse the registry catalog
@@ -93,18 +66,19 @@ npx ion-drive add crm          # schema-only: objects + APIs light up instantly
 npx ion-drive add invoicing    # vendored logic: Stripe integration lands in blocks/invoicing/
 ```
 
-Edit `blocks/invoicing/stripe.ts` — it's your code, and the dev server
-hot-reloads. Its action is live at
-`POST /api/v1/blocks/invoicing/actions/create_payment_link`, in OpenAPI, and
-as an MCP tool.
+Installing a block applies its schema *and* drops its business logic into
+`blocks/<name>/` in **your repo** — like `shadcn/ui`, but for backend features.
+Edit `blocks/invoicing/stripe.ts`; the dev server hot-reloads, and its action
+stays live at `POST /api/v1/blocks/invoicing/actions/create_payment_link`, in
+OpenAPI, and as an MCP tool. Upstream updates arrive as diffs you review
+(`ion-drive diff` / `update`), never overwrites. Every artifact is
+digest-verified and (for official blocks) sigstore-attested at install.
 
 Built a block of your own? `ion-drive block new` scaffolds it and
 `ion-drive block publish` ships it to any git-hosted registry — see
-[Publishing a block](docs/concepts/building-blocks.md#publishing-a-block).
+[Building Blocks](docs/concepts/building-blocks.md).
 
-> **Contributing to Ion Drive itself?** Clone this repo and `pnpm dev` — see [Development](#development).
-
-### Query it from code
+## Query it from code
 
 ```bash
 npm install @ion-drive/client
@@ -127,6 +101,40 @@ const { data, pagination } = await ion.from('contacts')
 
 ---
 
+## What's underneath
+
+Ion Drive is a **self-hosted, open-source application backend**: define data
+objects, relationships, and logic at runtime; the platform generates the API
+surfaces. Think *self-hosted Firebase meets an infinitely configurable ERP*,
+built from the ground up for AI-driven development. All of this exists today —
+it's proof, not pitch:
+
+- **🧩 Runtime data objects** — create, modify, and delete tables through the
+  admin console or any API; preview-first schema changes (dry-run shows the
+  exact SQL + warnings); CHECK constraints, relations, snapshot/diff/push and
+  a drift doctor.
+- **🔌 Automatic API surface** — REST, GraphQL (full relational traversal +
+  subscriptions), MCP tools, and an always-current OpenAPI spec, all backed by
+  one shared data service.
+- **🔎 Rich querying** — full-text `search`, per-property operators
+  (`status[neq]=archived&age[gt]=21`), sorting, pagination, `expand=` for
+  relations — identical on every surface.
+- **⚡ Events to the edge** — transactional outbox, consumer groups with
+  retry/backoff + DLQ, signed outbound webhooks, realtime SSE and GraphQL
+  subscriptions, actor identity on every change.
+- **🔐 Auth + RBAC on by default** — Better Auth (pluggable), API keys, roles
+  with permission grants enforced across REST/GraphQL/MCP; secrets vault
+  (AES-256-GCM); signup lockout; production boot refuses unsafe configs.
+- **📊 Built-in observability** — OpenTelemetry traces/metrics/logs, `/metrics`
+  for Prometheus, an optional Grafana/Loki/Tempo compose overlay, live logs and
+  charts in the admin console.
+- **⚙️ Admin console** — visual schema designer, data grid with inline editing,
+  users/roles, tasks, events, webhooks, metrics — served by the backend at
+  `/admin`.
+- **🔧 Extensible runtime** — plugin host with provider ports (cache, email,
+  storage, message bus, logging); first-party Redis, SendGrid, and S3 plugins;
+  scheduled tasks with a handler registry.
+
 ## Architecture
 
 ```
@@ -140,8 +148,6 @@ ion-drive/
 ├── docker/         # Docker Compose for dev and observability
 └── docs/           # Documentation
 ```
-
-### Tech Stack
 
 | Layer | Technology |
 |:---|:---|
@@ -157,25 +163,25 @@ ion-drive/
 | **Testing** | Vitest |
 | **Linting** | Biome |
 
----
+The non-obvious choices (Fastify over Nest, Kysely over Prisma, graphql-js over
+Pothos) are deliberate and documented in
+[Architecture Decisions](docs/research/architecture-decisions.md).
 
 ## Development
 
+Contributing to Ion Drive itself? Clone this repo, then:
+
 ```bash
-# Run all tests
-pnpm test
-
-# Type checking
-pnpm typecheck
-
-# Lint & format
-pnpm lint:fix
-
-# Build all packages
-pnpm build
+pnpm install
+docker compose -f docker/docker-compose.yml up -d   # dev PostgreSQL
+pnpm dev            # watch mode
+pnpm test           # unit tests
+pnpm test:integration
+pnpm typecheck && pnpm lint:fix
 ```
 
----
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Documentation
 
@@ -184,19 +190,10 @@ started](https://iondrive.dev/docs/getting-started/), plus a browser for the
 [block registry](https://iondrive.dev/blocks/)). The same pages in-repo:
 
 - [Getting Started](docs/getting-started.md)
-- Concepts: [Data Objects](docs/concepts/data-objects.md) · [Building Blocks](docs/concepts/building-blocks.md)
-- API: [Querying](docs/api/querying.md) · [REST](docs/api/rest.md) · [GraphQL](docs/api/graphql.md) · [MCP](docs/api/mcp.md)
+- Concepts: [Data Objects](docs/concepts/data-objects.md) · [Building Blocks](docs/concepts/building-blocks.md) · [Framework Mode](docs/concepts/framework-mode.md) · [Events](docs/concepts/events.md) · [Plugins](docs/concepts/plugins.md)
+- API: [Querying](docs/api/querying.md) · [REST](docs/api/rest.md) · [GraphQL](docs/api/graphql.md) · [MCP](docs/api/mcp.md) · [Actions](docs/api/actions.md) · [Realtime](docs/api/realtime.md)
 - Deployment: [Docker](docs/deployment/docker.md) · [Kubernetes](docs/deployment/kubernetes.md) · [Backup & Restore](docs/deployment/backup-restore.md) · [Security Checklist](docs/deployment/security-checklist.md)
 - [Architecture Decisions](docs/research/architecture-decisions.md)
-- [Research Findings](docs/research/research-findings.md)
-
----
-
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
 
 ## License
 
