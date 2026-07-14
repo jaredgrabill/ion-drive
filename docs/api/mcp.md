@@ -10,7 +10,16 @@ surfaces.
 
 Point an MCP client at `http://localhost:3000/api/v1/mcp`. In a client config
 (e.g. Claude Desktop / Claude Code) this is an HTTP MCP server entry. When
-`ION_REQUIRE_AUTH` is enabled, include an API key header (`X-API-Key: iond_…`).
+`ION_REQUIRE_AUTH` is enabled (the scaffold default), include an API key header
+(`X-API-Key: iond_…`) — and mint that key **with a role assigned** (admin
+console → API Keys → pick a role such as `admin`): a key with no role has no
+permissions, and the MCP surface requires `manage` on `data`.
+
+```bash
+# Claude Code, for example:
+claude mcp add --transport http ion-drive http://localhost:3000/api/v1/mcp \
+  --header "X-API-Key: iond_…"
+```
 
 ## Tools
 

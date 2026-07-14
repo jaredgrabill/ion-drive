@@ -250,6 +250,10 @@ are defined **at runtime** and automatically exposed over REST, GraphQL, and MCP
 - **MCP (preferred for agents):** \`POST http://localhost:3000/api/v1/mcp\` (Streamable HTTP,
   stateless). Tools cover schema introspection, CRUD, schema changes, and installed blocks'
   actions (\`<block>_<action>\`).
+- **Auth:** this project enforces RBAC (\`ION_REQUIRE_AUTH=true\`), so MCP/REST/GraphQL need an
+  API key. Mint one in the admin console (\`/admin\` → API Keys → **assign a role**, e.g.
+  \`admin\`) — a key with no role has no permissions. Send it as \`X-API-Key: iond_…\` (the MCP
+  surface needs the \`manage\`-on-\`data\` permission).
 - **REST:** \`/api/v1/data/<object>\` — filters \`field[op]=value\` (\`eq neq gt gte lt lte like
   ilike in nin null notnull\`), free-text \`?q=\`, \`sort=-created_at\`, \`page/pageSize\` or
   \`limit/offset\`, \`expand=<relation>\`. OpenAPI at \`/api/v1/openapi.json\` is always current.

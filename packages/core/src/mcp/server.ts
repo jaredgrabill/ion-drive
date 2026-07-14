@@ -13,6 +13,7 @@
  * Transport: Streamable HTTP (production) or stdio (development/testing)
  */
 
+import { createRequire } from 'node:module';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
@@ -86,7 +87,8 @@ export function createMcpServer(options: McpServerOptions): McpServer {
 
   const server = new McpServer({
     name: 'ion-drive',
-    version: '0.1.0',
+    // The platform version, so agents see the real release (not a stale pin).
+    version: createRequire(import.meta.url)('../../package.json').version as string,
   });
 
   // =========================================================================

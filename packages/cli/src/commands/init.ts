@@ -78,6 +78,9 @@ export async function initCommand(
       `${sym.dot} npm install`,
       `${sym.dot} npm run dev              ${c.meteor('# API :3000 · admin at /admin')}`,
       '',
+      `${c.meteor('Sign up at /admin (first user becomes admin), then API Keys ->')}`,
+      `${c.meteor('mint a role-bound key so your AI agent can use /api/v1/mcp.')}`,
+      '',
       `${c.meteor('Then:')} ${c.star('ion-drive add crm')}  ${c.meteor('to install your first block')}`,
     ]),
   );
