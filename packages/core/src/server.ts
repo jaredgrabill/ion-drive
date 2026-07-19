@@ -46,6 +46,7 @@ import {
   loadConfig,
 } from './config/index.js';
 import { DataService } from './data/index.js';
+import { listRelationKeys } from './data/relation-keys.js';
 import { createSystemDb, createTenantDb } from './db/index.js';
 import { EMAIL_SERVICE, LogEmailProvider } from './email/index.js';
 import { LOGGER_SERVICE, PinoLoggerProvider } from './logging/index.js';
@@ -280,6 +281,33 @@ function buildAnonymousOptions(
       );
     },
   };
+}
+
+/**
+ * Installs the global RBAC enforcement hook (config.requireAuth). The expand
+ * resolver keeps anonymous public-read grants strictly per-object: an
+ * anonymous `expand=` must also be granted on the target object (issue #8).
+ */
+function installEnforcement(
+  server: FastifyInstance,
+  config: IonDriveConfig,
+  permissionEngine: PermissionEngine,
+  schemaManager: SchemaManager,
+): void {
+  installRbacEnforcement(server, permissionEngine, {
+    resolveExpandTarget: (objectName, relationKey) => {
+      const obj = schemaManager.registry.getObject(objectName);
+      if (!obj) return null;
+      return listRelationKeys(obj).find((k) => k.key === relationKey)?.otherObject ?? null;
+    },
+  });
+  server.log.info('RBAC enforcement enabled');
+  if (config.publicRole) {
+    server.log.info(
+      'Public role active (ION_PUBLIC_ROLE): anonymous requests may read objects ' +
+        'explicitly granted to the built-in "public" role (none by default)',
+    );
+  }
 }
 
 /**
@@ -532,7 +560,7 @@ export async function createServer(
   // Backfill the durable bootstrap marker for pre-marker deployments that
   // already have an admin, so the signup lockout is durable for them (V4).
   await roleManager.ensureBootstrapMarker();
-  const permissionEngine = new PermissionEngine(roleManager);
+  const permissionEngine = new PermissionEngine(roleManager, { publicRole: config.publicRole });
 
   // --- Phase 12: outbound webhooks (signed event push, riding the bus) ---
   // Works with any bus implementation; secrets are stored AES-encrypted in
@@ -611,8 +639,7 @@ export async function createServer(
   // Session resolution runs for every request; RBAC enforcement is opt-in.
   installSessionMiddleware(server, { provider: authProvider, apiKeys: apiKeyManager });
   if (config.requireAuth) {
-    installRbacEnforcement(server, permissionEngine);
-    server.log.info('RBAC enforcement enabled');
+    installEnforcement(server, config, permissionEngine, schemaManager);
   } else {
     // Open mode is only reachable here in development/test, or in production
     // with an explicit ION_ALLOW_OPEN acknowledgement (assertSafeAuthPosture).
@@ -736,6 +763,10 @@ export async function createServer(
       actionExecutor,
       // list_blocks (ledger + provenance, spec-04) only when blocks are enabled.
       blockEngine: onlyIf(config.blocksEnabled, blockEngine),
+      // Anonymous public-read mode (issue #8): read tools only, gated per
+      // object through the public role.
+      permissionEngine,
+      enforce: config.requireAuth,
     }),
     { prefix: '/api/v1/mcp' },
   );

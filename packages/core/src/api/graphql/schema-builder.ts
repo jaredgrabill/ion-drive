@@ -59,6 +59,8 @@ import { COLUMN_TYPES } from '../../schema/types.js';
 import type { DataObjectDefinition, FieldDefinition } from '../../schema/types.js';
 import type { RelationLoaderContext } from './relation-loader.js';
 import {
+  type AnonReadGuard,
+  assertAnonymousCanRead,
   makeActionResolver,
   makeAggregateResolver,
   makeCreateResolver,
@@ -261,6 +263,7 @@ function buildObjectType(
   fieldTypes: Map<string, DualPositionType>,
   typeByObject: Map<string, GraphQLObjectType>,
   dataService: DataService,
+  guard?: AnonReadGuard,
 ): GraphQLObjectType {
   return new GraphQLObjectType({
     name: pascalCase(obj.name),
@@ -275,18 +278,24 @@ function buildObjectType(
           resolve: (source) => source[field.columnName],
         };
       }
-      addRelationFields(fields, obj, typeByObject, dataService);
+      addRelationFields(fields, obj, typeByObject, dataService, guard);
       return fields;
     },
   });
 }
 
-/** Appends the object's relation keys as nested (loader-resolved) fields. */
+/**
+ * Appends the object's relation keys as nested (loader-resolved) fields.
+ * Anonymous callers (issue #8) must hold a public read grant on the *target*
+ * object too — a grant on the parent alone cannot traverse into ungranted
+ * neighbors (parity with the REST `expand=` check in rbac/enforcement.ts).
+ */
 function addRelationFields(
   fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown>,
   obj: DataObjectDefinition,
   typeByObject: Map<string, GraphQLObjectType>,
   dataService: DataService,
+  guard?: AnonReadGuard,
 ): void {
   for (const relationKey of listRelationKeys(obj)) {
     const otherType = typeByObject.get(relationKey.otherObject);
@@ -297,8 +306,10 @@ function addRelationFields(
           ? new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(otherType)))
           : otherType,
       description: relationDescription(relationKey),
-      resolve: (source, _args, context) =>
-        resolveRelation(dataService, obj.name, relationKey.key, source, context),
+      resolve: async (source, _args, context) => {
+        await assertAnonymousCanRead(guard, context, relationKey.otherObject);
+        return resolveRelation(dataService, obj.name, relationKey.key, source, context);
+      },
     };
   }
 }
@@ -428,6 +439,12 @@ export function buildGraphQLSchema(
 ): GraphQLSchema {
   const objects = registry.listObjects().filter((o) => !o.isSystem);
 
+  // Anonymous-access guard (issue #8): only active when RBAC is enforced and
+  // an engine is wired. Authenticated principals are unaffected (the
+  // transport-level gate already covered them).
+  const anonGuard: AnonReadGuard | undefined =
+    extras.enforce && extras.permissionEngine ? { engine: extras.permissionEngine } : undefined;
+
   const queryFields: GraphQLFieldConfigMap<unknown, unknown> = {
     // Always-present introspection fields guarantee a non-empty Query type
     // even before any objects exist.
@@ -452,7 +469,10 @@ export function buildGraphQLSchema(
   for (const obj of objects) {
     const fieldTypes = buildFieldTypeMap(obj);
     fieldTypesByObject.set(obj.name, fieldTypes);
-    typeByObject.set(obj.name, buildObjectType(obj, fieldTypes, typeByObject, dataService));
+    typeByObject.set(
+      obj.name,
+      buildObjectType(obj, fieldTypes, typeByObject, dataService, anonGuard),
+    );
   }
 
   for (const obj of objects) {
@@ -491,7 +511,7 @@ export function buildGraphQLSchema(
         limit: { type: GraphQLInt, description: 'Offset-based: max rows to return.' },
         offset: { type: GraphQLInt, description: 'Offset-based: rows to skip.' },
       },
-      resolve: makeListResolver(dataService, obj.name),
+      resolve: makeListResolver(dataService, obj.name, anonGuard),
     } as GraphQLFieldConfig<unknown, unknown>;
 
     queryFields[`${obj.name}_aggregate`] = {
@@ -510,14 +530,14 @@ export function buildGraphQLSchema(
           description: 'Free-text search across text-like columns.',
         },
       },
-      resolve: makeAggregateResolver(dataService, obj.name),
+      resolve: makeAggregateResolver(dataService, obj.name, anonGuard),
     };
 
     queryFields[`${obj.name}_by_id`] = {
       type: objectType,
       description: `Get a single ${obj.displayName} record by ID.`,
       args: { id: { type: new GraphQLNonNull(GraphQLID) } },
-      resolve: makeGetResolver(dataService, obj.name),
+      resolve: makeGetResolver(dataService, obj.name, anonGuard),
     };
 
     // --- Mutations ---
@@ -525,21 +545,29 @@ export function buildGraphQLSchema(
       type: objectType,
       description: `Create a ${obj.displayName} record.`,
       args: createInput ? { input: { type: new GraphQLNonNull(createInput) } } : {},
-      resolve: makeCreateResolver(dataService, obj.name),
+      resolve: makeCreateResolver(dataService, obj.name, anonGuard),
     };
 
     if (updateInput) {
-      addUpdateMutation(mutationFields, obj, objectType, updateInput, incrementInput, dataService);
+      addUpdateMutation(
+        mutationFields,
+        obj,
+        objectType,
+        updateInput,
+        incrementInput,
+        dataService,
+        anonGuard,
+      );
     }
     if (createInput) {
-      addUpsertMutation(mutationFields, obj, objectType, createInput, dataService);
+      addUpsertMutation(mutationFields, obj, objectType, createInput, dataService, anonGuard);
     }
 
     mutationFields[`delete_${obj.name}`] = {
       type: new GraphQLNonNull(GraphQLBoolean),
       description: `Delete a ${obj.displayName} record by ID.`,
       args: { id: { type: new GraphQLNonNull(GraphQLID) } },
-      resolve: makeDeleteResolver(dataService, obj.name),
+      resolve: makeDeleteResolver(dataService, obj.name, anonGuard),
     };
 
     // Link writes — one mutation pair per many_to_many relation key (Phase 13).
@@ -552,13 +580,13 @@ export function buildGraphQLSchema(
         type: new GraphQLNonNull(GraphQLInt),
         description: `Link ${relationKey.otherObject} records to a ${obj.displayName} record via "${relationKey.key}". Idempotent; returns the number of links added.`,
         args: linkArgs,
-        resolve: makeLinkResolver(dataService, obj.name, relationKey.key, 'link'),
+        resolve: makeLinkResolver(dataService, obj.name, relationKey.key, 'link', anonGuard),
       };
       mutationFields[`unlink_${obj.name}_${relationKey.key}`] = {
         type: new GraphQLNonNull(GraphQLInt),
         description: `Unlink ${relationKey.otherObject} records from a ${obj.displayName} record via "${relationKey.key}". Returns the number of links removed.`,
         args: linkArgs,
-        resolve: makeLinkResolver(dataService, obj.name, relationKey.key, 'unlink'),
+        resolve: makeLinkResolver(dataService, obj.name, relationKey.key, 'unlink', anonGuard),
       };
     }
   }
@@ -587,6 +615,7 @@ function addUpdateMutation(
   updateInput: GraphQLInputObjectType,
   incrementInput: GraphQLInputObjectType | undefined,
   dataService: DataService,
+  anonGuard?: AnonReadGuard,
 ): void {
   mutationFields[`update_${obj.name}`] = {
     type: objectType,
@@ -600,7 +629,7 @@ function addUpdateMutation(
       input: { type: incrementInput ? updateInput : new GraphQLNonNull(updateInput) },
       ...(incrementInput ? { increment: { type: incrementInput } } : {}),
     },
-    resolve: makeUpdateResolver(dataService, obj.name),
+    resolve: makeUpdateResolver(dataService, obj.name, anonGuard),
   };
 }
 
@@ -615,6 +644,7 @@ function addUpsertMutation(
   objectType: GraphQLObjectType,
   createInput: GraphQLInputObjectType,
   dataService: DataService,
+  anonGuard?: AnonReadGuard,
 ): void {
   const upsertResult = new GraphQLObjectType({
     name: `${pascalCase(obj.name)}UpsertResult`,
@@ -636,7 +666,7 @@ function addUpsertMutation(
         description: 'Column(s) of the unique constraint to resolve conflicts on.',
       },
     },
-    resolve: makeUpsertResolver(dataService, obj.name),
+    resolve: makeUpsertResolver(dataService, obj.name, anonGuard),
   };
 }
 

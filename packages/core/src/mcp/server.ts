@@ -77,6 +77,17 @@ export interface McpServerOptions {
   blocks?: {
     listInstalled: () => Promise<InstalledBlock[]>;
   };
+  /**
+   * Anonymous public-read mode (issue #8). When present, the server exposes
+   * **only** the read data tools (query_data / aggregate_data / get_record),
+   * each gated per object (and per `expand` target) through `canRead` — the
+   * permission engine's public-role evaluation for the null principal. Schema
+   * tools, resources, prompts, action tools, and `list_blocks` are not
+   * registered at all, so an anonymous caller cannot even enumerate them.
+   */
+  publicRead?: {
+    canRead: (objectName: string) => Promise<boolean>;
+  };
 }
 
 /**
@@ -90,6 +101,16 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     // The platform version, so agents see the real release (not a stale pin).
     version: createRequire(import.meta.url)('../../package.json').version as string,
   });
+
+  // Anonymous public-read mode (issue #8): only the gated read data tools.
+  if (options.publicRead) {
+    registerReadDataTools(
+      server,
+      dataService,
+      buildPublicReadGate(schemaManager, options.publicRead),
+    );
+    return server;
+  }
 
   // =========================================================================
   // Resources — Schema introspection for LLMs
@@ -519,178 +540,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   // Tools — Data Operations (CRUD)
   // =========================================================================
 
-  server.tool(
-    'query_data',
-    'Query records from a data object with optional filtering, free-text search, sorting, pagination, and relationship expansion.',
-    {
-      object_name: z.string().describe('Name of the data object to query'),
-      search: z
-        .string()
-        .optional()
-        .describe('Free-text search across the object text-like columns (case-insensitive)'),
-      filters: z
-        .array(
-          z.object({
-            field: z.string(),
-            operator: z.enum([
-              'eq',
-              'neq',
-              'gt',
-              'gte',
-              'lt',
-              'lte',
-              'like',
-              'ilike',
-              'in',
-              'nin',
-              'is_null',
-              'is_not_null',
-            ]),
-            value: z.unknown(),
-          }),
-        )
-        .optional()
-        .describe('Filter conditions'),
-      sort: z
-        .array(
-          z.object({
-            field: z.string(),
-            direction: z.enum(['asc', 'desc']),
-          }),
-        )
-        .optional()
-        .describe('Sort order'),
-      page: z.number().optional().describe('Page number (default: 1)'),
-      page_size: z.number().optional().describe('Page size (default: 25, max: 100)'),
-      limit: z.number().optional().describe('Offset-based: max rows to return (max: 100)'),
-      offset: z.number().optional().describe('Offset-based: rows to skip'),
-      expand: z
-        .array(z.string())
-        .optional()
-        .describe(
-          'Relation keys to expand — related records attach under the key. Keys: the relationship name (single record on the FK side; list for many_to_many), or "<fkObject>_by_<relationship>" for the reverse side (e.g. "contacts_by_company" on companies — the children list). See get_object for the object relationships.',
-        ),
-    },
-    async ({ object_name, search, filters, sort, page, page_size, limit, offset, expand }) => {
-      try {
-        const result = await dataService.list(object_name, {
-          filters: filters as NonNullable<Parameters<typeof dataService.list>[1]>['filters'],
-          search,
-          sort,
-          pagination: { page: page ?? 1, pageSize: page_size ?? 25, limit, offset },
-          expand,
-        });
-
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
-          isError: true,
-        };
-      }
-    },
-  );
-
-  server.tool(
-    'aggregate_data',
-    'Compute a single aggregate (count, sum, avg, min, max) over the records matching the same filters/search as query_data. count needs no field; sum/avg/min/max require a numeric field. The result always includes filteredCount (the matching-row count). Rank pattern: filter on the score being beaten (e.g. wins gt <mine>) with fn=count — rank is filteredCount + 1.',
-    {
-      object_name: z.string().describe('Name of the data object to aggregate'),
-      fn: z
-        .enum(['count', 'sum', 'avg', 'min', 'max'])
-        .describe('The aggregate function to compute'),
-      field: z
-        .string()
-        .optional()
-        .describe(
-          'Field to aggregate — required for sum/avg/min/max (numeric fields only); optional for count (counts non-null values of the field)',
-        ),
-      search: z
-        .string()
-        .optional()
-        .describe('Free-text search across the object text-like columns (case-insensitive)'),
-      filters: z
-        .array(
-          z.object({
-            field: z.string(),
-            operator: z.enum([
-              'eq',
-              'neq',
-              'gt',
-              'gte',
-              'lt',
-              'lte',
-              'like',
-              'ilike',
-              'in',
-              'nin',
-              'is_null',
-              'is_not_null',
-            ]),
-            value: z.unknown(),
-          }),
-        )
-        .optional()
-        .describe('Filter conditions (same shape as query_data)'),
-    },
-    async ({ object_name, fn, field, search, filters }) => {
-      try {
-        const result = await dataService.aggregate(object_name, fn, field, {
-          filters: filters as NonNullable<Parameters<typeof dataService.aggregate>[3]>['filters'],
-          search,
-        });
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
-          isError: true,
-        };
-      }
-    },
-  );
-
-  server.tool(
-    'get_record',
-    'Get a single record by its ID, optionally expanding related records.',
-    {
-      object_name: z.string().describe('Name of the data object'),
-      id: z.string().describe('Record UUID'),
-      expand: z
-        .array(z.string())
-        .optional()
-        .describe(
-          'Relation keys to expand — related records attach under the key. Keys: the relationship name (single record on the FK side; list for many_to_many), or "<fkObject>_by_<relationship>" for the reverse side (e.g. "contacts_by_company" on companies — the children list). See get_object for the object relationships.',
-        ),
-    },
-    async ({ object_name, id, expand }) => {
-      try {
-        const result = await dataService.getById(object_name, id, { expand });
-        if (!result) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Error: Record "${id}" not found in "${object_name}"`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
-          isError: true,
-        };
-      }
-    },
-  );
+  registerReadDataTools(server, dataService);
 
   server.tool(
     'create_record',
@@ -1020,6 +870,235 @@ function registerActionTool(
               ? err.message
               : String(err);
         return { content: [{ type: 'text' as const, text: `Error — ${message}` }], isError: true };
+      }
+    },
+  );
+}
+
+/**
+ * A denial for a gated read tool: an MCP error result, or null to proceed.
+ * Returned (not thrown) so the tool answers with `isError` like every other
+ * tool-level failure.
+ */
+type ReadToolDenial = { content: { type: 'text'; text: string }[]; isError: true } | null;
+
+/** Per-call access gate for the read data tools (anonymous public-read mode). */
+type ReadToolGate = (objectName: string, expand?: string[]) => Promise<ReadToolDenial>;
+
+/**
+ * Builds the anonymous-mode gate: the object itself — and every `expand`
+ * target — must be publicly readable. Unknown expand keys pass (the
+ * DataService ignores them, so they cannot leak).
+ */
+function buildPublicReadGate(
+  schemaManager: SchemaManager,
+  publicRead: NonNullable<McpServerOptions['publicRead']>,
+): ReadToolGate {
+  const deny = (resource: string): ReadToolDenial => ({
+    content: [{ type: 'text' as const, text: `Error: Missing permission: read on "${resource}"` }],
+    isError: true,
+  });
+
+  return async (objectName, expand) => {
+    if (!(await publicRead.canRead(objectName))) return deny(objectName);
+    if (expand?.length) {
+      const obj = schemaManager.getObject(objectName);
+      const keys = obj ? listRelationKeys(obj) : [];
+      for (const key of expand) {
+        const target = keys.find((k) => k.key === key)?.otherObject;
+        if (target && !(await publicRead.canRead(target))) return deny(target);
+      }
+    }
+    return null;
+  };
+}
+
+/**
+ * Registers the read-only data tools (query_data / aggregate_data /
+ * get_record). Shared by the full server and the anonymous public-read server
+ * (issue #8) — the latter passes a {@link ReadToolGate} that checks the
+ * public role per object before any data is touched.
+ */
+function registerReadDataTools(
+  server: McpServer,
+  dataService: DataService,
+  gate?: ReadToolGate,
+): void {
+  server.tool(
+    'query_data',
+    'Query records from a data object with optional filtering, free-text search, sorting, pagination, and relationship expansion.',
+    {
+      object_name: z.string().describe('Name of the data object to query'),
+      search: z
+        .string()
+        .optional()
+        .describe('Free-text search across the object text-like columns (case-insensitive)'),
+      filters: z
+        .array(
+          z.object({
+            field: z.string(),
+            operator: z.enum([
+              'eq',
+              'neq',
+              'gt',
+              'gte',
+              'lt',
+              'lte',
+              'like',
+              'ilike',
+              'in',
+              'nin',
+              'is_null',
+              'is_not_null',
+            ]),
+            value: z.unknown(),
+          }),
+        )
+        .optional()
+        .describe('Filter conditions'),
+      sort: z
+        .array(
+          z.object({
+            field: z.string(),
+            direction: z.enum(['asc', 'desc']),
+          }),
+        )
+        .optional()
+        .describe('Sort order'),
+      page: z.number().optional().describe('Page number (default: 1)'),
+      page_size: z.number().optional().describe('Page size (default: 25, max: 100)'),
+      limit: z.number().optional().describe('Offset-based: max rows to return (max: 100)'),
+      offset: z.number().optional().describe('Offset-based: rows to skip'),
+      expand: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Relation keys to expand — related records attach under the key. Keys: the relationship name (single record on the FK side; list for many_to_many), or "<fkObject>_by_<relationship>" for the reverse side (e.g. "contacts_by_company" on companies — the children list). See get_object for the object relationships.',
+        ),
+    },
+    async ({ object_name, search, filters, sort, page, page_size, limit, offset, expand }) => {
+      const denied = gate ? await gate(object_name, expand) : null;
+      if (denied) return denied;
+      try {
+        const result = await dataService.list(object_name, {
+          filters: filters as NonNullable<Parameters<typeof dataService.list>[1]>['filters'],
+          search,
+          sort,
+          pagination: { page: page ?? 1, pageSize: page_size ?? 25, limit, offset },
+          expand,
+        });
+
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'aggregate_data',
+    'Compute a single aggregate (count, sum, avg, min, max) over the records matching the same filters/search as query_data. count needs no field; sum/avg/min/max require a numeric field. The result always includes filteredCount (the matching-row count). Rank pattern: filter on the score being beaten (e.g. wins gt <mine>) with fn=count — rank is filteredCount + 1.',
+    {
+      object_name: z.string().describe('Name of the data object to aggregate'),
+      fn: z
+        .enum(['count', 'sum', 'avg', 'min', 'max'])
+        .describe('The aggregate function to compute'),
+      field: z
+        .string()
+        .optional()
+        .describe(
+          'Field to aggregate — required for sum/avg/min/max (numeric fields only); optional for count (counts non-null values of the field)',
+        ),
+      search: z
+        .string()
+        .optional()
+        .describe('Free-text search across the object text-like columns (case-insensitive)'),
+      filters: z
+        .array(
+          z.object({
+            field: z.string(),
+            operator: z.enum([
+              'eq',
+              'neq',
+              'gt',
+              'gte',
+              'lt',
+              'lte',
+              'like',
+              'ilike',
+              'in',
+              'nin',
+              'is_null',
+              'is_not_null',
+            ]),
+            value: z.unknown(),
+          }),
+        )
+        .optional()
+        .describe('Filter conditions (same shape as query_data)'),
+    },
+    async ({ object_name, fn, field, search, filters }) => {
+      const denied = gate ? await gate(object_name) : null;
+      if (denied) return denied;
+      try {
+        const result = await dataService.aggregate(object_name, fn, field, {
+          filters: filters as NonNullable<Parameters<typeof dataService.aggregate>[3]>['filters'],
+          search,
+        });
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'get_record',
+    'Get a single record by its ID, optionally expanding related records.',
+    {
+      object_name: z.string().describe('Name of the data object'),
+      id: z.string().describe('Record UUID'),
+      expand: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Relation keys to expand — related records attach under the key. Keys: the relationship name (single record on the FK side; list for many_to_many), or "<fkObject>_by_<relationship>" for the reverse side (e.g. "contacts_by_company" on companies — the children list). See get_object for the object relationships.',
+        ),
+    },
+    async ({ object_name, id, expand }) => {
+      const denied = gate ? await gate(object_name, expand) : null;
+      if (denied) return denied;
+      try {
+        const result = await dataService.getById(object_name, id, { expand });
+        if (!result) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error: Record "${id}" not found in "${object_name}"`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );

@@ -38,6 +38,12 @@ function resolveResource(resource: ResourceResolver, request: FastifyRequest): s
 /**
  * Builds a preHandler that requires the given action on the given resource.
  * Responds 401 if unauthenticated, 403 if the principal lacks the permission.
+ *
+ * The unauthenticated 401 is a deliberate rail (issue #8): guarded routes —
+ * every admin/platform surface — never consult the permission engine for an
+ * anonymous caller, so the built-in `public` role can never satisfy them no
+ * matter what its grants say. Anonymous access exists only on the read data
+ * surfaces via the global enforcement hook.
  */
 export function requirePermission(
   engine: PermissionEngine,

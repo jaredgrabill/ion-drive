@@ -3,12 +3,33 @@
  *
  * Roles live in `_ion_roles` with an embedded permission set (JSONB); assignments
  * live in `_ion_user_roles`. On first run, {@link seedDefaults} creates the
- * built-in admin/editor/viewer roles.
+ * built-in admin/editor/viewer/public roles.
+ *
+ * The built-in `public` role (issue #8) is fenced here so every caller —
+ * REST admin routes, block installers, embedders — inherits the rails:
+ * read-only grants on named objects, no rename, no user assignment
+ * (deletion is already blocked for all system roles). Violations throw
+ * {@link RoleValidationError} (HTTP 400 at the route layer).
  */
 
 import { type Kysely, sql } from 'kysely';
 import type { IonRole, PermissionGrant, SystemDatabase } from '../../db/types.js';
-import { ANONYMOUS_ROLE_NAME, DEFAULT_ROLES } from './policy-types.js';
+import {
+  ANONYMOUS_ROLE_NAME,
+  DEFAULT_ROLES,
+  PUBLIC_ROLE_NAME,
+  validatePublicRoleGrants,
+} from './policy-types.js';
+
+/** A role mutation violated a validation rail (maps to HTTP 400). */
+export class RoleValidationError extends Error {
+  readonly statusCode = 400;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'RoleValidationError';
+  }
+}
 
 export interface RoleInput {
   name: string;
@@ -64,6 +85,11 @@ export class RoleManager {
   }
 
   async create(input: RoleInput): Promise<IonRole> {
+    if (input.name === PUBLIC_ROLE_NAME) {
+      throw new RoleValidationError(
+        `"${PUBLIC_ROLE_NAME}" is a reserved built-in role — edit its grants instead of creating it`,
+      );
+    }
     return this.db
       .insertInto('_ion_roles')
       .values({
@@ -77,6 +103,9 @@ export class RoleManager {
   }
 
   async update(id: string, input: Partial<RoleInput>): Promise<IonRole | undefined> {
+    const existing = await this.getById(id);
+    if (existing) this.assertUpdateAllowed(existing, input);
+
     const patch: Record<string, unknown> = { updated_at: sql`now()` };
     if (input.name !== undefined) patch.name = input.name;
     if (input.description !== undefined) patch.description = input.description;
@@ -88,6 +117,27 @@ export class RoleManager {
       .where('id', '=', id)
       .returningAll()
       .executeTakeFirst();
+  }
+
+  /**
+   * The public-role rails, applied on every update path (issue #8):
+   * the role cannot be renamed, its grants must stay read-only on named data
+   * objects, and no other role may take its reserved name.
+   */
+  private assertUpdateAllowed(existing: IonRole, input: Partial<RoleInput>): void {
+    if (existing.name !== PUBLIC_ROLE_NAME) {
+      if (input.name === PUBLIC_ROLE_NAME) {
+        throw new RoleValidationError(`"${PUBLIC_ROLE_NAME}" is a reserved built-in role name`);
+      }
+      return;
+    }
+    if (input.name !== undefined && input.name !== PUBLIC_ROLE_NAME) {
+      throw new RoleValidationError('The public role cannot be renamed');
+    }
+    if (input.permissions !== undefined) {
+      const violation = validatePublicRoleGrants(input.permissions);
+      if (violation) throw new RoleValidationError(violation);
+    }
   }
 
   /** Deletes a non-system role. Returns false if missing or system-managed. */
@@ -103,6 +153,12 @@ export class RoleManager {
   // --- Assignments ---
 
   async assign(userId: string, roleId: string): Promise<void> {
+    const role = await this.getById(roleId);
+    if (role?.name === PUBLIC_ROLE_NAME) {
+      throw new RoleValidationError(
+        'The public role represents anonymous requests and cannot be assigned to users',
+      );
+    }
     await this.db
       .insertInto('_ion_user_roles')
       .values({ user_id: userId, role_id: roleId })

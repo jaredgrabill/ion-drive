@@ -93,6 +93,17 @@ const configSchema = z.object({
   allowOpen: envBoolean(false),
 
   /**
+   * Whether the built-in `public` role is evaluated for anonymous requests
+   * (ION_PUBLIC_ROLE, issue #8). Default **on** — but structurally inert: the
+   * role is seeded with zero grants, so nothing is publicly readable until an
+   * admin explicitly grants `read` on a named object to it. The role is
+   * read-only by construction (write/manage grants are rejected), so leaving
+   * this on adds no exposure beyond what an admin deliberately grants. Set
+   * false to hard-disable anonymous evaluation even when grants exist.
+   */
+  publicRole: envBoolean(true),
+
+  /**
    * When true, public signup closes once the first admin exists: the very
    * first user can still sign up (and becomes admin), after which
    * `/api/auth/sign-up/*` returns 403. Admins create further users directly.
@@ -252,6 +263,7 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     authSecret: process.env.ION_AUTH_SECRET,
     requireAuth: process.env.ION_REQUIRE_AUTH,
     allowOpen: process.env.ION_ALLOW_OPEN,
+    publicRole: process.env.ION_PUBLIC_ROLE,
     disableSignup: process.env.ION_DISABLE_SIGNUP,
     anonymousAuth: process.env.ION_ANONYMOUS_AUTH,
     rateLimitEnabled: process.env.ION_RATE_LIMIT_ENABLED,

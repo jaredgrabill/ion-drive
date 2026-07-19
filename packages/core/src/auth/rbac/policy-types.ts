@@ -22,8 +22,30 @@ export const RESOURCE_WILDCARD = '*';
  * excluded from the first-admin bootstrap accounting (see RoleManager) so a
  * guest arriving before the first real sign-up can neither become admin nor
  * close the bootstrap window.
+ *
+ * Distinct from {@link PUBLIC_ROLE_NAME}: `anonymous` covers **guest users**
+ * created by anonymous sign-in (they hold a real session and evaluate as
+ * authenticated principals through their assigned roles); `public` covers
+ * requests with **no credential at all** (the null principal).
  */
 export const ANONYMOUS_ROLE_NAME = 'anonymous';
+
+/**
+ * Name of the built-in role evaluated for the **anonymous** (null) principal —
+ * requests that present no credential at all (issue #8). Admins grant `read`
+ * on specific data objects to it exactly like any other role; the permission
+ * engine consults it when no principal is present (and unions its grants into
+ * every authenticated principal's effective grants, since "public" means
+ * everyone). It is deliberately fenced in:
+ *
+ *   - it can hold only `read` grants on named data objects (see
+ *     {@link validatePublicRoleGrants}),
+ *   - it cannot be assigned to users or bound to API keys,
+ *   - it cannot be renamed or deleted, and
+ *   - it never satisfies `requirePermission` guards (admin routes), which
+ *     401 unauthenticated requests before consulting the engine.
+ */
+export const PUBLIC_ROLE_NAME = 'public';
 
 /**
  * Platform (non-data-object) resources that RBAC can protect. Data objects are
@@ -59,6 +81,37 @@ export function grantAllows(grant: PermissionGrant, action: Action, resource: st
   );
 }
 
+/**
+ * Validates the grant set of the {@link PUBLIC_ROLE_NAME} role. Returns an
+ * error message when a grant would exceed the public role's fence, or null
+ * when the set is acceptable. The rules (issue #8 safety rails):
+ *
+ *   - every grant's actions must be exactly `read` — no create/update/delete,
+ *     no `manage`, no `*` action;
+ *   - the resource must be a **named data object** — the `*` wildcard and the
+ *     platform resources (schema, secrets, roles, …) are rejected, so a public
+ *     grant can never open an administrative surface or "everything".
+ */
+export function validatePublicRoleGrants(grants: PermissionGrant[]): string | null {
+  const platformResources = new Set<string>(Object.values(PLATFORM_RESOURCES));
+  for (const grant of grants) {
+    const badAction = grant.actions.find((a) => a !== 'read');
+    if (badAction !== undefined) {
+      return `The public role can only hold "read" grants — remove action "${badAction}" on "${grant.resource}"`;
+    }
+    if (grant.actions.length === 0) {
+      return `The public role grant on "${grant.resource}" has no actions`;
+    }
+    if (grant.resource === RESOURCE_WILDCARD) {
+      return 'The public role cannot be granted the "*" resource — grant read on specific data objects instead';
+    }
+    if (platformResources.has(grant.resource)) {
+      return `The public role cannot be granted platform resource "${grant.resource}" — only named data objects`;
+    }
+  }
+  return null;
+}
+
 /** Well-known default roles seeded on first run. */
 export const DEFAULT_ROLES: {
   name: string;
@@ -85,6 +138,15 @@ export const DEFAULT_ROLES: {
     description:
       'Guest users created by anonymous sign-in (ION_ANONYMOUS_AUTH). Starts with no ' +
       'grants — deliberately minimal; edit this role to allow what guests may do.',
+    permissions: [],
+  },
+  {
+    // Empty by default, so seeding it is inert until an admin grants read on
+    // a specific object (issue #8 — per-object public read access).
+    name: PUBLIC_ROLE_NAME,
+    description:
+      'Anonymous (no-credential) requests. Grant read on specific data objects to expose ' +
+      'them publicly; read-only by design and never assignable to users or API keys.',
     permissions: [],
   },
 ];

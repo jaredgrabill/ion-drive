@@ -12,7 +12,8 @@
  */
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { FastifyPluginCallback } from 'fastify';
+import type { FastifyInstance, FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastify';
+import type { PermissionEngine } from '../auth/rbac/permission-engine.js';
 import type { ActionExecutor } from '../blocks/action-executor.js';
 import type { InstalledBlock } from '../blocks/block-types.js';
 import type { DataService } from '../data/data-service.js';
@@ -26,6 +27,14 @@ export interface McpRoutesOptions {
   actionExecutor?: ActionExecutor;
   /** When present, the `list_blocks` ledger tool is exposed (spec-04 parity). */
   blockEngine?: { listInstalled: () => Promise<InstalledBlock[]> };
+  /**
+   * Required for anonymous public-read mode (issue #8): with `enforce` on,
+   * an unauthenticated POST gets a stripped-down server exposing only the
+   * per-object-gated read data tools instead of the full tool surface.
+   */
+  permissionEngine?: PermissionEngine;
+  /** Whether RBAC is enforced (config.requireAuth). */
+  enforce?: boolean;
 }
 
 /** JSON-RPC error returned for unsupported methods in stateless mode. */
@@ -36,10 +45,24 @@ const METHOD_NOT_ALLOWED = {
 };
 
 export function registerMcpRoutes(options: McpRoutesOptions): FastifyPluginCallback {
-  const { schemaManager, dataService, actionExecutor, blockEngine } = options;
+  const { schemaManager, dataService, actionExecutor, blockEngine, permissionEngine } = options;
 
   return (fastify, _opts, done) => {
     fastify.post('/', async (request, reply) => {
+      // Anonymous public-read mode (issue #8): under enforcement, a request
+      // with no credential reaches this handler only when public read grants
+      // exist (see rbac/enforcement.ts). It gets a server exposing solely the
+      // read data tools, each gated per object through the public role.
+      const anonymous = Boolean(options.enforce) && !request.auth && permissionEngine;
+      if (anonymous && permissionEngine) {
+        const server = createMcpServer({
+          schemaManager,
+          dataService,
+          publicRead: { canRead: (objectName) => permissionEngine.can(null, 'read', objectName) },
+        });
+        return handleMcpRequest(fastify, server, request, reply);
+      }
+
       // Declared actions are read per request (like the schema), so tools for
       // newly installed blocks appear without a restart.
       const actions = actionExecutor
@@ -47,37 +70,7 @@ export function registerMcpRoutes(options: McpRoutesOptions): FastifyPluginCallb
         : undefined;
       const blocks = blockEngine ? { listInstalled: () => blockEngine.listInstalled() } : undefined;
       const server = createMcpServer({ schemaManager, dataService, actions, blocks });
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        // Stateless request/response: return a single JSON body rather than
-        // opening an SSE stream, which is simpler for one-shot HTTP clients.
-        enableJsonResponse: true,
-      });
-
-      // Tear down when the client disconnects or the response finishes.
-      reply.raw.on('close', () => {
-        void transport.close();
-        void server.close();
-      });
-
-      try {
-        await server.connect(transport);
-        // Hand the raw Node req/res to the transport; Fastify steps aside.
-        reply.hijack();
-        await transport.handleRequest(request.raw, reply.raw, request.body);
-      } catch (err) {
-        fastify.log.error({ err }, 'MCP request handling failed');
-        if (!reply.raw.headersSent) {
-          reply.raw.writeHead(500, { 'content-type': 'application/json' });
-          reply.raw.end(
-            JSON.stringify({
-              jsonrpc: '2.0',
-              error: { code: -32603, message: 'Internal server error' },
-              id: null,
-            }),
-          );
-        }
-      }
+      return handleMcpRequest(fastify, server, request, reply);
     });
 
     // Stateless mode has no SSE stream or session to resume/terminate.
@@ -86,4 +79,48 @@ export function registerMcpRoutes(options: McpRoutesOptions): FastifyPluginCallb
 
     done();
   };
+}
+
+/**
+ * Runs one stateless JSON-RPC exchange through a fresh transport: connect,
+ * hijack the raw response, hand it to the transport, tear down on close.
+ * Shared by the full server and the anonymous public-read server.
+ */
+async function handleMcpRequest(
+  fastify: FastifyInstance,
+  server: ReturnType<typeof createMcpServer>,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    // Stateless request/response: return a single JSON body rather than
+    // opening an SSE stream, which is simpler for one-shot HTTP clients.
+    enableJsonResponse: true,
+  });
+
+  // Tear down when the client disconnects or the response finishes.
+  reply.raw.on('close', () => {
+    void transport.close();
+    void server.close();
+  });
+
+  try {
+    await server.connect(transport);
+    // Hand the raw Node req/res to the transport; Fastify steps aside.
+    reply.hijack();
+    await transport.handleRequest(request.raw, reply.raw, request.body);
+  } catch (err) {
+    fastify.log.error({ err }, 'MCP request handling failed');
+    if (!reply.raw.headersSent) {
+      reply.raw.writeHead(500, { 'content-type': 'application/json' });
+      reply.raw.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null,
+        }),
+      );
+    }
+  }
 }

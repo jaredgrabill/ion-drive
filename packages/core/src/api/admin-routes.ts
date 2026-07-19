@@ -7,14 +7,19 @@
  * development and first-run setup are frictionless.
  */
 
-import type { FastifyInstance, FastifyPluginCallback, preHandlerHookHandler } from 'fastify';
+import type {
+  FastifyInstance,
+  FastifyPluginCallback,
+  FastifyReply,
+  preHandlerHookHandler,
+} from 'fastify';
 import { type Kysely, sql } from 'kysely';
 import { z } from 'zod';
 import type { ApiKeyManager } from '../auth/api-key-manager.js';
 import { requirePermission } from '../auth/rbac/middleware.js';
 import type { PermissionEngine } from '../auth/rbac/permission-engine.js';
-import type { Action } from '../auth/rbac/policy-types.js';
-import type { RoleManager } from '../auth/rbac/role-manager.js';
+import { type Action, PUBLIC_ROLE_NAME } from '../auth/rbac/policy-types.js';
+import { type RoleManager, RoleValidationError } from '../auth/rbac/role-manager.js';
 import type { ConfigStore } from '../config/config-store.js';
 import type { SecretsManager } from '../config/secrets-manager.js';
 import type { SystemDatabase } from '../db/types.js';
@@ -40,6 +45,14 @@ const roleInputSchema = z.object({
   description: z.string().max(2000).nullish(),
   permissions: z.array(permissionGrantSchema).default([]),
 });
+
+/** Maps a {@link RoleValidationError} to a 400; re-throws anything else. */
+function sendRoleValidationError(reply: FastifyReply, err: unknown): FastifyReply {
+  if (err instanceof RoleValidationError) {
+    return reply.code(400).send({ error: 'Validation Error', message: err.message });
+  }
+  throw err;
+}
 
 export function registerAdminRoutes(services: AdminRoutesServices): FastifyPluginCallback {
   const { roleManager, permissionEngine, secretsManager, configStore, apiKeyManager, systemDb } =
@@ -75,12 +88,16 @@ export function registerAdminRoutes(services: AdminRoutesServices): FastifyPlugi
       if (!parsed.success) {
         return reply.code(400).send({ error: 'Validation Error', issues: parsed.error.issues });
       }
-      const role = await roleManager.create({
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        permissions: parsed.data.permissions,
-      });
-      return reply.code(201).send({ data: role });
+      try {
+        const role = await roleManager.create({
+          name: parsed.data.name,
+          description: parsed.data.description ?? null,
+          permissions: parsed.data.permissions,
+        });
+        return reply.code(201).send({ data: role });
+      } catch (err) {
+        return sendRoleValidationError(reply, err);
+      }
     });
 
     fastify.patch<{ Params: { id: string } }>(
@@ -91,13 +108,17 @@ export function registerAdminRoutes(services: AdminRoutesServices): FastifyPlugi
         if (!parsed.success) {
           return reply.code(400).send({ error: 'Validation Error', issues: parsed.error.issues });
         }
-        const role = await roleManager.update(request.params.id, {
-          name: parsed.data.name,
-          description: parsed.data.description ?? null,
-          permissions: parsed.data.permissions,
-        });
-        if (!role) return reply.code(404).send({ error: 'Not Found', message: 'Role not found' });
-        return { data: role };
+        try {
+          const role = await roleManager.update(request.params.id, {
+            name: parsed.data.name,
+            description: parsed.data.description ?? null,
+            permissions: parsed.data.permissions,
+          });
+          if (!role) return reply.code(404).send({ error: 'Not Found', message: 'Role not found' });
+          return { data: role };
+        } catch (err) {
+          return sendRoleValidationError(reply, err);
+        }
       },
     );
 
@@ -129,7 +150,11 @@ export function registerAdminRoutes(services: AdminRoutesServices): FastifyPlugi
         if (!userId) {
           return reply.code(400).send({ error: 'Validation Error', message: 'userId is required' });
         }
-        await roleManager.assign(userId, request.params.id);
+        try {
+          await roleManager.assign(userId, request.params.id);
+        } catch (err) {
+          return sendRoleValidationError(reply, err);
+        }
         return reply.code(201).send({ success: true });
       },
     );
@@ -242,6 +267,17 @@ export function registerAdminRoutes(services: AdminRoutesServices): FastifyPlugi
       const name = request.body?.name;
       if (!name) {
         return reply.code(400).send({ error: 'Validation Error', message: 'name is required' });
+      }
+      // The public role represents anonymous requests — binding it to a
+      // credential is a category error (issue #8 rail, like user assignment).
+      if (request.body?.roleId) {
+        const role = await roleManager.getById(request.body.roleId);
+        if (role?.name === PUBLIC_ROLE_NAME) {
+          return reply.code(400).send({
+            error: 'Validation Error',
+            message: 'The public role cannot be bound to an API key',
+          });
+        }
       }
       const created = await apiKeyManager.create({
         name,

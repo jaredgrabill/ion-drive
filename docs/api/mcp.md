@@ -21,6 +21,11 @@ claude mcp add --transport http ion-drive http://localhost:3000/api/v1/mcp \
   --header "X-API-Key: iond_…"
 ```
 
+Anonymous clients (no key at all) are refused — unless specific objects have
+been granted to the built-in `public` role, in which case they get a stripped
+read-only server (`query_data` / `aggregate_data` / `get_record`, gated per
+object). See [Public read access](../concepts/public-read.md).
+
 ## Tools
 
 ### Schema

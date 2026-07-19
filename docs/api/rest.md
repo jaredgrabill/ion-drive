@@ -14,6 +14,8 @@ A machine-readable, always-current [OpenAPI 3.1 spec](#openapi) is served at
 - **Content type:** `application/json`.
 - **Auth:** when `ION_REQUIRE_AUTH` is enabled, send an API key as
   `X-API-Key: iond_…` (or `Authorization: Bearer iond_…`), or a session cookie.
+  Objects granted `read` to the built-in `public` role are also readable with
+  **no credential at all** — see [Public read access](../concepts/public-read.md).
 - **Response envelope:** reads/writes of a single record return `{ "data": {…} }`;
   lists return `{ "data": [...], "pagination": {…} }`.
 - **Errors:** `{ "error": "<code>", "message": "<human message>" }` with an
