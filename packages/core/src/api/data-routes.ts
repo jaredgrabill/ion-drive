@@ -297,13 +297,17 @@ function sendRecordNotFound(
 
 /**
  * Standard error handler for data routes. Known DataServiceErrors map to their
- * status codes; unexpected errors are re-thrown to Fastify's error handler.
+ * status codes (including the Postgres constraint translations from
+ * `data/errors.ts` — 409 unique/foreign-key, 400 not-null/invalid-value —
+ * with the offending `field` attached when it could be determined);
+ * unexpected errors are re-thrown to Fastify's error handler.
  */
 function handleError(err: unknown, reply: FastifyReply): FastifyReply {
   if (err instanceof DataServiceError) {
     return reply.code(err.statusCode).send({
       error: err.code,
       message: err.message,
+      ...(err.field !== undefined ? { field: err.field } : {}),
     });
   }
   throw err;

@@ -584,10 +584,13 @@ function applyTextFormat(schema: Record<string, unknown>, field: FieldDefinition
   if (field.columnType === 'url') schema.format = 'uri';
 }
 
-/** Sets the schema for structured types: `object` for json, typed `array` otherwise. */
+/** Sets the schema for structured types: any JSON value for json, typed `array` otherwise. */
 function applyStructuredType(schema: Record<string, unknown>, field: FieldDefinition): void {
   if (field.columnType === 'json') {
-    schema.type = 'object';
+    // Deliberately no `type` keyword: a json column stores any JSON value.
+    // Objects and arrays are accepted natively on write (issue #10); a
+    // pre-encoded JSON string also remains accepted for back-compat.
+    schema.description = 'Any JSON value (object, array, or scalar)';
   } else {
     schema.type = 'array';
     schema.items = { type: field.columnType === 'array_integer' ? 'integer' : 'string' };

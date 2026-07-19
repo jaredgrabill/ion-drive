@@ -65,6 +65,10 @@ what free-text [search](../api/querying.md#free-text-search) matches against.
 Get the live list any time via the MCP `list_column_types` tool or the
 `COLUMN_TYPES` export from `@ion-drive/core`.
 
+`json` fields accept any JSON value on write — send the object or array
+itself in the request body (no pre-encoding), and reads return the same
+parsed value. A pre-encoded JSON string is also accepted for compatibility.
+
 ## Relationships
 
 Objects can relate via `one_to_one`, `one_to_many`, `many_to_one`, and

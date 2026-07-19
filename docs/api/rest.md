@@ -17,7 +17,8 @@ A machine-readable, always-current [OpenAPI 3.1 spec](#openapi) is served at
 - **Response envelope:** reads/writes of a single record return `{ "data": {…} }`;
   lists return `{ "data": [...], "pagination": {…} }`.
 - **Errors:** `{ "error": "<code>", "message": "<human message>" }` with an
-  appropriate HTTP status.
+  appropriate HTTP status. Constraint violations add a `"field"` naming the
+  offending column when it can be determined — see [Errors](#errors).
 
 ## Endpoints
 
@@ -69,6 +70,16 @@ curl -X POST http://localhost:3000/api/v1/data/contacts \
 # 201 Created -> { "data": { "id": "…", … } }
 ```
 
+`json` fields take any JSON value directly — send the object or array itself,
+no pre-encoding needed (a pre-encoded JSON string is also still accepted):
+
+```bash
+curl -X POST http://localhost:3000/api/v1/data/matches \
+  -H 'content-type: application/json' \
+  -d '{ "config_json": { "mode": "ranked", "rounds": [1, 2, 3] } }'
+# 201 — and a GET returns the same parsed object
+```
+
 System fields (`id`, `created_at`, `updated_at`, `created_by`, `updated_by`)
 are managed by the platform and ignored if supplied in the body. The `*_by`
 columns record the authenticated actor (user id, else API-key id): creates
@@ -107,9 +118,36 @@ curl -X DELETE http://localhost:3000/api/v1/data/contacts/bulk \
 | `200` | Successful read/update |
 | `201` | Record(s) created |
 | `204` | Record deleted |
-| `400` | Malformed body or unknown filter field |
+| `400` | Malformed body, unknown filter field, missing required field, or unparseable value |
 | `401` / `403` | Auth required / insufficient permission (when enforcement is on) |
 | `404` | Unknown object or record |
+| `409` | Constraint conflict — duplicate unique value or foreign-key violation |
+
+## Errors
+
+Every error response uses the flat envelope
+`{ "error": "<code>", "message": "<human message>" }`. Database constraint
+violations are translated into stable, machine-readable codes — never a raw
+500 with a SQLSTATE — and include a `"field"` naming the offending column
+when it can be determined:
+
+```json
+{ "error": "unique_violation", "field": "device_id",
+  "message": "A record with this device_id already exists" }
+```
+
+| Status | `error` | When |
+|:---|:---|:---|
+| `409` | `unique_violation` | A value duplicates an existing row in a unique field |
+| `409` | `foreign_key_violation` | A referenced record doesn't exist, or the record is still referenced |
+| `400` | `not_null_violation` | A required field is missing or null |
+| `400` | `invalid_value` | A value can't be parsed as the column's type (bad UUID, non-numeric integer, malformed JSON string, …) |
+| `400` | `CONSTRAINT_VIOLATION` | A field-level rule (min/max/pattern/enum) failed — the message names the rule |
+
+Internal database identifiers (constraint names) never appear in responses.
+These codes apply on every surface: GraphQL and MCP calls report the same
+message through their own error channels. `409 unique_violation` is the
+reliable "already exists" signal for GET-then-POST patterns.
 
 ## Using the client SDK
 
