@@ -11,6 +11,12 @@ the permission engine evaluates for the **anonymous principal** — requests tha
 present no credential at all. Grant `read` on a specific object to it and that
 object becomes world-readable; everything else stays locked down.
 
+Not to be confused with the `anonymous` role from
+[anonymous (guest) sign-in](auth.md): guests hold a real session and evaluate
+as authenticated principals through their assigned roles (writes included, if
+granted); the `public` role covers requests with **no credential at all** and
+is read-only by construction.
+
 ## The leaderboard example
 
 Say your game stores scores in a `player_stats` object. Make the leaderboard

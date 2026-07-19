@@ -438,12 +438,7 @@ export function buildGraphQLSchema(
   extras: GraphQLSchemaExtras = {},
 ): GraphQLSchema {
   const objects = registry.listObjects().filter((o) => !o.isSystem);
-
-  // Anonymous-access guard (issue #8): only active when RBAC is enforced and
-  // an engine is wired. Authenticated principals are unaffected (the
-  // transport-level gate already covered them).
-  const anonGuard: AnonReadGuard | undefined =
-    extras.enforce && extras.permissionEngine ? { engine: extras.permissionEngine } : undefined;
+  const anonGuard = resolveAnonGuard(extras);
 
   const queryFields: GraphQLFieldConfigMap<unknown, unknown> = {
     // Always-present introspection fields guarantee a non-empty Query type
@@ -601,6 +596,17 @@ export function buildGraphQLSchema(
         : undefined,
     subscription: buildSubscriptionType(extras),
   });
+}
+
+/**
+ * Anonymous-access guard (issue #8): only active when RBAC is enforced and an
+ * engine is wired. Authenticated principals are unaffected (the
+ * transport-level gate already covered them).
+ */
+function resolveAnonGuard(extras: GraphQLSchemaExtras): AnonReadGuard | undefined {
+  return extras.enforce && extras.permissionEngine
+    ? { engine: extras.permissionEngine }
+    : undefined;
 }
 
 /**

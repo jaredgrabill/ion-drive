@@ -49,6 +49,8 @@ type IonApp = Awaited<ReturnType<typeof createServer>>;
 
 let adminClient: pg.Client | undefined;
 let app: IonApp | undefined;
+/** Real listener address for the MCP exchanges (see {@link anonMcp}). */
+let baseUrl = '';
 
 // ---------------------------------------------------------------------------
 // Request helpers
@@ -94,20 +96,28 @@ async function anonGraphql(query: string): Promise<{ status: number; body: Json 
   return anon('POST', '/api/v1/graphql', { query });
 }
 
-/** One stateless anonymous MCP JSON-RPC exchange. */
+/**
+ * One stateless anonymous MCP JSON-RPC exchange — over a **real HTTP socket**,
+ * not `.inject()`. The MCP transport's request listener (@hono/node-server)
+ * arms a 500ms drain timer that ends with `socket.destroySoon()`; on
+ * light-my-request's MockSocket that method does not exist, so every injected
+ * MCP exchange detonated an uncaught TypeError up to 500ms later — flaking
+ * *other* files in the parallel integration run. Real sockets make the drain
+ * path a harmless no-op (and its timers are unref'd).
+ */
 async function anonMcp(payload: Json): Promise<{ status: number; body: Json }> {
-  if (!app) throw new Error('Server not booted');
-  const res = await app.server.inject({
+  if (!baseUrl) throw new Error('Server not listening');
+  const res = await fetch(`${baseUrl}/api/v1/mcp`, {
     method: 'POST',
-    url: '/api/v1/mcp',
     headers: {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
     },
-    payload: JSON.stringify({ jsonrpc: '2.0', id: 1, ...payload }),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, ...payload }),
   });
-  const body = res.body ? (JSON.parse(res.body) as Json) : {};
-  return { status: res.statusCode, body };
+  const text = await res.text();
+  const body = text ? (JSON.parse(text) as Json) : {};
+  return { status: res.status, body };
 }
 
 /** PATCHes the public role's permission set as the admin. */
@@ -140,9 +150,17 @@ beforeAll(async () => {
     nodeEnv: 'test',
     logLevel: 'fatal',
   });
+  // Real ephemeral listener for the MCP exchanges (see anonMcp).
+  await app.server.listen({ port: 0, host: '127.0.0.1' });
+  const address = app.server.server.address();
+  if (!address || typeof address === 'string') throw new Error('No listener address');
+  baseUrl = `http://127.0.0.1:${address.port}`;
 }, 120_000);
 
 afterAll(async () => {
+  // Let any in-flight MCP drain timers (500ms, unref'd) fire while their
+  // sockets still exist, so no timer callback outlives this file.
+  await new Promise((resolve) => setTimeout(resolve, 600));
   await app?.close();
   // Wait for the pools' Terminate packets to land before dropping (see the
   // explanation in platform.integration.test.ts).
@@ -241,7 +259,10 @@ describe('public read access (integration)', () => {
     const roles = await api('GET', '/api/v1/roles');
     expect(roles.status).toBe(200);
     const names = (roles.body.data as Json[]).map((r) => r.name);
-    expect(names).toEqual(expect.arrayContaining(['admin', 'editor', 'viewer', 'public']));
+    // `anonymous` (guest users, #6) and `public` (null principal, #8) coexist.
+    expect(names).toEqual(
+      expect.arrayContaining(['admin', 'editor', 'viewer', 'anonymous', 'public']),
+    );
     const publicRole = (roles.body.data as Json[]).find((r) => r.name === 'public') as Json;
     expect(publicRole.is_system).toBe(true);
     expect(publicRole.permissions).toEqual([]);
@@ -290,6 +311,19 @@ describe('public read access (integration)', () => {
     // The name is reserved.
     const clone = await api('POST', '/api/v1/roles', { name: 'public', permissions: [] });
     expect(clone.status).toBe(400);
+
+    // The rails fence ONLY the public role: the `anonymous` guest role (#6)
+    // stays freely editable — including write grants — as its feature intends.
+    const roles = await api('GET', '/api/v1/roles');
+    const guestRole = (roles.body.data as Json[]).find((r) => r.name === 'anonymous') as Json;
+    const guestUpdate = await api('PATCH', `/api/v1/roles/${guestRole.id}`, {
+      permissions: [{ resource: 'pub_players', actions: ['read', 'update'] }],
+    });
+    expect(guestUpdate.status).toBe(200);
+    // Restore it to empty so the rest of the suite is unaffected.
+    expect((await api('PATCH', `/api/v1/roles/${guestRole.id}`, { permissions: [] })).status).toBe(
+      200,
+    );
   });
 
   it('grants read on pub_players via the roles API', async () => {
@@ -386,16 +420,36 @@ describe('public read access (integration)', () => {
     );
   });
 
-  it('rejects anonymous GraphQL mutations', async () => {
+  it('rejects anonymous GraphQL mutations (create/update/increment/upsert/delete)', async () => {
     const create = await anonGraphql(
       'mutation { create_pub_players(input: { name: "Mallory" }) { id } }',
     );
     expect(JSON.stringify(create.body.errors)).toMatch(/Authentication required/);
+
+    // update — both the plain-input path and the atomic-increment path (#18).
+    const update = await anonGraphql(
+      `mutation { update_pub_players(id: "${state.playerId}", input: { wins: 999 }) { id } }`,
+    );
+    expect(JSON.stringify(update.body.errors)).toMatch(/Authentication required/);
+    const increment = await anonGraphql(
+      `mutation { update_pub_players(id: "${state.playerId}", increment: { wins: 1 }) { id } }`,
+    );
+    expect(JSON.stringify(increment.body.errors)).toMatch(/Authentication required/);
+
+    // upsert (#18) — a create must not be reachable through the upsert path.
+    const upsert = await anonGraphql(
+      'mutation { upsert_pub_players(input: { name: "Mallory" }, onConflict: ["name"]) { created } }',
+    );
+    expect(JSON.stringify(upsert.body.errors)).toMatch(/Authentication required/);
+
     const del = await anonGraphql(`mutation { delete_pub_players(id: "${state.playerId}") }`);
     expect(JSON.stringify(del.body.errors)).toMatch(/Authentication required/);
-    // Nothing was written.
+
+    // Nothing was written (and Ada's wins were not incremented).
     const count = await anon('GET', '/api/v1/data/pub_players/aggregate?fn=count');
     expect((count.body.data as Json).filteredCount).toBe(3);
+    const ada = await anon('GET', `/api/v1/data/pub_players/${state.playerId}`);
+    expect((ada.body.data as Json).wins).toBe(50);
   });
 
   it('gives anonymous MCP clients only the gated read tools (parity)', async () => {
