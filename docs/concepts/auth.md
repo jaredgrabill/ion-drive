@@ -63,6 +63,10 @@ what guests may touch, e.g.:
 { "permissions": [{ "resource": "scores", "actions": ["create", "read"] }] }
 ```
 
+Grants on the anonymous role (like any role) may carry a
+[row policy](row-policies.md) — `"rowPolicy": "own"` above would let each
+guest read and write only the score rows they created.
+
 Guests are excluded from the first-admin bootstrap: a guest arriving before
 your first real sign-up neither becomes admin nor closes the bootstrap window.
 

@@ -50,6 +50,7 @@ import {
   GraphQLString,
 } from 'graphql';
 import type { PermissionEngine } from '../../auth/rbac/permission-engine.js';
+import type { RowPolicyResolver } from '../../auth/rbac/row-policy.js';
 import type { ActionExecutor, DeclaredAction } from '../../blocks/action-executor.js';
 import type { DataService } from '../../data/data-service.js';
 import { type RelationKey, listRelationKeys } from '../../data/relation-keys.js';
@@ -427,6 +428,8 @@ export interface GraphQLSchemaExtras {
   enforce?: boolean;
   /** Present when the outbox bus is live — enables `Subscription.events`. */
   realtime?: RealtimeBridge;
+  /** Row-level read scoping for subscription data events (issue #7). */
+  rowPolicies?: RowPolicyResolver;
 }
 
 /**
@@ -747,6 +750,7 @@ function buildSubscriptionType(extras: GraphQLSchemaExtras): GraphQLObjectType |
           realtime,
           permissionEngine,
           enforce: extras.enforce ?? false,
+          rowPolicies: extras.rowPolicies,
         }),
         resolve: (event: unknown) => event,
       },

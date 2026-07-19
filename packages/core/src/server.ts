@@ -27,6 +27,7 @@ import {
   BetterAuthProvider,
   PermissionEngine,
   RoleManager,
+  RowPolicyResolver,
   createAnonymousCleanupHandler,
   deriveEmailDomain,
   ensureAnonymousCleanupTask,
@@ -284,6 +285,25 @@ function buildAnonymousOptions(
 }
 
 /**
+ * Builds the row-policy resolver (issue #7) under RBAC enforcement, or
+ * undefined in open mode. Policy field references resolve through the live
+ * schema registry (API name first, then physical column) so grants may use
+ * either spelling — matching the query layer's field matching.
+ */
+function buildRowPolicyResolver(
+  config: IonDriveConfig,
+  permissionEngine: PermissionEngine,
+  schemaManager: SchemaManager,
+): RowPolicyResolver | undefined {
+  if (!config.requireAuth) return undefined;
+  return new RowPolicyResolver(permissionEngine, (objectName, field) => {
+    const fields = schemaManager.registry.getFields(objectName);
+    const def = fields.find((f) => f.name === field) ?? fields.find((f) => f.columnName === field);
+    return def ? { column: def.columnName, columnType: def.columnType } : null;
+  });
+}
+
+/**
  * Installs the global RBAC enforcement hook (config.requireAuth). The expand
  * resolver keeps anonymous public-read grants strictly per-object: an
  * anonymous `expand=` must also be granted on the target object (issue #8).
@@ -344,6 +364,7 @@ async function registerEventEdge(
     eventStore: EventStore | undefined;
     bus: MessageBus;
     permissionEngine: PermissionEngine;
+    rowPolicies: RowPolicyResolver | undefined;
   },
 ): Promise<RealtimeBridge | undefined> {
   const { config, webhookManager, eventStore, bus, permissionEngine } = deps;
@@ -365,6 +386,7 @@ async function registerEventEdge(
       enforce: config.requireAuth,
       maxAttempts: DEFAULT_MAX_ATTEMPTS,
       realtime,
+      rowPolicies: deps.rowPolicies,
     }),
     { prefix: '/api/v1/events' },
   );
@@ -562,6 +584,14 @@ export async function createServer(
   await roleManager.ensureBootstrapMarker();
   const permissionEngine = new PermissionEngine(roleManager, { publicRole: config.publicRole });
 
+  // --- Row-level policies (issue #7 / Phase 17) ---
+  // Wired only under RBAC enforcement, like the object-level hook: DataService
+  // then scopes every read/write to the ambient principal's grant row
+  // policies, and the realtime event filter row-scopes streamed data events.
+  // Without enforcement (or with policy-less grants) behavior is unchanged.
+  const rowPolicies = buildRowPolicyResolver(config, permissionEngine, schemaManager);
+  dataService.setRowPolicyEnforcer(rowPolicies);
+
   // --- Phase 12: outbound webhooks (signed event push, riding the bus) ---
   // Works with any bus implementation; secrets are stored AES-encrypted in
   // the tenant DB. Built before the block engine so manifests declaring
@@ -739,6 +769,7 @@ export async function createServer(
     eventStore,
     bus,
     permissionEngine,
+    rowPolicies,
   });
 
   // --- GraphQL surface (graphql-yoga, schema reflected from the registry) ---
@@ -752,6 +783,7 @@ export async function createServer(
       permissionEngine,
       enforce: config.requireAuth,
       realtime,
+      rowPolicies,
     }),
   );
 

@@ -7,9 +7,38 @@
  *
  * All operations accept the data object name (e.g., "contacts") and
  * translate that into the physical table name via the Schema Registry.
+ *
+ * **Row-level policies (issue #7):** when a {@link RowPolicyEnforcer} is
+ * wired (RBAC enforcement on), every operation resolves the ambient
+ * principal's compiled policy for the (action, object) pair and applies it
+ * here — the single shared service — so REST, GraphQL (including relation
+ * traversal), and MCP inherit identical row scoping:
+ *
+ *   - reads (list/aggregate/getById) gain WHERE fragments in the same
+ *     `applyConditions` pipeline as filters/search, so row counts, pages,
+ *     and aggregates all agree;
+ *   - relation hydration (`expand=`, GraphQL relation fields) applies the
+ *     **target** object's read policy to each batched fetch;
+ *   - update/delete/bulk/link writes guard their WHERE — a row the actor
+ *     cannot see behaves exactly like a missing row (404);
+ *   - create/bulk-create must produce a row the actor's create policy
+ *     matches (owner columns are stamped, foreign values rejected);
+ *   - upsert applies the create policy to the insert and the update policy
+ *     to the conflict update (`DO UPDATE … WHERE`), so a conflict can never
+ *     hijack a foreign row.
+ *
+ * `insertSilent` is exempt by design — it is the internal event-consumer
+ * write path (audit block), never reachable from a request surface.
  */
 
 import { type Kysely, sql } from 'kysely';
+import {
+  type CompiledRowCondition,
+  type CompiledRowPolicy,
+  ROW_POLICY_ALL,
+  ROW_POLICY_DENIED,
+  type RowPolicyEnforcer,
+} from '../auth/rbac/row-policy.js';
 import type { TenantDatabase } from '../db/types.js';
 import { computeDiff } from '../messaging/diff.js';
 import type {
@@ -55,12 +84,24 @@ export class DataService {
   /** Whether change events are emitted (false when wired with the {@link NoopBus}). */
   private readonly eventsEnabled: boolean;
 
+  /** Row-policy seam (issue #7). Absent = policies do not apply. */
+  private rowPolicies?: RowPolicyEnforcer;
+
   constructor(
     private readonly db: Kysely<TenantDatabase>,
     private readonly registry: SchemaRegistry,
     private readonly bus: MessageBus = new NoopBus(),
   ) {
     this.eventsEnabled = !(bus instanceof NoopBus);
+  }
+
+  /**
+   * Wires the row-policy enforcer (issue #7). Called from server assembly when
+   * RBAC enforcement is on; without it every operation behaves exactly as
+   * before (zero behavior change for policy-less deployments).
+   */
+  setRowPolicyEnforcer(enforcer: RowPolicyEnforcer | undefined): void {
+    this.rowPolicies = enforcer;
   }
 
   // =========================================================================
@@ -79,12 +120,17 @@ export class DataService {
     for (const filter of options.filters ?? []) this.validateField(objectName, filter.field);
     for (const sort of options.sort ?? []) this.validateField(objectName, sort.field);
 
+    // Row policy (issue #7) — applied inside the same shared pipeline as
+    // filters/search, so data rows, the count, and pagination all agree.
+    const rowPolicy = await this.policyFor('read', objectName);
+
     // Build base query, applying filters + free-text search identically to the
     // count query so pagination totals stay consistent with the returned rows.
     let query = this.applyConditions(
       this.db.selectFrom(tableName).selectAll(),
       objectName,
       options,
+      rowPolicy,
     );
 
     // Apply sort
@@ -106,6 +152,7 @@ export class DataService {
       this.db.selectFrom(tableName).select(this.db.fn.countAll().as('count')),
       objectName,
       options,
+      rowPolicy,
     );
 
     const countResult = (await this.translated(filteredCountQuery.executeTakeFirst())) as
@@ -199,6 +246,9 @@ export class DataService {
     }
 
     const column = fieldDef?.columnName;
+    // Row policy (issue #7): an aggregate that ignored row scoping would leak
+    // hidden rows through totals — it shares the exact read pipeline instead.
+    const rowPolicy = await this.policyFor('read', objectName);
     const query = this.applyConditions(
       this.db.selectFrom(tableName).select(
         // biome-ignore lint/suspicious/noExplicitAny: Kysely expression builder is dynamic here
@@ -210,6 +260,7 @@ export class DataService {
       ),
       objectName,
       options,
+      rowPolicy,
     );
 
     const row = (await query.executeTakeFirst()) as { total: unknown; value?: unknown } | undefined;
@@ -230,8 +281,14 @@ export class DataService {
   ): Promise<SingleResult | null> {
     const tableName = this.resolveTable(objectName);
 
+    // Row policy (issue #7): a policy-hidden row answers like a missing one
+    // (404), so get-by-id cannot be used to probe rows the list conceals.
+    const rowPolicy = await this.policyFor('read', objectName);
     const row = await this.translated(
-      this.db.selectFrom(tableName).selectAll().where('id', '=', id).executeTakeFirst(),
+      this.applyRowPolicy(
+        this.db.selectFrom(tableName).selectAll().where('id', '=', id),
+        rowPolicy,
+      ).executeTakeFirst(),
     );
 
     if (!row) return null;
@@ -256,6 +313,7 @@ export class DataService {
     const cleanData = this.sanitizeInput(objectName, data);
     this.validateConstraints(objectName, cleanData);
     this.stampActor(objectName, cleanData, 'create');
+    this.assertCreateAllowed(objectName, cleanData, await this.policyFor('create', objectName));
 
     const row = await this.translated(
       this.db.transaction().execute(async (trx) => {
@@ -315,6 +373,12 @@ export class DataService {
     this.validateConstraints(objectName, cleanData);
     this.stampActor(objectName, cleanData, 'create');
 
+    // Row policy (issue #7): the insert half must satisfy the create policy;
+    // the conflict-update half counts as an update — its policy becomes the
+    // DO UPDATE's WHERE, so an upsert can never hijack a foreign row.
+    this.assertCreateAllowed(objectName, cleanData, await this.policyFor('create', objectName));
+    const updatePolicy = await this.policyFor('update', objectName);
+
     // translated(): a constraint the upsert does NOT target (another unique
     // column, an FK, NOT NULL) can still fire — it maps to the platform error
     // contract (409/400, errors.ts) instead of a raw Postgres 500.
@@ -329,6 +393,7 @@ export class DataService {
           tableName,
           cleanData,
           conflictColumns,
+          updatePolicy,
         );
         const { _ion_created, ...record } = returned;
         const created = Boolean(_ion_created);
@@ -371,12 +436,18 @@ export class DataService {
    * no-op self-assignment keeps DO UPDATE valid so RETURNING still yields the
    * existing row (PostgREST-style merge-duplicates). `_ion_created` rides
    * along as `(xmax = 0)` — true only for a freshly inserted row.
+   *
+   * A restricted update policy (issue #7) becomes the DO UPDATE's `WHERE`
+   * (conditions qualified against the existing row): a conflict with a row the
+   * actor may not update then returns nothing, which surfaces as a 403 —
+   * the conflicting row exists but is out of the actor's reach.
    */
   private async executeUpsertStatement(
     trx: BusTransaction,
     tableName: string,
     cleanData: Record<string, unknown>,
     conflictColumns: string[],
+    updatePolicy: CompiledRowPolicy,
   ): Promise<Record<string, unknown>> {
     const updateSet: Record<string, unknown> = {};
     for (const [column, value] of Object.entries(cleanData)) {
@@ -384,22 +455,36 @@ export class DataService {
         updateSet[column] = value;
       }
     }
+    this.assertNoPolicyReassignment(updateSet, updatePolicy);
     const firstConflict = conflictColumns[0] as string;
 
-    return (await trx
+    const returned = (await trx
       .insertInto(tableName)
       .values(cleanData)
       .onConflict((oc) => {
         const target = oc.columns(conflictColumns);
-        return Object.keys(updateSet).length > 0
-          ? target.doUpdateSet(updateSet)
-          : target.doUpdateSet((eb) => ({
-              [firstConflict]: eb.ref(`excluded.${firstConflict}`),
-            }));
+        const doUpdate =
+          Object.keys(updateSet).length > 0
+            ? target.doUpdateSet(updateSet)
+            : target.doUpdateSet((eb) => ({
+                [firstConflict]: eb.ref(`excluded.${firstConflict}`),
+              }));
+        // Qualify with the table name: inside DO UPDATE the bare name is the
+        // existing row, but explicit is safer than implicit here.
+        return this.applyRowPolicy(doUpdate, updatePolicy, tableName);
       })
       .returningAll()
       .returning(sql<boolean>`(xmax = 0)`.as('_ion_created'))
-      .executeTakeFirstOrThrow()) as Record<string, unknown>;
+      .executeTakeFirst()) as Record<string, unknown> | undefined;
+
+    if (!returned) {
+      throw new DataServiceError(
+        'Upsert conflicted with an existing row your row policy does not allow you to update',
+        ROW_POLICY_DENIED,
+        403,
+      );
+    }
+    return returned;
   }
 
   /**
@@ -490,16 +575,22 @@ export class DataService {
       throw new DataServiceError('Update body contains no writable fields', 'EMPTY_UPDATE', 400);
     }
 
+    // Row policy (issue #7): the policy joins the WHERE, so a row the actor
+    // cannot see is a row they cannot touch — it 404s like a missing one.
+    // Reassigning a policy-matched column to a foreign value is rejected.
+    const rowPolicy = await this.policyFor('update', objectName);
+    this.assertNoPolicyReassignment(sets, rowPolicy);
+
     const row = await this.translated(
       this.db.transaction().execute(async (trx) => {
         const before = this.eventsEnabled
           ? await trx.selectFrom(tableName).selectAll().where('id', '=', id).executeTakeFirst()
           : undefined;
 
-        const after = await trx
-          .updateTable(tableName)
-          .set(updateValues)
-          .where('id', '=', id)
+        const after = await this.applyRowPolicy(
+          trx.updateTable(tableName).set(updateValues).where('id', '=', id),
+          rowPolicy,
+        )
           .returningAll()
           .executeTakeFirst();
         if (!after) return null;
@@ -531,11 +622,14 @@ export class DataService {
   async delete(objectName: string, id: string): Promise<boolean> {
     const tableName = this.resolveTable(objectName);
 
+    // Row policy (issue #7): out-of-policy rows 404 like missing ones.
+    const rowPolicy = await this.policyFor('delete', objectName);
     const deleted = await this.translated(
       this.db.transaction().execute(async (trx) => {
-        const row = await trx
-          .deleteFrom(tableName)
-          .where('id', '=', id)
+        const row = await this.applyRowPolicy(
+          trx.deleteFrom(tableName).where('id', '=', id),
+          rowPolicy,
+        )
           .returningAll()
           .executeTakeFirst();
         if (!row) return null;
@@ -567,9 +661,11 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     if (records.length === 0) return { count: 0, ids: [] };
     const cleanRecords = records.map((r) => this.sanitizeInput(objectName, r));
+    const createPolicy = await this.policyFor('create', objectName);
     for (const record of cleanRecords) {
       this.validateConstraints(objectName, record);
       this.stampActor(objectName, record, 'create');
+      this.assertCreateAllowed(objectName, record, createPolicy);
     }
 
     const rows = await this.translated(
@@ -608,13 +704,17 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     if (ids.length === 0) return { count: 0, ids: [] };
 
+    // Row policy (issue #7): only in-policy rows are deleted; the returned
+    // count/ids reflect what actually happened, like unknown ids do today.
+    const rowPolicy = await this.policyFor('delete', objectName);
     const rows = await this.translated(
       this.db.transaction().execute(async (trx) => {
-        const deleted = await trx
-          .deleteFrom(tableName)
-          .where('id', 'in', ids)
+        const deleted = (await this.applyRowPolicy(
+          trx.deleteFrom(tableName).where('id', 'in', ids),
+          rowPolicy,
+        )
           .returningAll()
-          .execute();
+          .execute()) as Record<string, unknown>[];
         if (this.eventsEnabled) {
           for (const row of deleted) {
             await this.emit(trx, objectName, 'deleted', {
@@ -638,7 +738,9 @@ export class DataService {
   /**
    * Inserts a row **without** emitting a change event. Used by event consumers
    * (e.g. the audit block's `persist_event` handler) that write into a data
-   * object in reaction to an event — emitting here would recurse.
+   * object in reaction to an event — emitting here would recurse. Row policies
+   * do not apply: this is an internal system path, never reachable from a
+   * request surface (and its callers run outside any actor scope anyway).
    */
   async insertSilent(objectName: string, data: Record<string, unknown>): Promise<void> {
     const tableName = this.resolveTable(objectName);
@@ -763,12 +865,16 @@ export class DataService {
       );
     }
 
-    const exists = await this.db
-      .selectFrom(tableName)
-      .select('id')
-      .where('id', '=', id)
+    // Row policy (issue #7): linking mutates the record's relations, so the
+    // record must be within the actor's *update* policy — an out-of-policy
+    // record 404s exactly like a missing one.
+    const rowPolicy = await this.policyFor('update', objectName);
+    const exists = await this.applyRowPolicy(
+      this.db.selectFrom(tableName).select('id').where('id', '=', id),
+      rowPolicy,
+    )
       .executeTakeFirst()
-      .catch((err) => {
+      .catch((err: unknown) => {
         throw mapLinkWriteError(err, key);
       });
     if (!exists) {
@@ -1000,12 +1106,18 @@ export class DataService {
       const key = keys.get(name);
       if (!key) continue;
 
+      // Row policy (issue #7): hydration applies the **target** object's read
+      // policy, so a policy-hidden row cannot leak through expand=/GraphQL
+      // relation fields — it hydrates as null / is absent from lists, exactly
+      // as if the FK pointed at a deleted row.
+      const targetPolicy = await this.policyFor('read', key.otherObject);
+
       if (key.via === 'junction') {
-        await this.expandManyToMany(objectName, rows, key.rel);
+        await this.expandManyToMany(objectName, rows, key.rel, targetPolicy);
       } else if (key.via === 'reverse') {
-        await this.expandReverse(rows, key);
+        await this.expandReverse(rows, key, targetPolicy);
       } else {
-        await this.expandForeignKey(objectName, rows, key.rel);
+        await this.expandForeignKey(objectName, rows, key.rel, targetPolicy);
       }
     }
   }
@@ -1016,7 +1128,11 @@ export class DataService {
    * row gains a list (one_to_many / many_to_one) or a single record (the
    * reverse of a one_to_one).
    */
-  private async expandReverse(rows: Record<string, unknown>[], key: RelationKey): Promise<void> {
+  private async expandReverse(
+    rows: Record<string, unknown>[],
+    key: RelationKey,
+    targetPolicy: CompiledRowPolicy,
+  ): Promise<void> {
     const otherTable = this.registry.getTableName(key.otherObject);
     if (!otherTable) return;
 
@@ -1028,11 +1144,10 @@ export class DataService {
       return;
     }
 
-    const related = (await this.db
-      .selectFrom(otherTable)
-      .selectAll()
-      .where(fkColumn, 'in', ids)
-      .execute()) as Record<string, unknown>[];
+    const related = (await this.applyRowPolicy(
+      this.db.selectFrom(otherTable).selectAll().where(fkColumn, 'in', ids),
+      targetPolicy,
+    ).execute()) as Record<string, unknown>[];
 
     const grouped = new Map<string, Record<string, unknown>[]>();
     for (const record of related) {
@@ -1056,6 +1171,7 @@ export class DataService {
     objectName: string,
     rows: Record<string, unknown>[],
     rel: RelationshipDefinition,
+    targetPolicy: CompiledRowPolicy,
   ): Promise<void> {
     // The FK lives on this object when it points outward (many_to_one /
     // one_to_one from here) or when a one_to_many names it as the target.
@@ -1075,11 +1191,10 @@ export class DataService {
       for (const row of rows) row[rel.name] = null;
       return;
     }
-    const related = await this.db
-      .selectFrom(otherTable)
-      .selectAll()
-      .where('id', 'in', ids)
-      .execute();
+    const related = await this.applyRowPolicy(
+      this.db.selectFrom(otherTable).selectAll().where('id', 'in', ids),
+      targetPolicy,
+    ).execute();
     const byId = new Map((related as Record<string, unknown>[]).map((r) => [String(r.id), r]));
     for (const row of rows) {
       const fk = row[fkColumn];
@@ -1092,6 +1207,7 @@ export class DataService {
     objectName: string,
     rows: Record<string, unknown>[],
     rel: RelationshipDefinition,
+    targetPolicy: CompiledRowPolicy,
   ): Promise<void> {
     const isSource = rel.sourceObjectName === objectName;
     const otherObject = isSource ? rel.targetObjectName : rel.sourceObjectName;
@@ -1112,11 +1228,10 @@ export class DataService {
     const related =
       otherIds.length === 0
         ? []
-        : ((await this.db
-            .selectFrom(otherTable)
-            .selectAll()
-            .where('id', 'in', otherIds)
-            .execute()) as Record<string, unknown>[]);
+        : ((await this.applyRowPolicy(
+            this.db.selectFrom(otherTable).selectAll().where('id', 'in', otherIds),
+            targetPolicy,
+          ).execute()) as Record<string, unknown>[]);
 
     const grouped = groupLinkedRecords(links, thisCol, otherCol, related);
     for (const row of rows) {
@@ -1200,10 +1315,17 @@ export class DataService {
   /**
    * Applies the WHERE clause shared by the list query and its count query:
    * every filter condition (AND-ed) plus an optional free-text search (an OR
-   * of ILIKE matches across the object's text-like columns).
+   * of ILIKE matches across the object's text-like columns) plus, when a
+   * row policy is in force (issue #7), its AND-ed row-scope fragment.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: Kysely query types are dynamic
-  private applyConditions(query: any, objectName: string, options: QueryOptions): any {
+  private applyConditions(
+    // biome-ignore lint/suspicious/noExplicitAny: Kysely query types are dynamic
+    query: any,
+    objectName: string,
+    options: QueryOptions,
+    rowPolicy?: CompiledRowPolicy,
+    // biome-ignore lint/suspicious/noExplicitAny: Kysely query types are dynamic
+  ): any {
     let q = query;
 
     for (const filter of options.filters ?? []) {
@@ -1220,7 +1342,91 @@ export class DataService {
       }
     }
 
-    return q;
+    return this.applyRowPolicy(q, rowPolicy ?? ROW_POLICY_ALL);
+  }
+
+  // =========================================================================
+  // Row-level policies (issue #7 — see the class JSDoc)
+  // =========================================================================
+
+  /**
+   * Resolves the ambient principal's compiled row policy for an (action,
+   * object) pair, or `all` when no enforcer is wired (enforcement off).
+   */
+  private async policyFor(
+    action: 'create' | 'read' | 'update' | 'delete',
+    objectName: string,
+  ): Promise<CompiledRowPolicy> {
+    if (!this.rowPolicies) return ROW_POLICY_ALL;
+    return this.rowPolicies.resolve(action, objectName);
+  }
+
+  /**
+   * ANDs a compiled row policy into a query's WHERE: `all` is a no-op,
+   * `none` is `WHERE false` (so reads report zero rows and writes touch
+   * none, with correct counts everywhere), and `match` ORs its conditions.
+   * `qualify` prefixes column refs with the table name — required inside
+   * `ON CONFLICT DO UPDATE`, where the bare name must address the existing
+   * row unambiguously.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: Kysely query types are dynamic
+  private applyRowPolicy(query: any, policy: CompiledRowPolicy, qualify?: string): any {
+    if (policy.kind === 'all') return query;
+    if (policy.kind === 'none') return query.where(sql`false`);
+    // biome-ignore lint/suspicious/noExplicitAny: Kysely expression builder is dynamic here
+    return query.where((eb: any) =>
+      eb.or(policy.conditions.map((cond) => rowConditionSql(cond, qualify))),
+    );
+  }
+
+  /**
+   * Guards create/bulk-create/upsert-insert against a restricted create
+   * policy: the written row must be one the policy matches. For an `equals`
+   * condition on an unset column the actor's id is stamped in (the "rows the
+   * actor will own" contract — `own` needs no stamping because `created_by`
+   * is a system column that is always actor-stamped and never client-
+   * writable); a present-but-foreign value fails the branch. `contains`
+   * branches require the supplied array to include the actor (nothing is
+   * auto-stamped — guessing at array shapes would be worse than refusing).
+   */
+  private assertCreateAllowed(
+    objectName: string,
+    cleanData: Record<string, unknown>,
+    policy: CompiledRowPolicy,
+  ): void {
+    if (policy.kind === 'all') return;
+    if (policy.kind === 'match' && policy.conditions.some((c) => satisfyCreate(cleanData, c))) {
+      return;
+    }
+    throw new DataServiceError(
+      `Your row policy on "${objectName}" does not allow creating this row — own-scoped creates must belong to you`,
+      ROW_POLICY_DENIED,
+      403,
+    );
+  }
+
+  /**
+   * Rejects an update that would reassign a policy-matched `equals` column to
+   * a foreign value (e.g. handing your row to another user — or planting one
+   * in their view). Only plain sets are considered; atomic increments cannot
+   * target policy columns meaningfully.
+   */
+  private assertNoPolicyReassignment(
+    sets: Record<string, unknown>,
+    policy: CompiledRowPolicy,
+  ): void {
+    if (policy.kind !== 'match') return;
+    for (const cond of policy.conditions) {
+      if (cond.op !== 'equals') continue;
+      const value = sets[cond.column];
+      if (value !== undefined && String(value) !== cond.value) {
+        throw new DataServiceError(
+          `Your row policy does not allow setting "${cond.column}" to another principal's id`,
+          ROW_POLICY_DENIED,
+          403,
+        );
+      }
+    }
   }
 
   /**
@@ -1290,6 +1496,63 @@ function serializeForColumn(field: FieldDefinition, value: unknown): unknown {
     return JSON.stringify(value);
   }
   return value;
+}
+
+/**
+ * Renders one compiled row-policy condition as a parameterized SQL boolean
+ * (issue #7). `equals` compares the column (text-cast, so uuid/text actor-id
+ * columns both work) against the actor id; `contains` matches the actor id
+ * inside a `multi_enum` (`text[]` `@>`) or `json` (`jsonb` `@>` against a
+ * one-element array) column. A `contains` on any other column type renders
+ * `false` — the branch is unmatchable rather than an SQL error.
+ */
+function rowConditionSql(cond: CompiledRowCondition, qualify?: string) {
+  const column = sql.ref(qualify ? `${qualify}.${cond.column}` : cond.column);
+  if (cond.op === 'equals') {
+    return sql<boolean>`${column}::text = ${cond.value}`;
+  }
+  if (cond.columnType === 'multi_enum') {
+    return sql<boolean>`${column} @> ARRAY[${cond.value}]::text[]`;
+  }
+  if (cond.columnType === 'json') {
+    return sql<boolean>`${column} @> ${JSON.stringify([cond.value])}::jsonb`;
+  }
+  return sql<boolean>`false`;
+}
+
+/**
+ * Tries to satisfy one create-policy condition against the row being written,
+ * stamping where the contract allows it (see `assertCreateAllowed`): an unset
+ * `equals` column is stamped with the actor id and satisfies the branch; a
+ * present value must already match/contain the actor.
+ */
+function satisfyCreate(cleanData: Record<string, unknown>, cond: CompiledRowCondition): boolean {
+  const value = cleanData[cond.column];
+  if (cond.op === 'equals') {
+    if (value === undefined) {
+      cleanData[cond.column] = cond.value; // stamp: the actor will own the row
+      return true;
+    }
+    return String(value) === cond.value;
+  }
+  return createValueContainsActor(value, cond.value);
+}
+
+/**
+ * Whether a create-path value for a `contains` policy column already includes
+ * the actor id. Accepts a JS array or a pre-serialized JSON string (json
+ * columns are stringified by {@link serializeForColumn} before this runs).
+ */
+function createValueContainsActor(value: unknown, actorId: string): boolean {
+  let items = value;
+  if (typeof items === 'string') {
+    try {
+      items = JSON.parse(items);
+    } catch {
+      return false;
+    }
+  }
+  return Array.isArray(items) && items.some((item) => String(item) === actorId);
 }
 
 /**

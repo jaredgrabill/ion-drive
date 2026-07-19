@@ -16,6 +16,7 @@ import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from 'fastif
 import type { GraphQLSchema } from 'graphql';
 import { type Plugin as YogaPlugin, createYoga } from 'graphql-yoga';
 import type { PermissionEngine } from '../../auth/rbac/permission-engine.js';
+import type { RowPolicyResolver } from '../../auth/rbac/row-policy.js';
 import type { ActionExecutor } from '../../blocks/action-executor.js';
 import type { DataService } from '../../data/data-service.js';
 import type { RealtimeBridge } from '../../messaging/realtime.js';
@@ -39,6 +40,8 @@ export interface GraphQLRoutesOptions {
   enforce?: boolean;
   /** Enables `Subscription.events` when the outbox bus is live. Phase 13. */
   realtime?: RealtimeBridge;
+  /** Row-level read scoping for subscription data events (issue #7). */
+  rowPolicies?: RowPolicyResolver;
 }
 
 type YogaContext = { req: FastifyRequest; reply: FastifyReply };
@@ -75,6 +78,7 @@ function createSchemaProvider(options: GraphQLRoutesOptions): () => Promise<Grap
     permissionEngine: options.permissionEngine,
     enforce: options.enforce,
     realtime: options.realtime,
+    rowPolicies: options.rowPolicies,
   };
   let cache: {
     version: number;

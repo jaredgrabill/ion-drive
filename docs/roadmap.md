@@ -27,6 +27,12 @@ proposed future phases. When a phase ships, move its note into `implementation_p
 > the "secure by default" promise now on the landing page: APIs scoped to the logged-in user's
 > rows, not just object-level roles. Still gated on the ≥5-external-users bar; this note only
 > stages what gets thawed first.
+>
+> **Row-level slice SHIPPED 2026-07-19** (issue #7 — a real external user's ask, so it clears
+> the litmus test): per-grant `rowPolicy` (`own`/`all`/`none`/field-match) enforced in
+> `DataService` across all surfaces + realtime, ADR-025, `docs/concepts/row-policies.md`.
+> Phase 17's remainder (field masking, relation-scoped policies, admin policy editor) stays
+> frozen.
 
 Legend: 🔴 broken/misleading today · 🟠 gap vs. our own stated conventions · 🟡 planned-but-missing capability · ⚪ polish · ✅ resolved.
 
@@ -68,7 +74,7 @@ REST, GraphQL, MCP, and OpenAPI.* These violate it:
 |:--|:--|:--|
 | F10 | **Multi-tenancy is aspirational** | Positioning says "database-per-tenant by default"; the plan's verification scenarios (create tenant → isolated DB) are unmet. Today: `createTenantDb` exists but there is exactly one tenant DB from config — no tenant provisioning, routing, lifecycle, or per-tenant migrations. |
 | F11 | ✅ **Actor identity** (carried from Phase 9) | Fixed 2026-07-06 (Phase 12 / ADR-019): ambient `AsyncLocalStorage` request actor (no signature threading); `created_by`/`updated_by` system fields + boot migration; `actor` on event payloads; `persist_event` gains `payload.actorId`; `_ion_migrations.applied_by` populated. Audit block's `changed_by` map pointed at `payload.actorId` 2026-07-13 (`ion-drive-blocks` audit@0.1.1, launch-plan Lane 2). |
-| F12 | **Field-level RBAC** | `permission-engine.ts` says "field-level scoping is a future extension". Object-level only today. Row-level policies (owner-scoped reads) are also absent — relevant for the app-backend positioning. |
+| F12 | ✅\🟡 **Field-level RBAC** | Row-level half **shipped 2026-07-19** (issue #7 / ADR-025): per-grant `rowPolicy` (`own`\`all`\`none`\field-match bound to `actor.id`) enforced in `DataService` on every surface (REST/GraphQL incl. relation traversal/MCP/aggregates/bulk/upsert) + realtime event filtering; admin/service-key bypass via policy-less grants. Remaining = field-level masking (`hiddenFields`) and relation-scoped policies (Phase 17 remainder, still frozen). |
 | F13 | ✅ **No rate limiting / brute-force protection** | Fixed 2026-07-06: `@fastify/rate-limit`, config-gated `ION_RATE_LIMIT_*` (default on: 300/min global per IP, 20/min on `/api/auth/*` via an independent keyed bucket), `/health`+`/metrics` exempt. Live-smoked against Postgres. |
 | F14 | ✅ **No realtime** | Fixed 2026-07-06 (Phase 12): `GET /api/v1/events/stream` (SSE, per-event RBAC) via `RealtimeBridge`; client SDK `ion.events.stream()`; admin live feed. GraphQL `Subscription.events` landed 2026-07-07 (Phase 13) over the same bridge. |
 | F15 | ✅ **No outbound webhooks** | Fixed 2026-07-06 (Phase 12): `_ion_webhooks` + `WebhookManager` projecting webhooks onto dispatcher consumer groups (`webhook:<id>`); HMAC-signed payloads (`x-ion-signature`), exponential retry backoff, ledger as delivery log; REST CRUD + test-fire, admin page, block-manifest `webhooks`. |
@@ -163,7 +169,7 @@ Absorbed **F20, F21, F22, F24**; F23 remains 🟡 pending the owner-run first pu
 Tenant provisioning/lifecycle APIs on the system DB, request→tenant routing (header/subdomain), per-tenant migrations at boot, schema-per-tenant lighter mode, tenant-aware CLI. Big; needs its own plan + ADR. (F10)
 
 ### Phase 17 — Authorization depth
-Field-level RBAC (column masking on read, reject on write), row-level policies (owner scoping via actor identity from Phase 12), policy editor in admin. (F12)
+Field-level RBAC (column masking on read, reject on write), ~~row-level policies (owner scoping via actor identity from Phase 12)~~ **row-level policies shipped 2026-07-19** (issue #7 / ADR-025 / `concepts/row-policies.md`), policy editor in admin. Remaining: field masking (`hiddenFields` on the grant, applied at serialization for non-bypass actors), relation-scoped policies (m2m participants via `EXISTS`), admin Roles-editor UI for `rowPolicy`. (F12)
 
 ### Phase 18 — Blocks registry ecosystem (ADR-022/023) — **M1 + M1.5 + M2 ✅ SHIPPED** (specs 01–08 + 10; 09 withdrawn)
 The shadcn-style distribution ecosystem shipped its core (M1/M1.5, 2026-07-08): registry

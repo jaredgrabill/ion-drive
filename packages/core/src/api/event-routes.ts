@@ -27,6 +27,7 @@ import { requirePermission } from '../auth/rbac/middleware.js';
 import type { PermissionEngine } from '../auth/rbac/permission-engine.js';
 import type { Action } from '../auth/rbac/policy-types.js';
 import { PLATFORM_RESOURCES } from '../auth/rbac/policy-types.js';
+import type { RowPolicyResolver } from '../auth/rbac/row-policy.js';
 import { createEventAccessFilter } from '../messaging/event-access.js';
 import type { EventStore } from '../messaging/event-store.js';
 import type { MessageBus } from '../messaging/message-bus.js';
@@ -43,6 +44,8 @@ export interface EventRoutesServices {
   maxAttempts: number;
   /** Present when realtime streaming is available (outbox bus only). */
   realtime?: RealtimeBridge;
+  /** Row-level read scoping for streamed data events (issue #7). */
+  rowPolicies?: RowPolicyResolver;
 }
 
 const RESOURCE = PLATFORM_RESOURCES.events;
@@ -118,7 +121,13 @@ export function registerEventRoutes(services: EventRoutesServices): FastifyPlugi
 
     // --- Realtime stream (Phase 12 Tier 4) ----------------------------
     if (services.realtime) {
-      installStreamRoute(fastify, services.realtime, services.enforce, permissionEngine);
+      installStreamRoute(
+        fastify,
+        services.realtime,
+        services.enforce,
+        permissionEngine,
+        services.rowPolicies,
+      );
     }
 
     done();
@@ -141,6 +150,7 @@ function installStreamRoute(
   realtime: RealtimeBridge,
   enforce: boolean,
   permissionEngine: PermissionEngine,
+  rowPolicies?: RowPolicyResolver,
 ): void {
   fastify.get('/stream', (request: FastifyRequest, reply) => {
     if (enforce && !request.auth) {
@@ -169,12 +179,13 @@ function installStreamRoute(
       permissionEngine,
       auth: request.auth ?? null,
       fallbackResource: RESOURCE,
+      rowPolicies,
     });
 
     // Frames are unnamed (no `event:` line) so plain `EventSource.onmessage`
     // works; the envelope's own `topic` field identifies the event.
     const unsubscribe = realtime.subscribe(topics, async (event) => {
-      if (!(await allowed(event.topic))) return;
+      if (!(await allowed(event.topic, event))) return;
       socket.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
     });
     const heartbeat = setInterval(() => {

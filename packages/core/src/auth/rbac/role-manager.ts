@@ -20,6 +20,7 @@ import {
   PUBLIC_ROLE_NAME,
   validatePublicRoleGrants,
 } from './policy-types.js';
+import { validateGrantRowPolicies } from './row-policy.js';
 
 /** A role mutation violated a validation rail (maps to HTTP 400). */
 export class RoleValidationError extends Error {
@@ -90,6 +91,7 @@ export class RoleManager {
         `"${PUBLIC_ROLE_NAME}" is a reserved built-in role — edit its grants instead of creating it`,
       );
     }
+    this.assertRowPoliciesValid(input.permissions);
     return this.db
       .insertInto('_ion_roles')
       .values({
@@ -105,6 +107,7 @@ export class RoleManager {
   async update(id: string, input: Partial<RoleInput>): Promise<IonRole | undefined> {
     const existing = await this.getById(id);
     if (existing) this.assertUpdateAllowed(existing, input);
+    if (input.permissions !== undefined) this.assertRowPoliciesValid(input.permissions);
 
     const patch: Record<string, unknown> = { updated_at: sql`now()` };
     if (input.name !== undefined) patch.name = input.name;
@@ -138,6 +141,17 @@ export class RoleManager {
       const violation = validatePublicRoleGrants(input.permissions);
       if (violation) throw new RoleValidationError(violation);
     }
+  }
+
+  /**
+   * Validates every grant's `rowPolicy` shape (issue #7) on each mutation
+   * path, so malformed policies never reach `_ion_roles` — the row-policy
+   * resolver can then trust stored shapes. Applies to every role, including
+   * `public` (read-only rails still apply on top).
+   */
+  private assertRowPoliciesValid(grants: PermissionGrant[]): void {
+    const violation = validateGrantRowPolicies(grants);
+    if (violation) throw new RoleValidationError(violation);
   }
 
   /** Deletes a non-system role. Returns false if missing or system-managed. */
