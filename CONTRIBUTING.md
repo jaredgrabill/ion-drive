@@ -14,6 +14,9 @@ pnpm dev
 ```
 
 - **Requirements:** Node 22+, pnpm 9+, Docker.
+- **Port 5432 already taken?** The dev Postgres host port is overridable:
+  `ION_PG_PORT=55432 docker compose -f docker/docker-compose.yml up -d`, then
+  point the port in `ION_DATABASE_URL` (`.env`) at the same value.
 - The repo is a **pnpm + Turborepo** monorepo; most commands fan out to every
   package.
 

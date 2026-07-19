@@ -14,9 +14,13 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { connect as netConnect } from 'node:net';
 import { basename, dirname, join, resolve } from 'node:path';
 import { EMPTY_BARREL } from './project.js';
 import { CLI_VERSION } from './version-check.js';
+
+/** Postgres' conventional port — the scaffold default when it's free. */
+export const DEFAULT_PG_PORT = 5432;
 
 /** `package.json` — pinned to the CLI's release train (fixed version group). */
 function packageJson(name: string): string {
@@ -90,6 +94,17 @@ try {
   /* no .env — fall back to real environment variables */
 }
 
+// .env is shared with docker-compose: ION_PG_PORT is the single knob for the
+// local Postgres host port. Compose interpolates it natively; dotenv-style
+// files don't, so expand the placeholder in the database URL here.
+const dbUrl = process.env.ION_DATABASE_URL;
+if (dbUrl?.includes('\${ION_PG_PORT}')) {
+  process.env.ION_DATABASE_URL = dbUrl.replaceAll(
+    '\${ION_PG_PORT}',
+    process.env.ION_PG_PORT ?? '5432',
+  );
+}
+
 try {
   const { server, config } = await createServer(undefined, { plugins: blocks });
   await server.listen({ port: config.port, host: config.host });
@@ -103,12 +118,18 @@ try {
 `;
 
 /** `.env` — real secrets are generated per project; safe local-dev defaults. */
-function envFile(): string {
+function envFile(pgPort: number = DEFAULT_PG_PORT): string {
   return `# Ion Drive configuration — see .env.example for every knob.
 # This file is gitignored; it holds this machine's real secrets.
 
 ION_PORT=3000
-ION_DATABASE_URL=postgresql://ion:ion@localhost:5432/ion_drive
+
+# Host port for the dockerized Postgres. This is the single knob: docker
+# compose maps '\${ION_PG_PORT:-5432}:5432' from this same file, and server.ts
+# substitutes \${ION_PG_PORT} into ION_DATABASE_URL below. If ${DEFAULT_PG_PORT} is already
+# taken on this machine (a native Postgres, say), change only this line.
+ION_PG_PORT=${pgPort}
+ION_DATABASE_URL=postgresql://ion:ion@localhost:\${ION_PG_PORT}/ion_drive
 
 # Enforce RBAC on every surface. Safe default: the first user to sign up
 # becomes admin, then authentication is required. Set to false only for a
@@ -124,7 +145,11 @@ ION_AUTH_SECRET=${randomBytes(32).toString('hex')}
 const ENV_EXAMPLE = `# Ion Drive configuration template. Copy to .env and fill in secrets.
 
 ION_PORT=3000
-ION_DATABASE_URL=postgresql://ion:ion@localhost:5432/ion_drive
+
+# Host port for the dockerized Postgres — the single knob if 5432 is taken.
+# docker-compose.yml and the database URL below both follow it.
+ION_PG_PORT=5432
+ION_DATABASE_URL=postgresql://ion:ion@localhost:\${ION_PG_PORT}/ion_drive
 
 # 32-byte hex keys — generate with: openssl rand -hex 32
 ION_ENCRYPTION_KEY=
@@ -156,7 +181,10 @@ services:
       POSTGRES_PASSWORD: ion
       POSTGRES_DB: ion_drive
     ports:
-      - '5432:5432'
+      # Host port comes from ION_PG_PORT in .env (compose reads it from this
+      # directory) so a machine with a native Postgres on 5432 needs only the
+      # one .env edit — server.ts derives ION_DATABASE_URL from the same var.
+      - '\${ION_PG_PORT:-5432}:5432'
     volumes:
       - ion_drive_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -338,9 +366,56 @@ description: Install an Ion Drive building block (schema and/or vendored logic) 
 Remove with \`ion-drive remove <name>\` (schema is dropped; the vendored folder stays yours).
 `;
 
+/**
+ * Resolves true when something accepts a TCP connection on `host:port`. A
+ * connect probe (not a bind probe) on purpose: a native Postgres typically
+ * listens on the loopback addresses only, which a wildcard bind probe can
+ * coexist with on some platforms — while Docker's wildcard publish cannot.
+ */
+function portAccepts(port: number, host: string): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    const probe = netConnect({ port, host });
+    probe.unref();
+    probe.setTimeout(750);
+    const settle = (busy: boolean) => {
+      probe.destroy();
+      resolvePromise(busy);
+    };
+    probe.once('connect', () => settle(true));
+    probe.once('timeout', () => settle(false));
+    probe.once('error', () => settle(false));
+  });
+}
+
+/** True when a listener answers on either loopback (IPv4 or IPv6). */
+async function portIsFree(port: number): Promise<boolean> {
+  const [v4, v6] = await Promise.all([portAccepts(port, '127.0.0.1'), portAccepts(port, '::1')]);
+  return !v4 && !v6;
+}
+
+/**
+ * Picks the host port the compose Postgres will publish on: `preferred`
+ * (normally 5432) when it's free, else the first free port in a small
+ * conventional range above 55432. If everything is somehow taken, returns
+ * `preferred` anyway — compose will then fail with the same bind error the
+ * user would have hit without detection, which is at least honest.
+ */
+export async function detectPgPort(preferred: number = DEFAULT_PG_PORT): Promise<number> {
+  const candidates = [preferred, 55432, 55433, 55434, 55435];
+  for (const port of candidates) {
+    if (await portIsFree(port)) return port;
+  }
+  return preferred;
+}
+
 interface ScaffoldFile {
   path: string;
   contents: string;
+}
+
+export interface ProjectScaffoldOptions {
+  /** Host port the compose Postgres publishes on (`ION_PG_PORT`). Default 5432. */
+  pgPort?: number;
 }
 
 export interface ProjectScaffoldResult {
@@ -352,7 +427,10 @@ export interface ProjectScaffoldResult {
  * Writes the framework project into `dir` (created if missing). Every file is
  * skip-if-exists; the caller reports `created`/`skipped` to the user.
  */
-export function scaffoldProject(dir: string): ProjectScaffoldResult {
+export function scaffoldProject(
+  dir: string,
+  options: ProjectScaffoldOptions = {},
+): ProjectScaffoldResult {
   const root = resolve(dir);
   mkdirSync(root, { recursive: true });
   const name = sanitizeName(basename(root));
@@ -362,7 +440,7 @@ export function scaffoldProject(dir: string): ProjectScaffoldResult {
     { path: 'tsconfig.json', contents: TSCONFIG_JSON },
     { path: 'server.ts', contents: SERVER_TS },
     { path: 'blocks/index.ts', contents: EMPTY_BARREL },
-    { path: '.env', contents: envFile() },
+    { path: '.env', contents: envFile(options.pgPort) },
     { path: '.env.example', contents: ENV_EXAMPLE },
     { path: 'docker-compose.yml', contents: DOCKER_COMPOSE },
     { path: '.gitignore', contents: GITIGNORE },

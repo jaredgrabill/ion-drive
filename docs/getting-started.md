@@ -132,6 +132,42 @@ curl -H 'x-api-key: iond_…' \
 
 See the [Querying guide](api/querying.md) for the full operator list.
 
+### Calling the API from scripts
+
+For anything scripted (seed scripts, CI, cron), use an **API key** — send it as
+`X-API-Key: iond_…` like the examples above. API keys skip cookies and CSRF
+entirely; that is the recommended path. Mint one in the admin console under
+**API Keys** (assign a role — a key with no role has no permissions).
+
+The cookie-session **auth endpoints** (`/api/auth/*`) are different: they are
+protected by Better Auth's CSRF check, which requires an `Origin` header that
+matches the server's base URL (`ION_PUBLIC_URL`, or `http://localhost:3000` by
+default) or another trusted origin. Browsers send it automatically; a script or
+`curl` must add it explicitly or the request fails with
+`403 {"code":"MISSING_OR_NULL_ORIGIN"}`:
+
+```bash
+# Sign in from a script: the Origin header satisfies the CSRF check.
+curl -c cookies.txt -X POST http://localhost:3000/api/auth/sign-in/email \
+  -H 'content-type: application/json' \
+  -H 'Origin: http://localhost:3000' \
+  -d '{ "email": "admin@example.com", "password": "…" }'
+```
+
+That one sign-in is all a script ever needs the Origin header for — including
+minting the **first** API key without touching the admin console. With the
+session cookie, list roles and create a role-bound key (the plaintext key is
+returned exactly once):
+
+```bash
+curl -b cookies.txt http://localhost:3000/api/v1/roles     # find the admin role id
+curl -b cookies.txt -X POST http://localhost:3000/api/v1/api-keys \
+  -H 'content-type: application/json' \
+  -d '{ "name": "scripts", "roleId": "<role-id>" }'
+```
+
+From then on, use the key and forget cookies.
+
 ## 6. Talk to it from code
 
 Install the zero-dependency client SDK and use the fluent query builder:

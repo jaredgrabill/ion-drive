@@ -6,10 +6,11 @@
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { type Server, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { scaffoldProject } from './project-scaffold.js';
+import { detectPgPort, scaffoldProject } from './project-scaffold.js';
 import { isProjectDir } from './project.js';
 
 let dir: string;
@@ -103,6 +104,36 @@ describe('scaffoldProject', () => {
     expect(barrel).toContain('// ion-drive:blocks');
   });
 
+  it('parameterizes the Postgres host port with ION_PG_PORT as the single knob (#12)', () => {
+    scaffoldProject(dir);
+    // Compose interpolates the var (with the conventional default) from .env.
+    const compose = readFileSync(join(dir, 'docker-compose.yml'), 'utf8');
+    expect(compose).toContain("'${ION_PG_PORT:-5432}:5432'");
+    expect(compose).not.toMatch(/^\s+- '5432:5432'/m);
+    // .env sets the knob and the database URL references it (no second copy
+    // of the port to keep in sync by hand).
+    const env = readFileSync(join(dir, '.env'), 'utf8');
+    expect(env).toMatch(/^ION_PG_PORT=5432$/m);
+    expect(env).toMatch(
+      /^ION_DATABASE_URL=postgresql:\/\/ion:ion@localhost:\$\{ION_PG_PORT\}\/ion_drive$/m,
+    );
+    expect(readFileSync(join(dir, '.env.example'), 'utf8')).toMatch(/^ION_PG_PORT=5432$/m);
+    // server.ts expands the placeholder (dotenv files don't interpolate).
+    const server = readFileSync(join(dir, 'server.ts'), 'utf8');
+    expect(server).toContain("replaceAll(\n    '${ION_PG_PORT}',");
+    expect(server).toContain("process.env.ION_PG_PORT ?? '5432'");
+  });
+
+  it('writes a caller-chosen Postgres port into .env only (compose default stays 5432)', () => {
+    scaffoldProject(dir, { pgPort: 55432 });
+    const env = readFileSync(join(dir, '.env'), 'utf8');
+    expect(env).toMatch(/^ION_PG_PORT=55432$/m);
+    // The URL still goes through the placeholder — one knob, even when remapped.
+    expect(env).toContain('localhost:${ION_PG_PORT}/ion_drive');
+    const compose = readFileSync(join(dir, 'docker-compose.yml'), 'utf8');
+    expect(compose).toContain("'${ION_PG_PORT:-5432}:5432'");
+  });
+
   it('never clobbers existing files', () => {
     scaffoldProject(dir);
     writeFileSync(join(dir, 'server.ts'), '// customized\n', 'utf8');
@@ -110,5 +141,39 @@ describe('scaffoldProject', () => {
     expect(rerun.created).toEqual([]);
     expect(rerun.skipped).toContain('server.ts');
     expect(readFileSync(join(dir, 'server.ts'), 'utf8')).toBe('// customized\n');
+  });
+});
+
+describe('detectPgPort', () => {
+  /**
+   * Occupies an ephemeral port on the IPv4 loopback — the same shape as a
+   * native Postgres with the default `listen_addresses = 'localhost'`.
+   */
+  function occupyPort(): Promise<{ port: number; server: Server }> {
+    return new Promise((resolvePromise) => {
+      const server = createServer();
+      server.listen(0, '127.0.0.1', () => {
+        const address = server.address();
+        const port = typeof address === 'object' && address ? address.port : 0;
+        resolvePromise({ port, server });
+      });
+    });
+  }
+
+  it('returns the preferred port when it is free', async () => {
+    const { port, server } = await occupyPort();
+    await new Promise((r) => server.close(r));
+    await expect(detectPgPort(port)).resolves.toBe(port);
+  });
+
+  it('skips a busy preferred port and picks a free fallback', async () => {
+    const { port, server } = await occupyPort();
+    try {
+      const picked = await detectPgPort(port);
+      expect(picked).not.toBe(port);
+      expect(picked).toBeGreaterThan(0);
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
   });
 });
