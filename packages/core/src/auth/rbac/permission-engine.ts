@@ -19,7 +19,6 @@
  */
 
 import type { IonRole, PermissionGrant } from '../../db/types.js';
-import type { AuthPrincipal } from '../types.js';
 import {
   type Action,
   PUBLIC_ROLE_NAME,
@@ -27,6 +26,18 @@ import {
   validatePublicRoleGrants,
 } from './policy-types.js';
 import type { RoleManager } from './role-manager.js';
+
+/**
+ * The minimal principal shape the engine evaluates: a user id (session logins,
+ * user-bound API keys) and/or an explicit role binding (API keys). The full
+ * {@link AuthPrincipal} is structurally assignable, so route-layer callers
+ * pass `request.auth` unchanged; the row-policy resolver (issue #7) builds one
+ * from the ambient request context instead.
+ */
+export interface PrincipalRef {
+  userId: string | null;
+  roleId: string | null;
+}
 
 export interface PermissionEngineOptions {
   /**
@@ -49,7 +60,7 @@ export class PermissionEngine {
   }
 
   /** Resolves all roles that apply to a principal (user roles + bound role). */
-  async getEffectiveRoles(principal: AuthPrincipal): Promise<IonRole[]> {
+  async getEffectiveRoles(principal: PrincipalRef): Promise<IonRole[]> {
     const collected = new Map<string, IonRole>();
 
     if (principal.userId) {
@@ -64,11 +75,11 @@ export class PermissionEngine {
     return [...collected.values()];
   }
 
-  async getEffectiveRoleNames(principal: AuthPrincipal): Promise<string[]> {
+  async getEffectiveRoleNames(principal: PrincipalRef): Promise<string[]> {
     return (await this.getEffectiveRoles(principal)).map((r) => r.name);
   }
 
-  private async getEffectiveGrants(principal: AuthPrincipal): Promise<PermissionGrant[]> {
+  private async getEffectiveGrants(principal: PrincipalRef): Promise<PermissionGrant[]> {
     const roles = await this.getEffectiveRoles(principal);
     return roles.flatMap((r) => r.permissions);
   }
@@ -96,24 +107,38 @@ export class PermissionEngine {
   }
 
   /** Returns true if the principal is allowed the action on the resource. */
-  async can(principal: AuthPrincipal | null, action: Action, resource: string): Promise<boolean> {
+  async can(principal: PrincipalRef | null, action: Action, resource: string): Promise<boolean> {
+    return (await this.allowingGrants(principal, action, resource)).length > 0;
+  }
+
+  /**
+   * Every grant that allows the action on the resource — the row-policy
+   * resolver (issue #7) unions their `rowPolicy` values, so the shape of "who
+   * may act" and "on which rows" comes from one evaluation. Anonymous
+   * principals see only the (re-validated, read-only) public grants; for
+   * `read`, public grants union into every authenticated principal's set too —
+   * an authenticated caller is never allowed less than an anonymous one.
+   */
+  async allowingGrants(
+    principal: PrincipalRef | null,
+    action: Action,
+    resource: string,
+  ): Promise<PermissionGrant[]> {
     if (!principal) {
       // Anonymous: read-only, public-role-only. The action gate runs before
       // any grant is consulted, so no stored grant can open a write.
-      if (action !== 'read') return false;
+      if (action !== 'read') return [];
       const grants = await this.getPublicGrants();
-      return grants.some((grant) => grantAllows(grant, 'read', resource));
+      return grants.filter((grant) => grantAllows(grant, 'read', resource));
     }
 
-    const grants = await this.getEffectiveGrants(principal);
-    if (grants.some((grant) => grantAllows(grant, action, resource))) return true;
-
-    // Public grants apply to everyone — an authenticated caller can always
-    // read at least what an anonymous one can. Read-only by construction.
+    const grants = (await this.getEffectiveGrants(principal)).filter((grant) =>
+      grantAllows(grant, action, resource),
+    );
     if (action === 'read') {
       const publicGrants = await this.getPublicGrants();
-      return publicGrants.some((grant) => grantAllows(grant, 'read', resource));
+      grants.push(...publicGrants.filter((grant) => grantAllows(grant, 'read', resource)));
     }
-    return false;
+    return grants;
   }
 }

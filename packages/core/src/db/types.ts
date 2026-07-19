@@ -199,11 +199,44 @@ export interface IonRolesTable {
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
 
+/**
+ * Row-level policy attached to a permission grant (issue #7 / Phase 17).
+ * Deliberately small and non-Turing:
+ *
+ *   - `'all'`  — no row restriction (the default when absent; pre-#7 behavior)
+ *   - `'own'`  — only rows whose `created_by` equals the acting principal's id
+ *   - `'none'` — the grant allows the action object-level but matches no rows
+ *   - a {@link FieldMatchPolicy} — generalizes `own` to any column holding the
+ *     actor's id (`equals`) or a set of ids containing it (`contains`)
+ */
+export type RowPolicy = 'all' | 'own' | 'none' | FieldMatchPolicy;
+
+/**
+ * Field-match row policy: a row is in scope when `<field>` equals the acting
+ * principal's id (`equals: 'actor.id'`) or — for `multi_enum` (text[]) / `json`
+ * array columns — contains it (`contains: 'actor.id'`). Exactly one of
+ * `equals`/`contains` must be present, and `'actor.id'` is the only supported
+ * binding: the policy language is a lookup, not an expression evaluator.
+ */
+export interface FieldMatchPolicy {
+  /** Field (API name) or physical column name on the object. */
+  field: string;
+  equals?: 'actor.id';
+  contains?: 'actor.id';
+}
+
 export interface PermissionGrant {
   /** Object name, or '*' for all objects. */
   resource: string;
   /** Allowed actions (create/read/update/delete/manage). */
   actions: string[];
+  /**
+   * Optional row-level policy scoping this grant's rows (issue #7). Absent =
+   * `'all'` (no restriction — fully backwards compatible). When a principal
+   * holds several grants allowing the same action, policies union like the
+   * grants themselves do: any unrestricted allowing grant wins.
+   */
+  rowPolicy?: RowPolicy;
 }
 
 export type IonRole = Selectable<IonRolesTable>;

@@ -77,6 +77,11 @@ export {
   PUBLIC_ROLE_NAME,
   RoleValidationError,
   validatePublicRoleGrants,
+  // Row-level policies (issue #7)
+  RowPolicyResolver,
+  validateRowPolicy,
+  validateGrantRowPolicies,
+  rowPolicyAllowsRow,
 } from './auth/index.js';
 export type {
   AuthProvider,
@@ -85,6 +90,11 @@ export type {
   Action,
   PermissionGrant,
   AnonymousMigrationSummary,
+  PrincipalRef,
+  RowPolicy,
+  FieldMatchPolicy,
+  CompiledRowPolicy,
+  RowPolicyEnforcer,
 } from './auth/index.js';
 
 // Config, secrets, encryption

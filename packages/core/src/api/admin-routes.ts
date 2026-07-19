@@ -35,9 +35,26 @@ export interface AdminRoutesServices {
   enforce: boolean;
 }
 
+/**
+ * Row-policy grammar (issue #7): `all`/`own`/`none` or a single-field match
+ * bound to `actor.id`. Shape-only here — RoleManager re-validates deeply
+ * (exactly one of equals/contains) on every mutation path.
+ */
+const rowPolicySchema = z.union([
+  z.enum(['all', 'own', 'none']),
+  z
+    .object({
+      field: z.string().min(1),
+      equals: z.literal('actor.id').optional(),
+      contains: z.literal('actor.id').optional(),
+    })
+    .strict(),
+]);
+
 const permissionGrantSchema = z.object({
   resource: z.string().min(1),
   actions: z.array(z.enum(['create', 'read', 'update', 'delete', 'manage'])).min(1),
+  rowPolicy: rowPolicySchema.optional(),
 });
 
 const roleInputSchema = z.object({

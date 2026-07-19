@@ -90,5 +90,9 @@ The role is fenced by validation rails enforced server-side:
   on by default) — the same global bucket authenticated requests use.
 - Public rows are returned whole (all columns). Don't put secrets in columns of
   a publicly granted object; column masking is a separate, planned feature.
+- A public grant may carry a [row policy](row-policies.md) to scope *which*
+  rows are world-readable (anonymous callers have no actor, so actor-bound
+  policies like `"own"` match nothing for them — use those on authenticated
+  roles).
 - The realtime feed (`/api/v1/events/stream`, GraphQL subscriptions) stays
   credentialed — public grants do not extend to event streams.

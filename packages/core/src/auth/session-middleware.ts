@@ -68,6 +68,10 @@ export function installSessionMiddleware(
                   via: request.auth.via,
                 }
               : null,
+            // Explicit role binding (API keys) rides beside the actor so the
+            // row-policy resolver (issue #7) sees the same principal shape the
+            // permission engine does.
+            request.auth?.roleId ?? null,
           );
           done();
         })

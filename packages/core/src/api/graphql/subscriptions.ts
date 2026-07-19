@@ -17,6 +17,7 @@
 
 import { GraphQLError, type GraphQLFieldResolver } from 'graphql';
 import type { PermissionEngine } from '../../auth/rbac/permission-engine.js';
+import type { RowPolicyResolver } from '../../auth/rbac/row-policy.js';
 import type { AuthPrincipal } from '../../auth/types.js';
 import { createEventAccessFilter } from '../../messaging/event-access.js';
 import type { IonEvent } from '../../messaging/event-types.js';
@@ -30,6 +31,8 @@ export interface EventsSubscriptionDeps {
   permissionEngine: PermissionEngine;
   /** When true, subscribing requires an authenticated principal. */
   enforce: boolean;
+  /** Row-level read scoping for data events (issue #7). */
+  rowPolicies?: RowPolicyResolver;
 }
 
 /** The GraphQL context shape the subscribe resolver reads its principal from. */
@@ -55,6 +58,7 @@ export function makeEventsSubscribe(
       enforce: deps.enforce,
       permissionEngine: deps.permissionEngine,
       auth,
+      rowPolicies: deps.rowPolicies,
     });
     return createEventIterator(deps.realtime, topics, allowed);
   };
@@ -67,14 +71,14 @@ export function makeEventsSubscribe(
 function createEventIterator(
   realtime: RealtimeBridge,
   topics: string[],
-  allowed: (topic: string) => Promise<boolean>,
+  allowed: (topic: string, event?: IonEvent) => Promise<boolean>,
 ): AsyncIterableIterator<IonEvent> {
   const queue: IonEvent[] = [];
   let wake: (() => void) | null = null;
   let finished = false;
 
   const unsubscribe = realtime.subscribe(topics, async (event) => {
-    if (finished || !(await allowed(event.topic))) return;
+    if (finished || !(await allowed(event.topic, event))) return;
     queue.push(event);
     if (queue.length > MAX_QUEUED_EVENTS) queue.shift();
     wake?.();

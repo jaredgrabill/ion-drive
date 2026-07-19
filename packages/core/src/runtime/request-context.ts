@@ -27,6 +27,13 @@ export interface ActorRef {
 
 interface RequestContextStore {
   actor: ActorRef | null;
+  /**
+   * Explicit role binding of the current principal (API keys carry one; session
+   * users resolve roles through `_ion_user_roles` instead). Consumed by the
+   * row-policy resolver (issue #7), which needs the same inputs the permission
+   * engine uses — without threading the full AuthPrincipal through DataService.
+   */
+  roleId: string | null;
 }
 
 const storage = new AsyncLocalStorage<RequestContextStore>();
@@ -34,6 +41,22 @@ const storage = new AsyncLocalStorage<RequestContextStore>();
 /** The actor of the current request, or `null` outside any request/actor scope. */
 export function currentActor(): ActorRef | null {
   return storage.getStore()?.actor ?? null;
+}
+
+/** The current principal's explicit role binding (API keys), or `null`. */
+export function currentActorRoleId(): string | null {
+  return storage.getStore()?.roleId ?? null;
+}
+
+/**
+ * Whether the caller is inside an actor scope at all — true for anything
+ * descending from a request (even an anonymous one) or a `runWithActor` call;
+ * false for background code (dispatcher deliveries, scheduled tasks, boot).
+ * Row policies (issue #7) apply only inside a scope: background/system code
+ * keeps full access, while an in-request `null` actor means *anonymous*.
+ */
+export function hasActorScope(): boolean {
+  return storage.getStore() !== undefined;
 }
 
 /**
@@ -45,9 +68,19 @@ export function currentActorId(): string | null {
   return actor ? (actor.userId ?? actor.apiKeyId) : null;
 }
 
-/** Runs `fn` with `actor` as the ambient actor (embedders, tests, task handlers). */
-export function runWithActor<T>(actor: ActorRef | null, fn: () => T): T {
-  return storage.run({ actor }, fn);
+/**
+ * Runs `fn` with `actor` as the ambient actor (embedders, tests, task
+ * handlers). `options.roleId` carries an explicit role binding (API-key-style
+ * principals) for row-policy resolution. Note that under RBAC enforcement a
+ * `null` actor inside a scope is treated as *anonymous* — background code that
+ * wants unrestricted DataService access should stay outside any scope instead.
+ */
+export function runWithActor<T>(
+  actor: ActorRef | null,
+  fn: () => T,
+  options: { roleId?: string | null } = {},
+): T {
+  return storage.run({ actor, roleId: options.roleId ?? null }, fn);
 }
 
 /**
@@ -59,14 +92,18 @@ export function runWithActor<T>(actor: ActorRef | null, fn: () => T): T {
  * never inherits it.
  */
 export function runWithNewContext(fn: () => void): void {
-  storage.run({ actor: null }, fn);
+  storage.run({ actor: null, roleId: null }, fn);
 }
 
 /**
- * Sets the actor on the *current* context (mutates the store `runWithNewContext`
- * opened). No-op outside a context — never throws.
+ * Sets the actor (and optionally its explicit role binding) on the *current*
+ * context (mutates the store `runWithNewContext` opened). No-op outside a
+ * context — never throws.
  */
-export function setCurrentActor(actor: ActorRef | null): void {
+export function setCurrentActor(actor: ActorRef | null, roleId: string | null = null): void {
   const store = storage.getStore();
-  if (store) store.actor = actor;
+  if (store) {
+    store.actor = actor;
+    store.roleId = roleId;
+  }
 }
