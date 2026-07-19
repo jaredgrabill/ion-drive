@@ -27,8 +27,10 @@ import type { SchemaRegistry } from '../schema/schema-registry.js';
 import {
   COLUMN_TYPES,
   type FieldConstraints,
+  type FieldDefinition,
   type RelationshipDefinition,
 } from '../schema/types.js';
+import { DataServiceError, translatePgError } from './errors.js';
 import { type RelationKey, findRelationKey, listRelationKeys } from './relation-keys.js';
 import type {
   BulkResult,
@@ -99,7 +101,9 @@ export class DataService {
       options,
     );
 
-    const countResult = await filteredCountQuery.executeTakeFirst();
+    const countResult = (await this.translated(filteredCountQuery.executeTakeFirst())) as
+      | { count?: unknown }
+      | undefined;
     const totalCount = Number(countResult?.count ?? 0);
 
     // Resolve the window. Offset-based params (limit/offset) take precedence
@@ -110,7 +114,7 @@ export class DataService {
     query = query.limit(limit).offset(offset) as typeof query;
 
     // Execute
-    const rows = (await query.execute()) as Record<string, unknown>[];
+    const rows = (await this.translated(query.execute())) as Record<string, unknown>[];
 
     // Attach related records for requested expansions (Phase 10 / Tier 3B).
     if (options.expand?.length) {
@@ -142,11 +146,9 @@ export class DataService {
   ): Promise<SingleResult | null> {
     const tableName = this.resolveTable(objectName);
 
-    const row = await this.db
-      .selectFrom(tableName)
-      .selectAll()
-      .where('id', '=', id)
-      .executeTakeFirst();
+    const row = await this.translated(
+      this.db.selectFrom(tableName).selectAll().where('id', '=', id).executeTakeFirst(),
+    );
 
     if (!row) return null;
     const record = row as Record<string, unknown>;
@@ -171,21 +173,23 @@ export class DataService {
     this.validateConstraints(objectName, cleanData);
     this.stampActor(objectName, cleanData, 'create');
 
-    const row = await this.db.transaction().execute(async (trx) => {
-      const inserted = await trx
-        .insertInto(tableName)
-        .values(cleanData)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      if (this.eventsEnabled) {
-        await this.emit(trx, objectName, 'created', {
-          id: String(inserted.id),
-          before: null,
-          after: inserted as Record<string, unknown>,
-        });
-      }
-      return inserted;
-    });
+    const row = await this.translated(
+      this.db.transaction().execute(async (trx) => {
+        const inserted = await trx
+          .insertInto(tableName)
+          .values(cleanData)
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        if (this.eventsEnabled) {
+          await this.emit(trx, objectName, 'created', {
+            id: String(inserted.id),
+            before: null,
+            after: inserted as Record<string, unknown>,
+          });
+        }
+        return inserted;
+      }),
+    );
 
     this.wake();
     return { data: row as Record<string, unknown> };
@@ -206,32 +210,34 @@ export class DataService {
     this.validateConstraints(objectName, cleanData);
     this.stampActor(objectName, cleanData, 'update');
 
-    const row = await this.db.transaction().execute(async (trx) => {
-      const before = this.eventsEnabled
-        ? await trx.selectFrom(tableName).selectAll().where('id', '=', id).executeTakeFirst()
-        : undefined;
+    const row = await this.translated(
+      this.db.transaction().execute(async (trx) => {
+        const before = this.eventsEnabled
+          ? await trx.selectFrom(tableName).selectAll().where('id', '=', id).executeTakeFirst()
+          : undefined;
 
-      const after = await trx
-        .updateTable(tableName)
-        .set(cleanData)
-        .where('id', '=', id)
-        .returningAll()
-        .executeTakeFirst();
-      if (!after) return null;
+        const after = await trx
+          .updateTable(tableName)
+          .set(cleanData)
+          .where('id', '=', id)
+          .returningAll()
+          .executeTakeFirst();
+        if (!after) return null;
 
-      if (this.eventsEnabled) {
-        const beforeRow = (before ?? null) as Record<string, unknown> | null;
-        const afterRow = after as Record<string, unknown>;
-        const diff: FieldDiff | null = beforeRow ? computeDiff(beforeRow, afterRow) : null;
-        await this.emit(trx, objectName, 'updated', {
-          id: String(after.id),
-          before: beforeRow,
-          after: afterRow,
-          diff,
-        });
-      }
-      return after;
-    });
+        if (this.eventsEnabled) {
+          const beforeRow = (before ?? null) as Record<string, unknown> | null;
+          const afterRow = after as Record<string, unknown>;
+          const diff: FieldDiff | null = beforeRow ? computeDiff(beforeRow, afterRow) : null;
+          await this.emit(trx, objectName, 'updated', {
+            id: String(after.id),
+            before: beforeRow,
+            after: afterRow,
+            diff,
+          });
+        }
+        return after;
+      }),
+    );
 
     if (!row) return null;
     this.wake();
@@ -245,22 +251,24 @@ export class DataService {
   async delete(objectName: string, id: string): Promise<boolean> {
     const tableName = this.resolveTable(objectName);
 
-    const deleted = await this.db.transaction().execute(async (trx) => {
-      const row = await trx
-        .deleteFrom(tableName)
-        .where('id', '=', id)
-        .returningAll()
-        .executeTakeFirst();
-      if (!row) return null;
-      if (this.eventsEnabled) {
-        await this.emit(trx, objectName, 'deleted', {
-          id: String(row.id),
-          before: row as Record<string, unknown>,
-          after: null,
-        });
-      }
-      return row;
-    });
+    const deleted = await this.translated(
+      this.db.transaction().execute(async (trx) => {
+        const row = await trx
+          .deleteFrom(tableName)
+          .where('id', '=', id)
+          .returningAll()
+          .executeTakeFirst();
+        if (!row) return null;
+        if (this.eventsEnabled) {
+          await this.emit(trx, objectName, 'deleted', {
+            id: String(row.id),
+            before: row as Record<string, unknown>,
+            after: null,
+          });
+        }
+        return row;
+      }),
+    );
 
     if (!deleted) return false;
     this.wake();
@@ -284,23 +292,25 @@ export class DataService {
       this.stampActor(objectName, record, 'create');
     }
 
-    const rows = await this.db.transaction().execute(async (trx) => {
-      const inserted = await trx
-        .insertInto(tableName)
-        .values(cleanRecords)
-        .returningAll()
-        .execute();
-      if (this.eventsEnabled) {
-        for (const row of inserted) {
-          await this.emit(trx, objectName, 'created', {
-            id: String((row as Record<string, unknown>).id),
-            before: null,
-            after: row as Record<string, unknown>,
-          });
+    const rows = await this.translated(
+      this.db.transaction().execute(async (trx) => {
+        const inserted = await trx
+          .insertInto(tableName)
+          .values(cleanRecords)
+          .returningAll()
+          .execute();
+        if (this.eventsEnabled) {
+          for (const row of inserted) {
+            await this.emit(trx, objectName, 'created', {
+              id: String((row as Record<string, unknown>).id),
+              before: null,
+              after: row as Record<string, unknown>,
+            });
+          }
         }
-      }
-      return inserted;
-    });
+        return inserted;
+      }),
+    );
 
     this.wake();
     return {
@@ -318,23 +328,25 @@ export class DataService {
     const tableName = this.resolveTable(objectName);
     if (ids.length === 0) return { count: 0, ids: [] };
 
-    const rows = await this.db.transaction().execute(async (trx) => {
-      const deleted = await trx
-        .deleteFrom(tableName)
-        .where('id', 'in', ids)
-        .returningAll()
-        .execute();
-      if (this.eventsEnabled) {
-        for (const row of deleted) {
-          await this.emit(trx, objectName, 'deleted', {
-            id: String((row as Record<string, unknown>).id),
-            before: row as Record<string, unknown>,
-            after: null,
-          });
+    const rows = await this.translated(
+      this.db.transaction().execute(async (trx) => {
+        const deleted = await trx
+          .deleteFrom(tableName)
+          .where('id', 'in', ids)
+          .returningAll()
+          .execute();
+        if (this.eventsEnabled) {
+          for (const row of deleted) {
+            await this.emit(trx, objectName, 'deleted', {
+              id: String((row as Record<string, unknown>).id),
+              before: row as Record<string, unknown>,
+              after: null,
+            });
+          }
         }
-      }
-      return deleted;
-    });
+        return deleted;
+      }),
+    );
 
     this.wake();
     return {
@@ -351,7 +363,7 @@ export class DataService {
   async insertSilent(objectName: string, data: Record<string, unknown>): Promise<void> {
     const tableName = this.resolveTable(objectName);
     const cleanData = this.sanitizeInput(objectName, data);
-    await this.db.insertInto(tableName).values(cleanData).execute();
+    await this.translated(this.db.insertInto(tableName).values(cleanData).execute());
   }
 
   // =========================================================================
@@ -570,6 +582,21 @@ export class DataService {
   }
 
   /**
+   * Awaits a query, translating Postgres constraint/input errors (unique,
+   * foreign-key, not-null, unparseable values) into typed DataServiceErrors
+   * (see errors.ts). This is the single seam where raw database errors escape
+   * the service, so every surface — REST, GraphQL, MCP — inherits the stable
+   * error contract from one place. Unrelated errors pass through untouched.
+   */
+  private async translated<T>(promise: Promise<T>): Promise<T> {
+    try {
+      return await promise;
+    } catch (err) {
+      throw translatePgError(err);
+    }
+  }
+
+  /**
    * Resolves an object name to its physical table name.
    */
   private resolveTable(objectName: string): string {
@@ -619,7 +646,7 @@ export class DataService {
       // Match by field name first, then column name
       const field = fieldMap.get(key) ?? columnMap.get(key);
       if (field) {
-        clean[field.columnName] = value;
+        clean[field.columnName] = serializeForColumn(field, value);
       }
     }
 
@@ -945,6 +972,22 @@ export class DataService {
 // ---------------------------------------------------------------------------
 
 /**
+ * Prepares one input value for parameter binding based on the column's
+ * declared type. `json` columns accept objects and arrays natively: we
+ * stringify them here because node-postgres would otherwise serialize a JS
+ * array as a Postgres array literal (`{"1","2"}`) — invalid JSON, a raw
+ * 22P02 — and driver inference should never decide what lands in a json
+ * column. Pre-encoded JSON strings pass through unchanged for back-compat
+ * with clients that already double-encode. Everything else is untouched.
+ */
+function serializeForColumn(field: FieldDefinition, value: unknown): unknown {
+  if (field.columnType === 'json' && typeof value === 'object' && value !== null) {
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
+/**
  * Escapes the LIKE/ILIKE wildcard metacharacters (`%`, `_`) and the escape
  * character itself so a user's search term is matched literally rather than
  * being interpreted as a pattern. PostgreSQL's default LIKE escape is `\`.
@@ -1083,16 +1126,8 @@ function multiEnumViolation(value: unknown[], constraints: FieldConstraints): st
 }
 
 // ---------------------------------------------------------------------------
-// Custom Error
+// Custom Error (lives in errors.ts with the Postgres translation; re-exported
+// here so existing `from './data-service.js'` import sites keep working)
 // ---------------------------------------------------------------------------
 
-export class DataServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly statusCode: number,
-  ) {
-    super(message);
-    this.name = 'DataServiceError';
-  }
-}
+export { DataServiceError } from './errors.js';
