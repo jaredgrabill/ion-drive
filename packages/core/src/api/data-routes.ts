@@ -8,11 +8,11 @@
  *
  *   GET    /api/v1/data/:object          — List with filtering, sorting, pagination
  *   GET    /api/v1/data/:object/aggregate — count/sum/avg/min/max over the filtered rows
- *   POST   /api/v1/data/:object          — Create
+ *   POST   /api/v1/data/:object          — Create (`?on_conflict=col[,col2]` → upsert)
  *   POST   /api/v1/data/:object/bulk     — Bulk create
  *   DELETE /api/v1/data/:object/bulk     — Bulk delete
  *   GET    /api/v1/data/:object/:id       — Get by ID
- *   PATCH  /api/v1/data/:object/:id       — Update
+ *   PATCH  /api/v1/data/:object/:id       — Update (numeric fields accept { "$inc": n })
  *   DELETE /api/v1/data/:object/:id       — Delete
  *   POST   /api/v1/data/:object/:id/links/:rel — Add many_to_many links
  *   DELETE /api/v1/data/:object/:id/links/:rel — Remove many_to_many links
@@ -123,24 +123,26 @@ export function registerDataRoutes(options: DataRoutesOptions): FastifyPluginCal
       }
     });
 
-    // --- CREATE ---
-    fastify.post<{ Params: { object: string } }>('/:object', async (request, reply) => {
-      const obj = resolveObject(request.params.object, reply);
-      if (!obj) return reply;
-      try {
-        const body = request.body as Record<string, unknown> | undefined;
-        if (!body || typeof body !== 'object' || Array.isArray(body)) {
-          return reply.code(400).send({
-            error: 'Validation Error',
-            message: 'Request body must be a JSON object',
-          });
+    // --- CREATE / UPSERT ---
+    // `?on_conflict=<col>[,col2]` switches to upsert (issue #9): INSERT … ON
+    // CONFLICT DO UPDATE against a declared unique target (an isUnique field,
+    // the primary key, or a constraints.uniqueTogether group). 201 when the
+    // row was inserted, 200 when an existing row was updated; the body gains
+    // a `created` indicator beside the usual `data` envelope.
+    fastify.post<{ Params: { object: string }; Querystring: { on_conflict?: string } }>(
+      '/:object',
+      async (request, reply) => {
+        const obj = resolveObject(request.params.object, reply);
+        if (!obj) return reply;
+        try {
+          const body = parseObjectBody(request.body, reply);
+          if (!body) return reply;
+          return await createOrUpsert(dataService, obj.name, body, request.query, reply);
+        } catch (err) {
+          return handleError(err, reply);
         }
-        const result = await dataService.create(obj.name, body);
-        return reply.code(201).send(result);
-      } catch (err) {
-        return handleError(err, reply);
-      }
-    });
+      },
+    );
 
     // --- BULK CREATE ---
     // Registered before `/:object/:id` so the static `bulk` segment wins.
@@ -210,13 +212,8 @@ export function registerDataRoutes(options: DataRoutesOptions): FastifyPluginCal
         const obj = resolveObject(request.params.object, reply);
         if (!obj) return reply;
         try {
-          const body = request.body as Record<string, unknown> | undefined;
-          if (!body || typeof body !== 'object' || Array.isArray(body)) {
-            return reply.code(400).send({
-              error: 'Validation Error',
-              message: 'Request body must be a JSON object',
-            });
-          }
+          const body = parseObjectBody(request.body, reply);
+          if (!body) return reply;
           const result = await dataService.update(obj.name, request.params.id, body);
           if (!result) return sendRecordNotFound(reply, obj, request.params.id);
           return result;
@@ -289,6 +286,51 @@ export function registerDataRoutes(options: DataRoutesOptions): FastifyPluginCal
 
     done();
   };
+}
+
+/**
+ * Validates that a write body is a JSON object. Returns it, or sends the 400
+ * and returns null.
+ */
+function parseObjectBody(body: unknown, reply: FastifyReply): Record<string, unknown> | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    reply.code(400).send({
+      error: 'Validation Error',
+      message: 'Request body must be a JSON object',
+    });
+    return null;
+  }
+  return body as Record<string, unknown>;
+}
+
+/** Parses the `on_conflict` query param into column names (undefined = plain create). */
+function parseOnConflict(raw: string | undefined): string[] | undefined {
+  const columns = raw
+    ?.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return columns?.length ? columns : undefined;
+}
+
+/**
+ * Runs a POST body as a plain create, or — when `on_conflict` names columns —
+ * an upsert (issue #9). Upserts answer 201 when the row was inserted and 200
+ * when an existing row was updated, with a `created` indicator in the body.
+ */
+async function createOrUpsert(
+  dataService: DataService,
+  objectName: string,
+  body: Record<string, unknown>,
+  query: { on_conflict?: string },
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const onConflict = parseOnConflict(query.on_conflict);
+  if (onConflict) {
+    const result = await dataService.upsert(objectName, body, onConflict);
+    return reply.code(result.created ? 201 : 200).send(result);
+  }
+  const result = await dataService.create(objectName, body);
+  return reply.code(201).send(result);
 }
 
 /**

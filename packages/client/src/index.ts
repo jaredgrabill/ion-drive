@@ -36,4 +36,8 @@ export type {
   SingleResult,
   BulkResult,
   Record_,
+  AtomicOp,
+  UpdateValues,
+  UpsertOptions,
+  UpsertResult,
 } from './types.js';

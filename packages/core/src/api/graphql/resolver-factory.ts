@@ -34,7 +34,14 @@ interface CreateArgs {
 
 interface UpdateArgs {
   id: string;
+  input?: Record<string, unknown> | null;
+  /** Atomic per-field increments (issue #9): `{ wins: 1 }` → `wins = wins + 1`. */
+  increment?: Record<string, number | null> | null;
+}
+
+interface UpsertArgs {
   input: Record<string, unknown>;
+  onConflict: string[];
 }
 
 /**
@@ -106,14 +113,45 @@ export function makeCreateResolver(
   };
 }
 
+/**
+ * Update resolver. `increment` is the GraphQL face of the REST `$inc`
+ * operator — a literal `$inc` key can't exist in a typed input, so atomic
+ * adds ride a parallel `increment: { field: amount }` argument merged into
+ * the shared DataService operator path (`SET field = field + amount`, one
+ * statement, concurrency-safe).
+ */
 export function makeUpdateResolver(
   dataService: DataService,
   objectName: string,
 ): GraphQLFieldResolver<unknown, unknown, UpdateArgs> {
   return async (_source, args) => {
-    const result = await dataService.update(objectName, args.id, args.input);
+    const data: Record<string, unknown> = { ...(args.input ?? {}) };
+    for (const [field, amount] of Object.entries(args.increment ?? {})) {
+      if (amount == null) continue;
+      if (field in data) {
+        throw new GraphQLError(
+          `Field "${field}" cannot be both set (input) and incremented (increment)`,
+        );
+      }
+      data[field] = { $inc: amount };
+    }
+    if (Object.keys(data).length === 0) {
+      throw new GraphQLError('Provide "input" and/or "increment" with at least one field');
+    }
+    const result = await dataService.update(objectName, args.id, data);
     return result?.data ?? null;
   };
+}
+
+/**
+ * Upsert resolver (issue #9) — `INSERT … ON CONFLICT (onConflict) DO UPDATE`
+ * through the shared DataService path; resolves to `{ data, created }`.
+ */
+export function makeUpsertResolver(
+  dataService: DataService,
+  objectName: string,
+): GraphQLFieldResolver<unknown, unknown, UpsertArgs> {
+  return async (_source, args) => dataService.upsert(objectName, args.input, args.onConflict);
 }
 
 export function makeDeleteResolver(

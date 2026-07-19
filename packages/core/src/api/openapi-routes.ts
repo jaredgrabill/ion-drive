@@ -137,6 +137,37 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
     },
   };
 
+  paths['/api/v1/schema/objects/{name}'] = {
+    patch: {
+      summary: "Update an object's constraints (uniqueTogether)",
+      operationId: 'modifyObject',
+      tags: ['Schema'],
+      description:
+        'Replaces the object-level composite unique constraints (declarative — the supplied groups become the full set). Preview-first: ?dryRun=true returns the ChangePreview without applying; ?force=true overrides block contract protection.',
+      parameters: [
+        { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+        { name: 'dryRun', in: 'query', schema: { type: 'boolean' } },
+        { name: 'force', in: 'query', schema: { type: 'boolean' } },
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['constraints'],
+              properties: { constraints: { $ref: '#/components/schemas/ObjectConstraints' } },
+            },
+          },
+        },
+      },
+      responses: {
+        '200': { description: 'Constraints updated (or the dry-run preview)' },
+        '422': { description: 'Validation failed (duplicate data, unknown fields, block-owned)' },
+      },
+    },
+  };
+
   // --- Building-blocks paths (ledger + install envelope, spec-04) ---
   addBlockPaths(paths, schemas);
 
@@ -148,6 +179,7 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
     // Generate schemas for this object
     schemas[schemaName] = generateObjectSchema(obj);
     schemas[`${schemaName}Input`] = generateInputSchema(obj);
+    schemas[`${schemaName}UpdateInput`] = generateUpdateInputSchema(obj);
     schemas[`${schemaName}ListResponse`] = {
       type: 'object',
       properties: {
@@ -178,6 +210,15 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
         summary: `Create ${obj.displayName}`,
         operationId: `create${schemaName}`,
         tags: [tag],
+        parameters: [
+          {
+            name: 'on_conflict',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: upsertTargetDescription(obj),
+          },
+        ],
         requestBody: {
           required: true,
           content: {
@@ -188,7 +229,7 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
         },
         responses: {
           '201': {
-            description: `${obj.displayName} created`,
+            description: `${obj.displayName} created (with on_conflict: the row was inserted; the body also carries "created": true)`,
             content: {
               'application/json': {
                 schema: {
@@ -198,7 +239,26 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
               },
             },
           },
-          '400': { description: 'Validation error' },
+          '200': {
+            description: `Upsert updated an existing ${obj.displayName} (on_conflict only)`,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    data: { $ref: `#/components/schemas/${schemaName}` },
+                    created: {
+                      type: 'boolean',
+                      description: 'True when inserted, false when an existing row was updated',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Validation error, or on_conflict is not a declared unique target',
+          },
         },
       },
     };
@@ -260,6 +320,8 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
         summary: `Update ${obj.displayName}`,
         operationId: `update${schemaName}`,
         tags: [tag],
+        description:
+          'Partial update. Numeric fields also accept an atomic operator object ({"$inc": n} / {"$dec": n}) compiled to SET col = col + n in one statement — concurrency-safe counters.',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
         ],
@@ -267,7 +329,7 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
           required: true,
           content: {
             'application/json': {
-              schema: { $ref: `#/components/schemas/${schemaName}Input` },
+              schema: { $ref: `#/components/schemas/${schemaName}UpdateInput` },
             },
           },
         },
@@ -353,7 +415,34 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
       description: { type: 'string' },
       tableName: { type: 'string' },
       fields: { type: 'array', items: { $ref: '#/components/schemas/FieldInput' } },
+      constraints: { $ref: '#/components/schemas/ObjectConstraints' },
     },
+  };
+
+  schemas.ObjectConstraints = {
+    type: 'object',
+    description: 'Object-level constraints, enforced by PostgreSQL itself',
+    properties: {
+      uniqueTogether: {
+        type: 'array',
+        items: { type: 'array', items: { type: 'string' }, minItems: 2 },
+        description:
+          'Composite unique groups (2+ field names unique together), e.g. [["room_code","seed"]]. Each becomes a UNIQUE constraint and a valid upsert on_conflict target.',
+      },
+    },
+  };
+
+  schemas.AtomicOperator = {
+    type: 'object',
+    description:
+      'Atomic update operator for numeric fields: {"$inc": n} adds n (negative subtracts), {"$dec": n} subtracts n. Compiled to SET col = col + n in a single statement — safe under concurrent writers.',
+    minProperties: 1,
+    maxProperties: 1,
+    properties: {
+      $inc: { type: 'number', description: 'Amount to add atomically' },
+      $dec: { type: 'number', description: 'Amount to subtract atomically' },
+    },
+    additionalProperties: false,
   };
 
   schemas.FieldInput = {
@@ -578,6 +667,37 @@ function generateInputSchema(obj: DataObjectDefinition): Record<string, unknown>
     properties,
     required: required.length > 0 ? required : undefined,
   };
+}
+
+/**
+ * The PATCH request schema: every writable field optional (partial update),
+ * with numeric fields additionally accepting the atomic operator object
+ * (issue #9) — `{"$inc": n}` / `{"$dec": n}`.
+ */
+function generateUpdateInputSchema(obj: DataObjectDefinition): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+
+  for (const field of obj.fields) {
+    if (field.isSystem || field.isPrimary) continue;
+    const base = fieldToJsonSchema(field);
+    const typeInfo = COLUMN_TYPES[field.columnType as ColumnTypeName];
+    const isNumeric = typeInfo?.category === 'number' || field.columnType === 'rating';
+    properties[field.name] = isNumeric
+      ? { oneOf: [base, { $ref: '#/components/schemas/AtomicOperator' }] }
+      : base;
+  }
+
+  return { type: 'object', properties };
+}
+
+/** Documents the upsert `on_conflict` parameter with the object's real unique targets. */
+function upsertTargetDescription(obj: DataObjectDefinition): string {
+  const targets = [
+    ...obj.fields.filter((f) => f.isPrimary || f.isUnique).map((f) => f.name),
+    ...(obj.constraints?.uniqueTogether ?? []).map((g) => g.join(',')),
+  ];
+  const listing = targets.length > 0 ? ` Valid targets: ${targets.join(' | ')}.` : '';
+  return `Comma-separated column(s) of a declared unique constraint — switches the create to an upsert (INSERT … ON CONFLICT DO UPDATE). 201 = inserted, 200 = updated existing.${listing}`;
 }
 
 function fieldToJsonSchema(field: FieldDefinition): Record<string, unknown> {

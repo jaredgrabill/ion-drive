@@ -27,6 +27,7 @@ export async function bootstrapSystemTables(db: Kysely<SystemDatabase>): Promise
     .addColumn('table_name', 'varchar(255)', (col) => col.notNull().unique())
     .addColumn('is_system', 'boolean', (col) => col.notNull().defaultTo(false))
     .addColumn('managed_by', 'varchar(128)', (col) => col.notNull().defaultTo('user'))
+    .addColumn('constraints', 'jsonb')
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(db.fn('now')))
     .addColumn('updated_at', 'timestamptz', (col) => col.notNull().defaultTo(db.fn('now')))
     .execute();
@@ -129,12 +130,14 @@ export async function bootstrapSystemTables(db: Kysely<SystemDatabase>): Promise
  * installs (the CREATE TABLE definitions above already include the columns).
  *
  * Phase 10 additions: field `description`/`ui_options` (thin metadata) and
- * `managed_by` provenance on both objects and fields (ADR-017).
+ * `managed_by` provenance on both objects and fields (ADR-017). Issue #9 adds
+ * object-level `constraints` (composite unique groups).
  */
 async function migrateSystemTables(db: Kysely<SystemDatabase>): Promise<void> {
   await sql`ALTER TABLE "_ion_objects" ADD COLUMN IF NOT EXISTS "managed_by" VARCHAR(128) NOT NULL DEFAULT 'user'`.execute(
     db,
   );
+  await sql`ALTER TABLE "_ion_objects" ADD COLUMN IF NOT EXISTS "constraints" JSONB`.execute(db);
   await sql`ALTER TABLE "_ion_fields" ADD COLUMN IF NOT EXISTS "description" TEXT`.execute(db);
   await sql`ALTER TABLE "_ion_fields" ADD COLUMN IF NOT EXISTS "ui_options" JSONB`.execute(db);
   await sql`ALTER TABLE "_ion_fields" ADD COLUMN IF NOT EXISTS "managed_by" VARCHAR(128) NOT NULL DEFAULT 'user'`.execute(

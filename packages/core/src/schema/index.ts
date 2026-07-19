@@ -19,6 +19,7 @@ export type {
   FieldConstraints,
   FieldModification,
   ManagedBy,
+  ObjectConstraints,
   RelationshipDefinition,
   SchemaChangeType,
   SchemaChange,
@@ -34,6 +35,12 @@ export { assessTypeChange, textLimit } from './type-compat.js';
 export type { TypeChangeAssessment, TypeChangePrecheck } from './type-compat.js';
 export { buildCheckConstraints, checkConstraintPrefix } from './check-constraints.js';
 export type { CheckConstraintSpec } from './check-constraints.js';
+export {
+  diffUniqueTogether,
+  matchesUniqueTogether,
+  resolveUniqueTogether,
+} from './unique-together.js';
+export type { UniqueTogetherResolution } from './unique-together.js';
 export {
   applySnapshot,
   diffSnapshot,

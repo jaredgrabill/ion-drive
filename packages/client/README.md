@@ -19,6 +19,13 @@ const contacts = await ion
   .pageSize(25);
 
 const created = await ion.from('contacts').insert({ name: 'Ada' });
+
+// Atomic counters + upsert (issue #9):
+await ion.from('player_stats').increment(id, { wins: 1 });        // SET wins = wins + 1
+await ion.from('player_stats').update(id, { wins: { $inc: 1 } }); // operator form
+const { data, created: isNew } = await ion
+  .from('devices')
+  .upsert({ device_id: 'abc' }, { onConflict: 'device_id' });     // INSERT … ON CONFLICT
 ```
 
 Errors throw a typed `IonDriveError`; `get()` returns `null` on 404.

@@ -185,3 +185,69 @@ describe('diffSnapshot', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Composite unique constraints (issue #9)
+// ---------------------------------------------------------------------------
+
+describe('uniqueTogether round-trip (issue #9)', () => {
+  const matches: DataObjectDefinition = {
+    name: 'matches',
+    displayName: 'Matches',
+    tableName: 'matches',
+    fields: [
+      { name: 'room_code', displayName: 'Room', columnName: 'room_code', columnType: 'text' },
+      { name: 'seed', displayName: 'Seed', columnName: 'seed', columnType: 'integer' },
+    ],
+    constraints: { uniqueTogether: [['room_code', 'seed']] },
+  };
+
+  it('exports uniqueTogether groups in canonical order', () => {
+    const snapshot = exportSnapshot([
+      { ...matches, constraints: { uniqueTogether: [['seed', 'room_code']] } },
+    ]);
+    expect(snapshot.objects[0]?.constraints).toEqual({
+      uniqueTogether: [['room_code', 'seed']],
+    });
+  });
+
+  it('round-trips to an empty diff against the same state (order-insensitive)', () => {
+    const snapshot = exportSnapshot([matches]);
+    const reordered = {
+      ...matches,
+      constraints: { uniqueTogether: [['seed', 'room_code']] },
+    };
+    expect(diffSnapshot(snapshot, [reordered])).toEqual([]);
+  });
+
+  it('emits a modify_object entry when groups differ', () => {
+    const snapshot = exportSnapshot([matches]);
+    const withoutGroups = { ...matches, constraints: undefined };
+    const entries = diffSnapshot(snapshot, [withoutGroups]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: 'modify_object',
+      objectName: 'matches',
+      definition: { constraints: { uniqueTogether: [['room_code', 'seed']] } },
+    });
+  });
+
+  it('emits a modify_object entry to drop groups absent from the snapshot', () => {
+    const snapshot = exportSnapshot([{ ...matches, constraints: undefined }]);
+    const entries = diffSnapshot(snapshot, [matches]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: 'modify_object',
+      definition: { constraints: { uniqueTogether: [] } },
+    });
+  });
+
+  it('carries constraints on create_object entries', () => {
+    const snapshot = exportSnapshot([matches]);
+    const entries = diffSnapshot(snapshot, []);
+    const create = entries.find((e) => e.kind === 'create_object');
+    expect(create?.definition).toMatchObject({
+      constraints: { uniqueTogether: [['room_code', 'seed']] },
+    });
+  });
+});

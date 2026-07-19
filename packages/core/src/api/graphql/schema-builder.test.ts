@@ -381,3 +381,89 @@ describe('relationship traversal', () => {
     expect(removeLinks).toHaveBeenCalledWith('contacts', 'c1', 'tags', ['t3']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Atomic increments + upsert (issue #9)
+// ---------------------------------------------------------------------------
+
+describe('increments and upsert (issue #9)', () => {
+  it('reflects an IncrementInput with only numeric fields and an upsert mutation', () => {
+    const sdl = printSchema(buildGraphQLSchema(registryWithContacts(), {} as DataService));
+
+    expect(sdl).toContain('input ContactsIncrementInput');
+    // Only the numeric field is incrementable.
+    expect(sdl).toMatch(/input ContactsIncrementInput \{[^}]*age: Float/s);
+    expect(sdl).not.toMatch(/input ContactsIncrementInput \{[^}]*full_name/s);
+    // Update takes the parallel increment arg; input became nullable.
+    expect(sdl).toMatch(
+      /update_contacts\(id: ID!, input: ContactsUpdateInput, increment: ContactsIncrementInput\)/,
+    );
+    // Upsert mutation + result envelope.
+    expect(sdl).toContain('type ContactsUpsertResult');
+    expect(sdl).toMatch(
+      /upsert_contacts\([^)]*input: ContactsCreateInput![\s\S]*?onConflict: \[String!\]!/,
+    );
+  });
+
+  it('merges increment into the shared $inc operator path', async () => {
+    const update = vi.fn(async (_o: string, _id: string, data: Record<string, unknown>) => ({
+      data: { id: '1', full_name: 'Ada', age: 31, email_address: null },
+    }));
+    const dataService = { update } as unknown as DataService;
+    const schema = buildGraphQLSchema(registryWithContacts(), dataService);
+
+    const result = await graphql({
+      schema,
+      source: 'mutation { update_contacts(id: "1", increment: { age: 1 }) { age } }',
+    });
+
+    expect(result.errors).toBeUndefined();
+    expect(update).toHaveBeenCalledWith('contacts', '1', { age: { $inc: 1 } });
+  });
+
+  it('rejects a field that is both set and incremented', async () => {
+    const dataService = { update: vi.fn() } as unknown as DataService;
+    const schema = buildGraphQLSchema(registryWithContacts(), dataService);
+
+    const result = await graphql({
+      schema,
+      source:
+        'mutation { update_contacts(id: "1", input: { age: 5 }, increment: { age: 1 }) { age } }',
+    });
+
+    expect(result.errors?.[0]?.message).toContain('cannot be both set');
+  });
+
+  it('rejects an update with neither input nor increment', async () => {
+    const dataService = { update: vi.fn() } as unknown as DataService;
+    const schema = buildGraphQLSchema(registryWithContacts(), dataService);
+
+    const result = await graphql({
+      schema,
+      source: 'mutation { update_contacts(id: "1") { age } }',
+    });
+
+    expect(result.errors?.[0]?.message).toContain('at least one field');
+  });
+
+  it('executes upserts through the DataService and returns the created flag', async () => {
+    const upsert = vi.fn(async () => ({
+      data: { id: '1', full_name: 'Ada', age: 1, email_address: null },
+      created: true,
+    }));
+    const dataService = { upsert } as unknown as DataService;
+    const schema = buildGraphQLSchema(registryWithContacts(), dataService);
+
+    const result = await graphql({
+      schema,
+      source:
+        'mutation { upsert_contacts(input: { full_name: "Ada" }, onConflict: ["email"]) { created data { full_name } } }',
+    });
+
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({
+      upsert_contacts: { created: true, data: { full_name: 'Ada' } },
+    });
+    expect(upsert).toHaveBeenCalledWith('contacts', { full_name: 'Ada' }, ['email']);
+  });
+});

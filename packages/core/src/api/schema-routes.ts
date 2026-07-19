@@ -77,6 +77,11 @@ const modifyFieldSchema = z
   .partial()
   .refine((v) => Object.keys(v).length > 0, 'At least one field property must be provided');
 
+/** Object-level constraints (issue #9): composite unique groups. */
+const objectConstraintsSchema = z.object({
+  uniqueTogether: z.array(z.array(z.string().min(1)).min(2)).optional(),
+});
+
 const createObjectSchema = z.object({
   name: z
     .string()
@@ -87,6 +92,12 @@ const createObjectSchema = z.object({
   description: z.string().max(2000).optional(),
   tableName: z.string().min(1).max(255).optional(),
   fields: z.array(fieldSchema).default([]),
+  constraints: objectConstraintsSchema.optional(),
+});
+
+/** Body of PATCH /objects/:name — today only object constraints are mutable. */
+const modifyObjectSchema = z.object({
+  constraints: objectConstraintsSchema,
 });
 
 const addFieldSchema = fieldSchema;
@@ -115,6 +126,7 @@ const snapshotSchema = z.object({
       description: z.string().optional(),
       managedBy: z.string().optional(),
       fields: z.array(z.record(z.unknown())),
+      constraints: objectConstraintsSchema.optional(),
     }),
   ),
   relationships: z.array(z.record(z.unknown())).default([]),
@@ -188,6 +200,7 @@ export function registerSchemaRoutes(
         description: definition.description,
         tableName,
         fields,
+        constraints: definition.constraints,
       });
 
       if (!result.success) {
@@ -202,6 +215,44 @@ export function registerSchemaRoutes(
         data: result.object,
         preview: result.preview,
       });
+    });
+
+    // --- Modify an object (issue #9: constraints.uniqueTogether) ---
+    // Declarative: the supplied groups become the full set (delta-applied).
+    // Preview-first: ?dryRun=true returns the ChangePreview (real DDL + live
+    // duplicate-data errors) without applying; ?force=true overrides block
+    // contract protection (ADR-017).
+    fastify.patch<{
+      Params: { name: string };
+      Querystring: { dryRun?: string; force?: string };
+    }>('/objects/:name', async (request, reply) => {
+      const parsed = modifyObjectSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: 'Validation Error',
+          issues: parsed.error.issues,
+        });
+      }
+
+      const dryRun = request.query.dryRun === 'true';
+      const result = await schemaManager.setObjectConstraints(
+        request.params.name,
+        parsed.data.constraints,
+        { dryRun, force: request.query.force === 'true' },
+      );
+
+      if (dryRun) {
+        return { data: result.preview };
+      }
+      if (!result.success) {
+        return reply.code(422).send({
+          error: 'Schema Change Failed',
+          preview: result.preview,
+        });
+      }
+
+      recordSchemaChange('modify_object', request.params.name);
+      return { success: true, preview: result.preview, object: result.object };
     });
 
     // --- Delete an object ---

@@ -55,6 +55,7 @@ import type { DataService } from '../../data/data-service.js';
 import { type RelationKey, listRelationKeys } from '../../data/relation-keys.js';
 import type { RealtimeBridge } from '../../messaging/realtime.js';
 import type { SchemaRegistry } from '../../schema/schema-registry.js';
+import { COLUMN_TYPES } from '../../schema/types.js';
 import type { DataObjectDefinition, FieldDefinition } from '../../schema/types.js';
 import type { RelationLoaderContext } from './relation-loader.js';
 import {
@@ -66,6 +67,7 @@ import {
   makeLinkResolver,
   makeListResolver,
   makeUpdateResolver,
+  makeUpsertResolver,
 } from './resolver-factory.js';
 import { DateTimeScalar, JSONScalar } from './scalars.js';
 import { makeEventsSubscribe } from './subscriptions.js';
@@ -330,9 +332,21 @@ function writableFields(obj: DataObjectDefinition): FieldDefinition[] {
   return obj.fields.filter((f) => !f.isSystem && !f.isPrimary);
 }
 
+/** Writable fields whose column supports arithmetic increments (issue #9). */
+function incrementableFields(obj: DataObjectDefinition): FieldDefinition[] {
+  return writableFields(obj).filter(
+    (f) => COLUMN_TYPES[f.columnType]?.category === 'number' || f.columnType === 'rating',
+  );
+}
+
 /**
  * Builds create/update input types. Returns `undefined` for each when the
  * object has no writable fields (an empty input type is invalid in GraphQL).
+ *
+ * `increment` (issue #9) is the typed face of the REST `$inc` operator: one
+ * optional numeric field per incrementable column, passed as a parallel
+ * argument on the update mutation (a literal `$inc` key is not a legal
+ * GraphQL input field name, so operators become a sibling argument instead).
  */
 function buildInputTypes(
   obj: DataObjectDefinition,
@@ -340,6 +354,7 @@ function buildInputTypes(
 ): {
   create?: GraphQLInputObjectType;
   update?: GraphQLInputObjectType;
+  increment?: GraphQLInputObjectType;
 } {
   const writable = writableFields(obj);
   if (writable.length === 0) return {};
@@ -355,10 +370,28 @@ function buildInputTypes(
     updateFields[field.name] = { type: base, description: field.description ?? undefined };
   }
 
+  const incrementable = incrementableFields(obj);
+  const incrementFields: GraphQLInputFieldConfigMap = {};
+  for (const field of incrementable) {
+    incrementFields[field.name] = {
+      type: GraphQLFloat,
+      description: `Amount to add to ${field.displayName} atomically (negative subtracts).`,
+    };
+  }
+
   const pascal = pascalCase(obj.name);
   return {
     create: new GraphQLInputObjectType({ name: `${pascal}CreateInput`, fields: createFields }),
     update: new GraphQLInputObjectType({ name: `${pascal}UpdateInput`, fields: updateFields }),
+    increment:
+      incrementable.length > 0
+        ? new GraphQLInputObjectType({
+            name: `${pascal}IncrementInput`,
+            description:
+              'Atomic per-field increments, applied as `SET field = field + amount` in one statement (concurrency-safe counters).',
+            fields: incrementFields,
+          })
+        : undefined,
   };
 }
 
@@ -426,7 +459,11 @@ export function buildGraphQLSchema(
     const fieldTypes = fieldTypesByObject.get(obj.name) ?? buildFieldTypeMap(obj);
     const objectType = typeByObject.get(obj.name);
     if (!objectType) continue; // unreachable — the first pass covers every object
-    const { create: createInput, update: updateInput } = buildInputTypes(obj, fieldTypes);
+    const {
+      create: createInput,
+      update: updateInput,
+      increment: incrementInput,
+    } = buildInputTypes(obj, fieldTypes);
 
     const listResult = new GraphQLObjectType({
       name: `${pascalCase(obj.name)}ListResult`,
@@ -492,15 +529,10 @@ export function buildGraphQLSchema(
     };
 
     if (updateInput) {
-      mutationFields[`update_${obj.name}`] = {
-        type: objectType,
-        description: `Update a ${obj.displayName} record.`,
-        args: {
-          id: { type: new GraphQLNonNull(GraphQLID) },
-          input: { type: new GraphQLNonNull(updateInput) },
-        },
-        resolve: makeUpdateResolver(dataService, obj.name),
-      };
+      addUpdateMutation(mutationFields, obj, objectType, updateInput, incrementInput, dataService);
+    }
+    if (createInput) {
+      addUpsertMutation(mutationFields, obj, objectType, createInput, dataService);
     }
 
     mutationFields[`delete_${obj.name}`] = {
@@ -541,6 +573,71 @@ export function buildGraphQLSchema(
         : undefined,
     subscription: buildSubscriptionType(extras),
   });
+}
+
+/**
+ * Adds `update_<obj>`. `input` is nullable when increments exist so a pure
+ * counter bump (`increment` only) needs no empty input object; the resolver
+ * requires at least one of the two.
+ */
+function addUpdateMutation(
+  mutationFields: GraphQLFieldConfigMap<unknown, unknown>,
+  obj: DataObjectDefinition,
+  objectType: GraphQLObjectType,
+  updateInput: GraphQLInputObjectType,
+  incrementInput: GraphQLInputObjectType | undefined,
+  dataService: DataService,
+): void {
+  mutationFields[`update_${obj.name}`] = {
+    type: objectType,
+    description: `Update a ${obj.displayName} record.${
+      incrementInput
+        ? ' Use "increment" for atomic counter adds (SET field = field + n, concurrency-safe).'
+        : ''
+    }`,
+    args: {
+      id: { type: new GraphQLNonNull(GraphQLID) },
+      input: { type: incrementInput ? updateInput : new GraphQLNonNull(updateInput) },
+      ...(incrementInput ? { increment: { type: incrementInput } } : {}),
+    },
+    resolve: makeUpdateResolver(dataService, obj.name),
+  };
+}
+
+/**
+ * Adds `upsert_<obj>` (issue #9): INSERT … ON CONFLICT DO UPDATE against a
+ * declared unique target (isUnique field, primary key, or uniqueTogether
+ * group), resolving to `{ data, created }`.
+ */
+function addUpsertMutation(
+  mutationFields: GraphQLFieldConfigMap<unknown, unknown>,
+  obj: DataObjectDefinition,
+  objectType: GraphQLObjectType,
+  createInput: GraphQLInputObjectType,
+  dataService: DataService,
+): void {
+  const upsertResult = new GraphQLObjectType({
+    name: `${pascalCase(obj.name)}UpsertResult`,
+    fields: {
+      data: { type: new GraphQLNonNull(objectType) },
+      created: {
+        type: new GraphQLNonNull(GraphQLBoolean),
+        description: 'True when the row was inserted; false when an existing row was updated.',
+      },
+    },
+  });
+  mutationFields[`upsert_${obj.name}`] = {
+    type: new GraphQLNonNull(upsertResult),
+    description: `Create or update a ${obj.displayName} record in one atomic statement (INSERT … ON CONFLICT DO UPDATE). onConflict must name a declared unique target: an isUnique field, the primary key, or a uniqueTogether group.`,
+    args: {
+      input: { type: new GraphQLNonNull(createInput) },
+      onConflict: {
+        type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))),
+        description: 'Column(s) of the unique constraint to resolve conflicts on.',
+      },
+    },
+    resolve: makeUpsertResolver(dataService, obj.name),
+  };
 }
 
 /**

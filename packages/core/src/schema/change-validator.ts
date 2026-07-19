@@ -8,6 +8,7 @@
 
 import { buildCheckConstraints } from './check-constraints.js';
 import type { DdlExecutor } from './ddl-executor.js';
+import { renderAddUniqueConstraint, uniqueConstraintName } from './ddl-executor.js';
 import type { SchemaRegistry } from './schema-registry.js';
 import { type TypeChangePrecheck, assessTypeChange } from './type-compat.js';
 import type {
@@ -18,6 +19,7 @@ import type {
   DataObjectDefinition,
   FieldDefinition,
   FieldModification,
+  ObjectConstraints,
   RelationshipDefinition,
   SchemaChange,
 } from './types.js';
@@ -25,8 +27,10 @@ import {
   COLUMN_TYPES,
   type ColumnTypeName,
   PRESENTATION_ONLY_KEYS,
+  SYSTEM_FIELDS,
   managedByBlock,
 } from './types.js';
+import { diffUniqueTogether, resolveUniqueTogether } from './unique-together.js';
 
 /** Shape of the per-change validation result the private validators return. */
 interface ValidationResult {
@@ -79,6 +83,8 @@ export class ChangeValidator {
     switch (change.type) {
       case 'create_object':
         return this.validateCreateObject(change);
+      case 'modify_object':
+        return this.validateModifyObject(change);
       case 'delete_object':
         return this.validateDeleteObject(change);
       case 'add_field':
@@ -164,6 +170,113 @@ export class ChangeValidator {
     }
 
     const sqlStatements = [`CREATE TABLE "${tableName}" (...)`];
+    this.checkCreateUniqueTogether(change, definition, tableName, errors, sqlStatements);
+
+    return { warnings, errors, sqlStatements };
+  }
+
+  /**
+   * Validates a new object's composite unique groups (issue #9) — resolvable
+   * against the definition's fields (system fields included, since every
+   * object gets them) — and previews their ADD CONSTRAINT statements.
+   */
+  private checkCreateUniqueTogether(
+    change: SchemaChange,
+    definition: DataObjectDefinition | undefined,
+    tableName: string,
+    errors: ChangeError[],
+    sqlStatements: string[],
+  ): void {
+    if (!definition?.constraints?.uniqueTogether) return;
+    const resolution = resolveUniqueTogether(definition.constraints.uniqueTogether, [
+      ...SYSTEM_FIELDS,
+      ...(definition.fields ?? []),
+    ]);
+    for (const message of resolution.errors) {
+      errors.push({ change, message, code: 'INVALID_UNIQUE_TOGETHER' });
+    }
+    for (const group of resolution.groups) {
+      sqlStatements.push(renderAddUniqueConstraint(tableName, group));
+    }
+  }
+
+  /**
+   * Validates a `modify_object` change (currently: replacing the object's
+   * `constraints.uniqueTogether` groups). Preview-first like modify_field:
+   * added groups are pre-checked against live data so a duplicate pair fails
+   * with named samples instead of a raw PG error; block-owned objects reject
+   * structural changes unless forced (ADR-017).
+   */
+  private async validateModifyObject(change: SchemaChange): Promise<ValidationResult> {
+    const warnings: ChangeWarning[] = [];
+    const errors: ChangeError[] = [];
+    const sqlStatements: string[] = [];
+
+    const obj = this.registry.getObject(change.objectName);
+    if (!obj) {
+      errors.push({
+        change,
+        message: `Data object "${change.objectName}" does not exist`,
+        code: 'OBJECT_NOT_FOUND',
+      });
+      return { warnings, errors, sqlStatements };
+    }
+    if (obj.isSystem) {
+      errors.push({
+        change,
+        message: `Cannot modify system object "${change.objectName}"`,
+        code: 'CANNOT_MODIFY_SYSTEM_OBJECT',
+      });
+      return { warnings, errors, sqlStatements };
+    }
+
+    const force = change.details.force === true;
+    const owningBlock = managedByBlock(obj.managedBy);
+    if (owningBlock && !force) {
+      errors.push({
+        change,
+        message: `Object "${obj.name}" is managed by the "${owningBlock}" block. Structural changes require force (ADR-017).`,
+        code: 'BLOCK_MANAGED_OBJECT',
+      });
+      return { warnings, errors, sqlStatements };
+    }
+    if (owningBlock && force) {
+      warnings.push({
+        change,
+        message: `Object "${obj.name}" is managed by the "${owningBlock}" block; forcing a constraint change may break that block.`,
+        severity: 'high',
+      });
+    }
+
+    const constraints = (change.details.constraints ?? {}) as ObjectConstraints;
+    const resolution = resolveUniqueTogether(constraints.uniqueTogether, obj.fields);
+    for (const message of resolution.errors) {
+      errors.push({ change, message, code: 'INVALID_UNIQUE_TOGETHER' });
+    }
+    if (errors.length > 0) return { warnings, errors, sqlStatements };
+
+    const current = resolveUniqueTogether(obj.constraints?.uniqueTogether, obj.fields).groups;
+    const { added, removed } = diffUniqueTogether(current, resolution.groups);
+
+    for (const group of removed) {
+      sqlStatements.push(
+        `ALTER TABLE "${obj.tableName}" DROP CONSTRAINT IF EXISTS "${uniqueConstraintName(obj.tableName, group)}"`,
+      );
+    }
+    for (const group of added) {
+      sqlStatements.push(renderAddUniqueConstraint(obj.tableName, group));
+      // Pre-check live data so the change fails with named duplicates.
+      const duplicates = await this.ddlExecutor.findDuplicateGroupValues(obj.tableName, group);
+      if (duplicates.length > 0) {
+        const samples = duplicates.map((d) => `(${d.values}) ×${d.count}`).join(', ');
+        errors.push({
+          change,
+          message: `Cannot enforce unique(${group.join(', ')}) on "${obj.name}": duplicate value combinations exist — ${samples}`,
+          code: 'DUPLICATE_VALUES',
+        });
+      }
+    }
+
     return { warnings, errors, sqlStatements };
   }
 

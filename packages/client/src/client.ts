@@ -24,6 +24,13 @@
  *   await ion.from('contacts').update(id, { status: 'archived' });
  *   await ion.from('contacts').delete(id);
  *
+ *   // ATOMIC COUNTERS + UPSERT (issue #9):
+ *   await ion.from('player_stats').update(id, { wins: { $inc: 1 } });   // SET wins = wins + 1
+ *   await ion.from('player_stats').increment(id, { wins: 1 });          // same, sugared
+ *   const { data, created: isNew } = await ion
+ *     .from('devices')
+ *     .upsert({ device_id: 'abc' }, { onConflict: 'device_id' });       // INSERT … ON CONFLICT
+ *
  *   // LINKS — many_to_many junction writes (Phase 13):
  *   await ion.from('contacts').link(id, 'tags', [tagId]);
  *   await ion.from('contacts').unlink(id, 'tags', [tagId]);
@@ -42,6 +49,9 @@ import type {
   QueryResult,
   Record_,
   SingleResult,
+  UpdateValues,
+  UpsertOptions,
+  UpsertResult,
 } from './types.js';
 
 export class IonDriveClient {
@@ -180,8 +190,13 @@ export class Resource<T extends Record_ = Record_> {
     return this.insert(record);
   }
 
-  /** Partially updates a record by id; returns `null` if not found. */
-  async update(id: string, data: Partial<T> | Record_): Promise<T | null> {
+  /**
+   * Partially updates a record by id; returns `null` if not found. Numeric
+   * fields accept atomic operators for concurrency-safe counters:
+   *
+   *   await ion.from('player_stats').update(id, { wins: { $inc: 1 } });
+   */
+  async update(id: string, data: UpdateValues<T>): Promise<T | null> {
     try {
       const res = await this.client.request<SingleResult<T>>(
         'PATCH',
@@ -193,6 +208,35 @@ export class Resource<T extends Record_ = Record_> {
       if (err instanceof IonDriveError && err.status === 404) return null;
       throw err;
     }
+  }
+
+  /**
+   * Atomically adds to numeric fields (`SET field = field + n` in one
+   * statement — safe under concurrent writers). Sugar over {@link update}
+   * with `{ $inc }` operators; negative amounts subtract.
+   *
+   *   await ion.from('player_stats').increment(id, { wins: 1, shots_fired: 12 });
+   */
+  increment(id: string, fields: Record<string, number>): Promise<T | null> {
+    const data: Record_ = {};
+    for (const [field, amount] of Object.entries(fields)) data[field] = { $inc: amount };
+    return this.update(id, data);
+  }
+
+  /**
+   * Creates or updates a record in one atomic statement (PostgREST-style
+   * upsert: `INSERT … ON CONFLICT DO UPDATE`). `onConflict` must name a
+   * declared unique constraint — a single `isUnique` field, the primary key,
+   * or a `uniqueTogether` group. Returns the row plus a `created` indicator.
+   *
+   *   const { data, created } = await ion
+   *     .from('devices')
+   *     .upsert({ device_id: 'abc', last_seen: now }, { onConflict: 'device_id' });
+   */
+  async upsert(record: Partial<T> | Record_, options: UpsertOptions): Promise<UpsertResult<T>> {
+    const columns = Array.isArray(options.onConflict) ? options.onConflict : [options.onConflict];
+    const query = `on_conflict=${encodeURIComponent(columns.join(','))}`;
+    return this.client.request<UpsertResult<T>>('POST', this.basePath, record, query);
   }
 
   /** Deletes a record by id; returns `false` if it did not exist. */

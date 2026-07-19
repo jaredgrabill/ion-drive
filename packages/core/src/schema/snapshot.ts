@@ -49,6 +49,8 @@ export interface SnapshotObject {
   description?: string;
   managedBy?: string;
   fields: SnapshotField[];
+  /** Object-level constraints (issue #9): composite unique groups. */
+  constraints?: { uniqueTogether?: string[][] };
 }
 
 export interface SnapshotRelationship {
@@ -72,6 +74,7 @@ export interface SchemaSnapshot {
 export interface SnapshotDiffEntry {
   kind:
     | 'create_object'
+    | 'modify_object'
     | 'delete_object'
     | 'add_field'
     | 'modify_field'
@@ -141,6 +144,9 @@ export function exportSnapshot(objects: DataObjectDefinition[]): SchemaSnapshot 
         .filter((f) => !f.isSystem && !isRelationshipFk(obj, f))
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name))
         .map(toSnapshotField),
+      constraints: obj.constraints?.uniqueTogether?.length
+        ? { uniqueTogether: sortedGroups(obj.constraints.uniqueTogether) }
+        : undefined,
     })),
     relationships,
   };
@@ -149,6 +155,11 @@ export function exportSnapshot(objects: DataObjectDefinition[]): SchemaSnapshot 
 /** FK columns created by relationships are re-created by add_relationship. */
 function isRelationshipFk(obj: DataObjectDefinition, field: FieldDefinition): boolean {
   return (obj.relationships ?? []).some((rel) => `${rel.name}_id` === field.name);
+}
+
+/** Canonical group ordering: columns sorted within each group, groups sorted. */
+function sortedGroups(groups: string[][]): string[][] {
+  return groups.map((g) => [...g].sort()).sort((a, b) => a.join(',').localeCompare(b.join(',')));
 }
 
 function toSnapshotField(f: FieldDefinition): SnapshotField {
@@ -203,6 +214,7 @@ export function diffSnapshot(
       continue;
     }
     entries.push(...diffObjectFields(snapObj, existing, options));
+    entries.push(...diffObjectConstraints(snapObj, existing));
   }
 
   if (options.prune) {
@@ -268,6 +280,31 @@ function diffRelationships(
     }
   }
   return entries;
+}
+
+/**
+ * Object-constraint diff (issue #9): compares composite unique groups
+ * order-insensitively and emits one declarative `modify_object` entry when
+ * they differ (applied via `SchemaManager.setObjectConstraints` — untouched
+ * groups never churn).
+ */
+function diffObjectConstraints(
+  snapObj: SnapshotObject,
+  existing: DataObjectDefinition,
+): SnapshotDiffEntry[] {
+  const snapGroups = sortedGroups(snapObj.constraints?.uniqueTogether ?? []);
+  const currentGroups = sortedGroups(existing.constraints?.uniqueTogether ?? []);
+  if (normalize(snapGroups) === normalize(currentGroups)) return [];
+  return [
+    {
+      kind: 'modify_object',
+      objectName: snapObj.name,
+      summary: `Set unique-together constraints on "${snapObj.name}" (${
+        snapGroups.map((g) => `(${g.join(', ')})`).join(', ') || 'none'
+      })`,
+      definition: { constraints: { uniqueTogether: snapGroups } },
+    },
+  ];
 }
 
 /** Field-level diff for an object present on both sides. */
@@ -420,12 +457,15 @@ export async function applySnapshot(
     create_object: 0,
     add_field: 1,
     modify_field: 2,
-    add_relationship: 3,
+    // Constraint changes run after fields exist (a new uniqueTogether group
+    // may reference a field added by this same snapshot).
+    modify_object: 3,
+    add_relationship: 4,
     // Prunes run last; relationships go before fields/objects so a dropped
     // object's relationships are already gone.
-    remove_relationship: 4,
-    remove_field: 5,
-    delete_object: 6,
+    remove_relationship: 5,
+    remove_field: 6,
+    delete_object: 7,
   };
   const sorted = [...entries].sort((a, b) => order[a.kind] - order[b.kind]);
 
@@ -460,6 +500,15 @@ async function applyEntry(
             tableName: def.name,
             managedBy: def.managedBy as DataObjectDefinition['managedBy'],
             fields: def.fields.map((f) => snapshotFieldToDefinition(f)),
+            constraints: def.constraints,
+          }),
+        );
+      }
+      case 'modify_object': {
+        const def = entry.definition as { constraints?: { uniqueTogether?: string[][] } };
+        return finish(
+          await schemaManager.setObjectConstraints(entry.objectName, def?.constraints ?? {}, {
+            force: options.force,
           }),
         );
       }

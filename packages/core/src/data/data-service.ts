@@ -9,7 +9,7 @@
  * translate that into the physical table name via the Schema Registry.
  */
 
-import type { Kysely } from 'kysely';
+import { type Kysely, sql } from 'kysely';
 import type { TenantDatabase } from '../db/types.js';
 import { computeDiff } from '../messaging/diff.js';
 import type {
@@ -30,6 +30,8 @@ import {
   type FieldDefinition,
   type RelationshipDefinition,
 } from '../schema/types.js';
+import { matchesUniqueTogether } from '../schema/unique-together.js';
+import { splitAtomicOperations } from './atomic-ops.js';
 import { DataServiceError, translatePgError } from './errors.js';
 import { type RelationKey, findRelationKey, listRelationKeys } from './relation-keys.js';
 import {
@@ -43,6 +45,7 @@ import {
   type QueryOptions,
   type QueryResult,
   type SingleResult,
+  type UpsertResult,
 } from './types.js';
 
 /** Column-type categories whose values are worth matching in a free-text search. */
@@ -277,9 +280,193 @@ export class DataService {
   }
 
   /**
+   * Creates or updates a record in one atomic statement (issue #9):
+   * `INSERT … ON CONFLICT (<target>) DO UPDATE SET <non-conflict columns>`.
+   * Race-free create-or-update — two concurrent reporters can never turn a
+   * first-time insert into a unique-violation 500.
+   *
+   * The conflict target must be a *declared* unique constraint: a single
+   * `isUnique` field, the primary key, or one of the object's
+   * `constraints.uniqueTogether` groups (order-insensitive) — anything else
+   * is a 400 naming the valid targets. Returns the row plus a `created`
+   * indicator (`true` = inserted, `false` = updated an existing row, read
+   * from Postgres' xmax system column so it is authoritative even under
+   * races). Emits `data.<object>.created` or `.updated` accordingly.
+   */
+  async upsert(
+    objectName: string,
+    data: Record<string, unknown>,
+    onConflict: string[],
+  ): Promise<UpsertResult> {
+    const tableName = this.resolveTable(objectName);
+    // Keep the primary key: `on_conflict=id` is a legal target and needs the
+    // supplied value to survive sanitization.
+    const cleanData = this.sanitizeInput(objectName, data, { keepPrimary: true });
+    const conflictColumns = this.resolveConflictTarget(objectName, onConflict);
+    for (const column of conflictColumns) {
+      if (cleanData[column] === undefined) {
+        throw new DataServiceError(
+          `Upsert body is missing a value for conflict column "${column}"`,
+          'MISSING_CONFLICT_VALUE',
+          400,
+        );
+      }
+    }
+    this.validateConstraints(objectName, cleanData);
+    this.stampActor(objectName, cleanData, 'create');
+
+    // translated(): a constraint the upsert does NOT target (another unique
+    // column, an FK, NOT NULL) can still fire — it maps to the platform error
+    // contract (409/400, errors.ts) instead of a raw Postgres 500.
+    const outcome = await this.translated(
+      this.db.transaction().execute(async (trx) => {
+        const before = this.eventsEnabled
+          ? await this.readByColumns(trx, tableName, conflictColumns, cleanData)
+          : undefined;
+
+        const returned = await this.executeUpsertStatement(
+          trx,
+          tableName,
+          cleanData,
+          conflictColumns,
+        );
+        const { _ion_created, ...record } = returned;
+        const created = Boolean(_ion_created);
+
+        if (this.eventsEnabled) {
+          const beforeRow = (before ?? null) as Record<string, unknown> | null;
+          await this.emit(trx, objectName, created ? 'created' : 'updated', {
+            id: String(record.id),
+            before: created ? null : beforeRow,
+            after: record,
+            diff: created || !beforeRow ? null : computeDiff(beforeRow, record),
+          });
+        }
+        return { record, created };
+      }),
+    );
+
+    this.wake();
+    return { data: outcome.record, created: outcome.created };
+  }
+
+  /** Reads at most one row matching every given column's value (in-transaction). */
+  private async readByColumns(
+    trx: BusTransaction,
+    tableName: string,
+    columns: string[],
+    values: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | undefined> {
+    let query = trx.selectFrom(tableName).selectAll();
+    for (const column of columns) {
+      query = query.where(column, '=', values[column]) as typeof query;
+    }
+    return (await query.executeTakeFirst()) as Record<string, unknown> | undefined;
+  }
+
+  /**
+   * Runs the single `INSERT … ON CONFLICT DO UPDATE … RETURNING` statement.
+   * Everything except the conflict target, the id, and the create-only actor
+   * stamp is overwritten on conflict; when the body carries nothing else, a
+   * no-op self-assignment keeps DO UPDATE valid so RETURNING still yields the
+   * existing row (PostgREST-style merge-duplicates). `_ion_created` rides
+   * along as `(xmax = 0)` — true only for a freshly inserted row.
+   */
+  private async executeUpsertStatement(
+    trx: BusTransaction,
+    tableName: string,
+    cleanData: Record<string, unknown>,
+    conflictColumns: string[],
+  ): Promise<Record<string, unknown>> {
+    const updateSet: Record<string, unknown> = {};
+    for (const [column, value] of Object.entries(cleanData)) {
+      if (!conflictColumns.includes(column) && column !== 'created_by' && column !== 'id') {
+        updateSet[column] = value;
+      }
+    }
+    const firstConflict = conflictColumns[0] as string;
+
+    return (await trx
+      .insertInto(tableName)
+      .values(cleanData)
+      .onConflict((oc) => {
+        const target = oc.columns(conflictColumns);
+        return Object.keys(updateSet).length > 0
+          ? target.doUpdateSet(updateSet)
+          : target.doUpdateSet((eb) => ({
+              [firstConflict]: eb.ref(`excluded.${firstConflict}`),
+            }));
+      })
+      .returningAll()
+      .returning(sql<boolean>`(xmax = 0)`.as('_ion_created'))
+      .executeTakeFirstOrThrow()) as Record<string, unknown>;
+  }
+
+  /**
+   * Resolves and validates an upsert conflict target (field or column names)
+   * to physical column names. Valid targets: the primary key, a single
+   * `isUnique` field, or a `constraints.uniqueTogether` group.
+   */
+  private resolveConflictTarget(objectName: string, onConflict: string[]): string[] {
+    const obj = this.registry.getObject(objectName);
+    if (!obj) throw new DataServiceError(`Unknown object: ${objectName}`, 'OBJECT_NOT_FOUND', 404);
+
+    const requested = onConflict.map((n) => n.trim()).filter(Boolean);
+    if (requested.length === 0) {
+      throw new DataServiceError(
+        'on_conflict must name at least one column',
+        'INVALID_CONFLICT_TARGET',
+        400,
+      );
+    }
+
+    const resolved: FieldDefinition[] = requested.map((name) => {
+      const field = obj.fields.find((f) => f.name === name || f.columnName === name);
+      if (!field) {
+        throw new DataServiceError(
+          `Unknown field "${name}" on object "${objectName}"`,
+          'UNKNOWN_FIELD',
+          400,
+        );
+      }
+      return field;
+    });
+    const columns = [...new Set(resolved.map((f) => f.columnName))];
+
+    const isDeclaredUnique =
+      (columns.length === 1 &&
+        (resolved[0]?.isPrimary === true || resolved[0]?.isUnique === true)) ||
+      matchesUniqueTogether(columns, obj.constraints?.uniqueTogether);
+
+    if (!isDeclaredUnique) {
+      const validTargets = [
+        ...obj.fields.filter((f) => f.isPrimary || f.isUnique).map((f) => f.name),
+        ...(obj.constraints?.uniqueTogether ?? []).map((g) => `(${g.join(', ')})`),
+      ];
+      throw new DataServiceError(
+        `on_conflict target (${requested.join(', ')}) is not a unique constraint on "${objectName}". Valid targets: ${
+          validTargets.join(', ') ||
+          'none — mark a field isUnique or declare constraints.uniqueTogether'
+        }`,
+        'INVALID_CONFLICT_TARGET',
+        400,
+      );
+    }
+
+    return columns;
+  }
+
+  /**
    * Updates an existing record by ID. When events are enabled the prior row is
    * read in the same transaction to compute a system-field-free diff carried on
    * the `data.<object>.updated` event.
+   *
+   * Numeric fields accept **atomic operators** (issue #9): a value of
+   * `{ "$inc": n }` (or `{ "$dec": n }`) compiles to `SET col = col + n` in
+   * the same single UPDATE statement, so concurrent counters never lose
+   * updates. Constraint pre-checks skip incremented columns (the resulting
+   * value is unknowable client-side) — the generated CHECK constraints in
+   * Postgres remain the enforcement.
    */
   async update(
     objectName: string,
@@ -288,8 +475,20 @@ export class DataService {
   ): Promise<SingleResult | null> {
     const tableName = this.resolveTable(objectName);
     const cleanData = this.sanitizeInput(objectName, data);
-    this.validateConstraints(objectName, cleanData);
-    this.stampActor(objectName, cleanData, 'update');
+    const { sets, increments } = splitAtomicOperations(
+      this.registry.getFields(objectName),
+      cleanData,
+    );
+    this.validateConstraints(objectName, sets);
+    this.stampActor(objectName, sets, 'update');
+
+    const updateValues: Record<string, unknown> = { ...sets };
+    for (const [column, amount] of Object.entries(increments)) {
+      updateValues[column] = sql`${sql.ref(column)} + ${amount}`;
+    }
+    if (Object.keys(updateValues).length === 0) {
+      throw new DataServiceError('Update body contains no writable fields', 'EMPTY_UPDATE', 400);
+    }
 
     const row = await this.translated(
       this.db.transaction().execute(async (trx) => {
@@ -299,7 +498,7 @@ export class DataService {
 
         const after = await trx
           .updateTable(tableName)
-          .set(cleanData)
+          .set(updateValues)
           .where('id', '=', id)
           .returningAll()
           .executeTakeFirst();
@@ -728,13 +927,20 @@ export class DataService {
   /**
    * Sanitizes input data by filtering to only known, writable columns.
    * Strips system fields (id, created_at, updated_at) from input.
+   * `keepPrimary` retains a supplied primary key (upsert on `id`).
    */
   private sanitizeInput(
     objectName: string,
     data: Record<string, unknown>,
+    options: { keepPrimary?: boolean } = {},
   ): Record<string, unknown> {
     const fields = this.registry.getFields(objectName);
-    const writableFields = fields.filter((f) => !f.isSystem && !f.isPrimary);
+    // The primary key is both system and primary; keepPrimary must beat both
+    // flags so an upsert on `id` can carry the supplied value.
+    const writableFields = fields.filter(
+      (f) =>
+        (!f.isSystem && !f.isPrimary) || (options.keepPrimary === true && f.isPrimary === true),
+    );
 
     const fieldMap = new Map(writableFields.map((f) => [f.name, f]));
     const columnMap = new Map(writableFields.map((f) => [f.columnName, f]));
