@@ -23,6 +23,7 @@ export type {
   FieldConstraints,
   FieldModification,
   ManagedBy,
+  ObjectConstraints,
   RelationshipDefinition,
   ColumnTypeName,
   SchemaState,
@@ -43,6 +44,7 @@ export { DataService, DataServiceError, listRelationKeys, findRelationKey } from
 export type {
   QueryOptions,
   QueryResult,
+  UpsertResult,
   FilterCondition,
   SortOption,
   RelationKey,

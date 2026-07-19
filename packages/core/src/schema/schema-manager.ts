@@ -30,9 +30,11 @@ import type {
   DataObjectDefinition,
   FieldDefinition,
   FieldModification,
+  ObjectConstraints,
   RelationshipDefinition,
   SchemaChange,
 } from './types.js';
+import { diffUniqueTogether, resolveUniqueTogether } from './unique-together.js';
 
 /** Options accepted by the destructive/structural field operations. */
 export interface FieldChangeOptions {
@@ -139,8 +141,21 @@ export class SchemaManager {
       return { preview, success: false };
     }
 
+    // Normalize composite unique groups (issue #9) so stored metadata,
+    // constraint names, and snapshot exports are all deterministic.
+    const uniqueGroups = resolveUniqueTogether(definition.constraints?.uniqueTogether, [
+      ...SYSTEM_FIELDS,
+      ...definition.fields,
+    ]).groups;
+    definition.constraints = uniqueGroups.length > 0 ? { uniqueTogether: uniqueGroups } : undefined;
+
     // Execute
     const sqlStatements = await this.ddlExecutor.createTable(definition);
+    for (const group of uniqueGroups) {
+      sqlStatements.push(
+        ...(await this.ddlExecutor.addUniqueConstraint(definition.tableName, group)),
+      );
+    }
 
     // Record metadata
     const objRecord = await this.metadataStore.createObject(definition);
@@ -241,6 +256,73 @@ export class SchemaManager {
     this.registry.unregisterObject(name);
 
     return { preview, success: true };
+  }
+
+  /**
+   * Replaces an object's composite unique groups (`constraints.uniqueTogether`,
+   * issue #9). Declarative: the given groups become the full set — missing
+   * ones are dropped, new ones are added (delta-computed, so untouched groups
+   * never churn). Preview-first like modifyField: `dryRun` returns the
+   * ChangePreview (real DDL + live duplicate-data errors) without touching
+   * anything; block-owned objects require `force` (ADR-017).
+   */
+  async setObjectConstraints(
+    objectName: string,
+    constraints: ObjectConstraints,
+    options: FieldChangeOptions = {},
+  ): Promise<{
+    preview: ChangePreview;
+    success: boolean;
+    object?: DataObjectDefinition;
+  }> {
+    const changeSet = this.buildChangeSet(`Update constraints on "${objectName}"`, [
+      {
+        type: 'modify_object',
+        objectName,
+        details: {
+          constraints: constraints as unknown as Record<string, unknown>,
+          force: options.force,
+        },
+      },
+    ]);
+
+    const preview = await this.validator.validateChangeSet(changeSet);
+    if (options.dryRun) return { preview, success: preview.isValid };
+    if (!preview.isValid) return { preview, success: false };
+
+    const obj = this.registry.getObject(objectName);
+    if (!obj) return { preview, success: false };
+
+    const current = resolveUniqueTogether(obj.constraints?.uniqueTogether, obj.fields).groups;
+    const target = resolveUniqueTogether(constraints.uniqueTogether, obj.fields).groups;
+    const { added, removed } = diffUniqueTogether(current, target);
+
+    const executed: string[] = [];
+    for (const group of removed) {
+      // Find the live constraint by column set — it may predate our naming.
+      const name = await this.ddlExecutor.findUniqueConstraintForColumns(obj.tableName, group);
+      if (name) {
+        executed.push(...(await this.ddlExecutor.dropConstraintByName(obj.tableName, name)));
+      }
+    }
+    for (const group of added) {
+      executed.push(...(await this.ddlExecutor.addUniqueConstraint(obj.tableName, group)));
+    }
+
+    await this.metadataStore.updateObject(objectName, {
+      constraints: target.length > 0 ? { uniqueTogether: target } : null,
+    });
+
+    const version = (await this.metadataStore.getLatestMigrationVersion()) + 1;
+    await this.metadataStore.recordMigration({
+      version,
+      description: `Update constraints on "${objectName}"`,
+      changes: { type: 'modify_object', objectName, constraints: { uniqueTogether: target } },
+      sqlUp: executed.join(';\n') || '-- metadata-only change',
+    });
+
+    await this.refreshObject(objectName);
+    return { preview, success: true, object: this.registry.getObject(objectName) };
   }
 
   // =========================================================================

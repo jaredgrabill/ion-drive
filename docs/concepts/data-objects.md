@@ -46,6 +46,38 @@ key), `created_at`, and `updated_at`. You never define these yourself.
 | `defaultValue` | SQL default (literals are quoted for you; expressions pass through). |
 | `constraints` | `min`, `max`, `pattern`, `enumValues`, `message`. |
 
+## Composite unique constraints (uniqueTogether)
+
+Uniqueness across **multiple fields together** lives on the object, not any
+single field:
+
+```jsonc
+{
+  "name": "matches",
+  "displayName": "Matches",
+  "fields": [
+    { "name": "room_code", "displayName": "Room", "columnType": "text" },
+    { "name": "seed",      "displayName": "Seed", "columnType": "integer" }
+  ],
+  "constraints": { "uniqueTogether": [["room_code", "seed"]] }
+}
+```
+
+Each group (two or more field names) becomes a real, named PostgreSQL
+constraint — `ion_uq_<table>_<col1>_<col2>` — so the **database itself**
+enforces it (ADR-017 rule 1: metadata mirrors DB truth). Groups are stored
+normalized (columns sorted, groups sorted), round-trip through the schema
+snapshot (`ion-drive schema pull/diff/push`), and are valid
+[upsert](../api/rest.md#upsert-create-or-update) conflict targets.
+
+Manage them after creation with `PATCH /api/v1/schema/objects/:name` (body
+`{ "constraints": { "uniqueTogether": [...] } }`) or the MCP
+`set_unique_together` tool. The call is **declarative** — the supplied groups
+become the full set; untouched groups never churn — and preview-first:
+`?dryRun=true` returns the exact DDL, and adding a group pre-checks existing
+rows so duplicate combinations fail with named samples instead of a raw
+database error. Single-field uniqueness stays on the field (`isUnique`).
+
 ## Column types
 
 Column types are grouped by category. **Text-category** types (and enums) are

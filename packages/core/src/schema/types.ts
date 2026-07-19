@@ -108,6 +108,26 @@ export interface DataObjectDefinition {
   managedBy?: ManagedBy;
   fields: FieldDefinition[];
   relationships?: RelationshipDefinition[];
+  /** Object-level constraints (rule 1 of ADR-017 — enforced in Postgres). */
+  constraints?: ObjectConstraints;
+}
+
+/**
+ * Object-level constraints — rules that span multiple fields, so they live on
+ * the object rather than any single FieldDefinition. Like field constraints,
+ * anything here is enforced by Postgres itself (ADR-017 rule 1); the metadata
+ * only mirrors DB truth.
+ */
+export interface ObjectConstraints {
+  /**
+   * Composite unique constraints: each entry is a group of two or more field
+   * names that must be unique **together** (`UNIQUE (col_a, col_b)` — the
+   * natural idempotency-key shape, e.g. `[["room_code", "seed"]]`). Groups are
+   * stored normalized (columns sorted, groups sorted) and materialise as named
+   * `ion_uq_<table>_<col1>_<col2>` constraints. Single-field uniqueness stays
+   * on the field (`isUnique`).
+   */
+  uniqueTogether?: string[][];
 }
 
 export interface FieldDefinition {
@@ -213,6 +233,7 @@ export type SchemaChangeType =
   | 'create_object'
   | 'delete_object'
   | 'rename_object'
+  | 'modify_object'
   | 'add_field'
   | 'modify_field'
   | 'remove_field'

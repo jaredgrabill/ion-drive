@@ -27,11 +27,11 @@ A machine-readable, always-current [OpenAPI 3.1 spec](#openapi) is served at
 | `GET` | `/api/v1/data` | Discovery — list available objects + their endpoints |
 | `GET` | `/api/v1/data/:object` | List records (search, filter, sort, paginate) |
 | `GET` | `/api/v1/data/:object/aggregate` | Aggregate the filtered rows (`fn=count\|sum\|avg\|min\|max`) |
-| `POST` | `/api/v1/data/:object` | Create a record |
+| `POST` | `/api/v1/data/:object` | Create a record (`?on_conflict=col[,col2]` → upsert) |
 | `POST` | `/api/v1/data/:object/bulk` | Bulk create (`{ "data": [...] }`) |
 | `DELETE` | `/api/v1/data/:object/bulk` | Bulk delete (`{ "ids": [...] }`) |
 | `GET` | `/api/v1/data/:object/:id` | Get one record by id |
-| `PATCH` | `/api/v1/data/:object/:id` | Partial update — send only the fields you're changing |
+| `PATCH` | `/api/v1/data/:object/:id` | Partial update — send only the fields you're changing; numeric fields accept `{ "$inc": n }` |
 | `DELETE` | `/api/v1/data/:object/:id` | Delete |
 | `POST` | `/api/v1/data/:object/:id/links/:rel` | Add many_to_many links (`{ "ids": [...] }`, idempotent) |
 | `DELETE` | `/api/v1/data/:object/:id/links/:rel` | Remove many_to_many links (`{ "ids": [...] }`) |
@@ -99,6 +99,51 @@ columns record the authenticated actor (user id, else API-key id): creates
 stamp both, updates re-stamp `updated_by`, and anonymous writes leave them
 null.
 
+### Upsert (create-or-update)
+
+Add `?on_conflict=<col>[,<col2>]` to the create POST to run a PostgREST-style
+upsert — one atomic `INSERT … ON CONFLICT (…) DO UPDATE` statement, so two
+concurrent first-time writers can never race each other into a unique
+violation:
+
+```bash
+curl -X POST 'http://localhost:3000/api/v1/data/player_stats?on_conflict=device_id'   -H 'content-type: application/json'   -d '{ "device_id": "abc", "wins": 1 }'
+# 201 Created -> { "data": { … }, "created": true }    (row was inserted)
+# 200 OK      -> { "data": { … }, "created": false }   (existing row updated)
+```
+
+- The conflict target must be a **declared** unique constraint: a single
+  `isUnique` field, the primary key (`id`), or one of the object's
+  [`constraints.uniqueTogether`](../concepts/data-objects.md#composite-unique-constraints-uniquetogether)
+  groups (columns in any order) — anything else is a `400` naming the valid
+  targets.
+- Every conflict column must appear in the body (that's the row's identity).
+- All non-conflict columns from the body overwrite the existing row on
+  conflict; columns you omit keep their values. `created_by` is never
+  overwritten; `updated_by`/`updated_at` re-stamp.
+- The response gains a `created` indicator beside the usual `data` envelope.
+
+### Atomic increments
+
+Counter-style columns can be updated **atomically** in a PATCH: a value of
+`{ "$inc": n }` (or `{ "$dec": n }`) compiles to `SET col = col + n` inside
+the single UPDATE statement, so concurrent writers never lose updates — no
+read-modify-write:
+
+```bash
+curl -X PATCH http://localhost:3000/api/v1/data/player_stats/<id>   -H 'content-type: application/json'   -d '{ "wins": { "$inc": 1 }, "damage_dealt": { "$inc": 320.5 }, "last_room": "R1" }'
+```
+
+- Operators only apply to **numeric** columns (`integer`, `big_integer`,
+  `decimal`, `float`, `percentage`, `currency`, `rating`); anywhere else is a
+  `400` (`INVALID_ATOMIC_OP`).
+- Negative `$inc` subtracts; `$dec: n` is sugar for `$inc: -n`. Exactly one
+  operator key per value — mixed shapes are rejected.
+- `json` columns are exempt: an object value there is stored as data, so a
+  legal `{"$inc": 1}` JSON document is never misread as an operator.
+- Field `constraints` (min/max) are not pre-checked for incremented columns —
+  the generated CHECK constraints in Postgres remain the enforcement.
+
 ### Get / Update / Delete
 
 ```bash
@@ -128,8 +173,8 @@ curl -X DELETE http://localhost:3000/api/v1/data/contacts/bulk \
 
 | Code | When |
 |:---|:---|
-| `200` | Successful read/update |
-| `201` | Record(s) created |
+| `200` | Successful read/update (incl. an upsert that updated an existing row) |
+| `201` | Record(s) created (incl. an upsert that inserted) |
 | `204` | Record deleted |
 | `400` | Malformed body, unknown filter field, missing required field, or unparseable value |
 | `401` / `403` | Auth required / insufficient permission (when enforcement is on) |
@@ -176,6 +221,9 @@ await contacts.get(id);                                   // GET /:id (null on 4
 await contacts.insert({ full_name: 'Ada' });              // POST (returns the row)
 await contacts.insert([{ full_name: 'A' }, { full_name: 'B' }]); // POST /bulk (summary)
 await contacts.update(id, { status: 'archived' });        // PATCH (null on 404)
+await contacts.update(id, { wins: { $inc: 1 } });         // PATCH atomic counter add
+await contacts.increment(id, { wins: 1, losses: -1 });    // same, sugared
+await contacts.upsert({ device_id: 'abc' }, { onConflict: 'device_id' }); // POST ?on_conflict
 await contacts.delete(id);                                // DELETE (false on 404)
 await contacts.bulkDelete([id1, id2]);                    // DELETE /bulk
 ```

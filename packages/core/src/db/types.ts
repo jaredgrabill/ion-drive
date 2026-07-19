@@ -54,6 +54,8 @@ export interface IonObjectsTable {
   is_system: ColumnType<boolean, boolean | undefined, boolean>;
   /** Provenance: 'user' | 'system' | 'block:<name>' (Phase 10 / ADR-017). */
   managed_by: ColumnType<string, string | undefined, string>;
+  /** Object-level constraints JSON (`{ uniqueTogether: string[][] }`, issue #9). */
+  constraints: ColumnType<Record<string, unknown> | null, string | null, string | null>;
   created_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }

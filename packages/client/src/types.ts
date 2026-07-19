@@ -67,6 +67,34 @@ export interface SingleResult<T = Record_> {
   data: T;
 }
 
+/**
+ * Atomic update operator for numeric fields: `{ $inc: n }` adds n (negative
+ * subtracts), `{ $dec: n }` subtracts n. The server compiles it to
+ * `SET col = col + n` in a single statement, so concurrent counters never
+ * lose updates.
+ */
+export type AtomicOp = { $inc: number } | { $dec: number };
+
+/** Update payload: plain values and/or per-field atomic operators. */
+export type UpdateValues<T = Record_> = { [K in keyof T]?: T[K] | AtomicOp } | Record_;
+
+/** Options for the upsert write. */
+export interface UpsertOptions {
+  /**
+   * Conflict target: column(s) of a declared unique constraint — a single
+   * `isUnique` field, the primary key, or a `constraints.uniqueTogether`
+   * group (e.g. `['room_code', 'seed']`).
+   */
+  onConflict: string | string[];
+}
+
+/** Envelope returned by an upsert: the row plus whether it was inserted. */
+export interface UpsertResult<T = Record_> {
+  data: T;
+  /** True when the row was inserted; false when an existing row was updated. */
+  created: boolean;
+}
+
 /** Result of a bulk create/delete. */
 export interface BulkResult {
   count: number;

@@ -247,3 +247,56 @@ describe('IonDriveClient — m2m links (Phase 13)', () => {
     expect((err as IonDriveError).status).toBe(400);
   });
 });
+
+describe('IonDriveClient — atomic increments + upsert (issue #9)', () => {
+  it('update() passes $inc operator values through the PATCH body', async () => {
+    const { fetch, calls } = fakeFetch({ json: { data: { id: '1', wins: 5 } } });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+
+    const row = await ion.from('player_stats').update('1', { wins: { $inc: 1 } });
+
+    expect(row).toEqual({ id: '1', wins: 5 });
+    expect(calls[0]?.init.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ wins: { $inc: 1 } });
+  });
+
+  it('increment() sugars fields into $inc operators', async () => {
+    const { fetch, calls } = fakeFetch({ json: { data: { id: '1', wins: 5, losses: 2 } } });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+
+    await ion.from('player_stats').increment('1', { wins: 1, losses: -1 });
+
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      wins: { $inc: 1 },
+      losses: { $inc: -1 },
+    });
+  });
+
+  it('upsert() POSTs with on_conflict and returns the { data, created } envelope', async () => {
+    const { fetch, calls } = fakeFetch({
+      json: { data: { id: '1', device_id: 'abc' }, created: false },
+    });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+
+    const result = await ion
+      .from('devices')
+      .upsert({ device_id: 'abc' }, { onConflict: ['room_code', 'seed'] });
+
+    expect(result).toEqual({ data: { id: '1', device_id: 'abc' }, created: false });
+    const call = calls[0];
+    expect(call?.init.method).toBe('POST');
+    expect(call?.url).toContain('/api/v1/data/devices?on_conflict=room_code%2Cseed');
+  });
+
+  it('upsert() accepts a single-column onConflict string', async () => {
+    const { fetch, calls } = fakeFetch({ json: { data: { id: '1' }, created: true } });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+
+    const result = await ion
+      .from('devices')
+      .upsert({ device_id: 'abc' }, { onConflict: 'device_id' });
+
+    expect(result.created).toBe(true);
+    expect(calls[0]?.url).toContain('on_conflict=device_id');
+  });
+});

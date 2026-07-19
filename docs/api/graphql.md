@@ -35,7 +35,8 @@ type Query {
 
 type Mutation {
   create_contacts(input: ContactsCreateInput!): Contacts
-  update_contacts(id: ID!, input: ContactsUpdateInput!): Contacts
+  update_contacts(id: ID!, input: ContactsUpdateInput, increment: ContactsIncrementInput): Contacts
+  upsert_contacts(input: ContactsCreateInput!, onConflict: [String!]!): ContactsUpsertResult!
   delete_contacts(id: ID!): Boolean!
 }
 ```
@@ -185,6 +186,46 @@ mutation {
 
 `update_contacts(id, input)` performs a partial update; `delete_contacts(id)`
 returns a boolean.
+
+### Atomic increments
+
+When an object has numeric fields, its update mutation gains an `increment`
+argument (`<Object>IncrementInput` — one optional number per numeric field).
+Each entry compiles to `SET field = field + amount` in the same single UPDATE
+statement, so concurrent counters never lose updates (this is the typed
+GraphQL face of REST's `{ "$inc": n }` operator — a literal `$inc` key is not
+a legal input field name). Negative amounts subtract. `input` is optional when
+`increment` exists, so a pure counter bump needs no empty object; a field may
+not appear in both.
+
+```graphql
+mutation {
+  update_player_stats(id: "…", increment: { wins: 1, shots_fired: 12 }) {
+    wins
+  }
+}
+```
+
+### Upsert
+
+`upsert_<object>(input, onConflict)` creates or updates in one atomic
+statement (`INSERT … ON CONFLICT DO UPDATE`). `onConflict` must name a
+**declared** unique target — a single `isUnique` field, the primary key, or a
+`constraints.uniqueTogether` group (any column order). The result carries the
+row plus a `created` flag (`true` = inserted, `false` = updated an existing
+row).
+
+```graphql
+mutation {
+  upsert_player_stats(
+    input: { device_id: "abc", room_code: "R1", seed: 7 }
+    onConflict: ["room_code", "seed"]
+  ) {
+    created
+    data { id wins }
+  }
+}
+```
 
 ## Scalars
 

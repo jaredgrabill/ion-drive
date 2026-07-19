@@ -30,8 +30,9 @@ claude mcp add --transport http ion-drive http://localhost:3000/api/v1/mcp \
 | `list_objects` | List all data objects with field counts and descriptions. |
 | `get_object` | Full definition of one object (fields, types, constraints). |
 | `list_column_types` | All available column types with their Postgres mappings. |
-| `create_object` | Create a new object (system fields added automatically). |
+| `create_object` | Create a new object (system fields added automatically; `unique_together` declares composite unique groups). |
 | `add_field` | Add a field (column) to an existing object. |
+| `set_unique_together` | Replace an object's composite unique groups (declarative; pre-checks live data; `dry_run`/`force`). |
 | `delete_object` | Delete an object and its table (**destroys data**). |
 
 ### Data
@@ -42,7 +43,8 @@ claude mcp add --transport http ion-drive http://localhost:3000/api/v1/mcp \
 | `aggregate_data` | A single `count`/`sum`/`avg`/`min`/`max` over the filtered rows (same `filters`/`search` as `query_data`; rank = `filteredCount + 1` when filtering on the score being beaten). |
 | `get_record` | Fetch a single record by id, optionally with `expand`. |
 | `create_record` | Create a record. |
-| `update_record` | Update a record by id. |
+| `update_record` | Update a record by id. `increment: { field: amount }` performs atomic counter adds (`SET field = field + n`, concurrency-safe). |
+| `upsert_record` | Create-or-update in one atomic statement (`on_conflict` names a declared unique target); returns the row plus `created`. |
 | `delete_record` | Delete a record by id. |
 
 `query_data` mirrors the REST/GraphQL query language:

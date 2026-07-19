@@ -201,8 +201,14 @@ export function createMcpServer(options: McpServerOptions): McpServer {
           }),
         )
         .describe('Field definitions'),
+      unique_together: z
+        .array(z.array(z.string()).min(2))
+        .optional()
+        .describe(
+          'Composite unique constraints: groups of 2+ field names unique together, e.g. [["room_code","seed"]] — enforced as UNIQUE constraints and valid upsert conflict targets',
+        ),
     },
-    async ({ name, display_name, description, fields }) => {
+    async ({ name, display_name, description, fields, unique_together }) => {
       const result = await schemaManager.createObject({
         name,
         displayName: display_name,
@@ -220,6 +226,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
           description: f.description,
           constraints: f.constraints as FieldConstraints | undefined,
         })),
+        constraints: unique_together ? { uniqueTogether: unique_together } : undefined,
       });
 
       if (!result.success) {
@@ -354,6 +361,37 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         { dryRun: args.dry_run, force: args.force },
       );
 
+      const summary = {
+        success: result.success,
+        dryRun: args.dry_run ?? false,
+        sql: result.preview.sqlStatements,
+        warnings: result.preview.warnings.map((w) => w.message),
+        errors: result.preview.errors.map((e) => e.message),
+      };
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(summary, null, 2) }],
+        isError: !result.success && !args.dry_run,
+      };
+    },
+  );
+
+  server.tool(
+    'set_unique_together',
+    "Replace a data object's composite unique constraints (uniqueTogether). Declarative: the given groups become the full set — omitted groups are dropped, new ones added. Adding a group pre-checks existing data and fails with named duplicate combinations. Use dry_run to preview the SQL; objects owned by a building block require force.",
+    {
+      object_name: z.string().describe('Name of the data object'),
+      unique_together: z
+        .array(z.array(z.string()).min(2))
+        .describe('Groups of 2+ field names unique together (empty array drops all groups)'),
+      dry_run: z.boolean().optional().describe('Preview only — return SQL + warnings'),
+      force: z.boolean().optional().describe('Override block contract protection'),
+    },
+    async (args) => {
+      const result = await schemaManager.setObjectConstraints(
+        args.object_name,
+        { uniqueTogether: args.unique_together },
+        { dryRun: args.dry_run, force: args.force },
+      );
       const summary = {
         success: result.success,
         dryRun: args.dry_run ?? false,
@@ -678,15 +716,40 @@ export function createMcpServer(options: McpServerOptions): McpServer {
 
   server.tool(
     'update_record',
-    'Update an existing record by its ID.',
+    'Update an existing record by its ID. Use "increment" for atomic counter adds — { "wins": 1 } compiles to SET wins = wins + 1 in one statement (concurrency-safe; negative amounts subtract). Numeric fields in "data" also accept the { "$inc": n } operator shape directly.',
     {
       object_name: z.string().describe('Name of the data object'),
       id: z.string().describe('Record UUID'),
-      data: z.record(z.unknown()).describe('Fields to update'),
+      data: z.record(z.unknown()).optional().describe('Fields to set'),
+      increment: z
+        .record(z.number())
+        .optional()
+        .describe('Numeric fields to atomically add to: { field: amount }'),
     },
-    async ({ object_name, id, data }) => {
+    async ({ object_name, id, data, increment }) => {
       try {
-        const result = await dataService.update(object_name, id, data);
+        const payload: Record<string, unknown> = { ...(data ?? {}) };
+        for (const [field, amount] of Object.entries(increment ?? {})) {
+          if (field in payload) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Error: Field "${field}" cannot be both set (data) and incremented (increment)`,
+                },
+              ],
+              isError: true,
+            };
+          }
+          payload[field] = { $inc: amount };
+        }
+        if (Object.keys(payload).length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: 'Error: Provide "data" and/or "increment"' }],
+            isError: true,
+          };
+        }
+        const result = await dataService.update(object_name, id, payload);
         if (!result) {
           return {
             content: [
@@ -698,6 +761,34 @@ export function createMcpServer(options: McpServerOptions): McpServer {
             isError: true,
           };
         }
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'upsert_record',
+    'Create or update a record in one atomic statement (INSERT … ON CONFLICT DO UPDATE). on_conflict must name a declared unique target: a single isUnique field, the primary key, or one of the object\'s uniqueTogether groups. Returns the row plus "created" (true = inserted, false = updated).',
+    {
+      object_name: z.string().describe('Name of the data object'),
+      data: z
+        .record(z.unknown())
+        .describe('Field values (must include the conflict target columns)'),
+      on_conflict: z
+        .array(z.string())
+        .min(1)
+        .describe('Column(s) of the unique constraint to resolve conflicts on'),
+    },
+    async ({ object_name, data, on_conflict }) => {
+      try {
+        const result = await dataService.upsert(object_name, data, on_conflict);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         };

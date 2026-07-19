@@ -126,6 +126,15 @@ export interface SingleResult<T = Record<string, unknown>> {
   data: T;
 }
 
+/**
+ * Envelope returned by an upsert (issue #9): the row plus whether the
+ * statement inserted it (`true`) or updated an existing one (`false`).
+ */
+export interface UpsertResult<T = Record<string, unknown>> {
+  data: T;
+  created: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Mutation Inputs
 // ---------------------------------------------------------------------------

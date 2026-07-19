@@ -19,7 +19,12 @@ import type {
   SystemDatabase,
 } from '../db/types.js';
 import { currentActorId } from '../runtime/request-context.js';
-import type { DataObjectDefinition, FieldDefinition, RelationshipDefinition } from './types.js';
+import type {
+  DataObjectDefinition,
+  FieldDefinition,
+  ObjectConstraints,
+  RelationshipDefinition,
+} from './types.js';
 
 /**
  * Scalar FieldDefinition properties `updateField` copies verbatim, keyed by
@@ -73,6 +78,7 @@ export class MetadataStore {
         table_name: definition.tableName,
         is_system: definition.isSystem ?? false,
         managed_by: definition.managedBy ?? 'user',
+        constraints: definition.constraints ? JSON.stringify(definition.constraints) : null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -80,12 +86,22 @@ export class MetadataStore {
     return result;
   }
 
-  async updateObject(name: string, updates: Partial<DataObjectDefinition>): Promise<IonObject> {
+  async updateObject(
+    name: string,
+    updates: Omit<Partial<DataObjectDefinition>, 'constraints'> & {
+      /** Pass null to clear stored object constraints. */
+      constraints?: ObjectConstraints | null;
+    },
+  ): Promise<IonObject> {
     const values: Record<string, unknown> = { updated_at: new Date() };
     if (updates.displayName !== undefined) values.display_name = updates.displayName;
     if (updates.description !== undefined) values.description = updates.description;
     // Provenance flip (spec-07's released-to-user path) — metadata only.
     if (updates.managedBy !== undefined) values.managed_by = updates.managedBy;
+    // Object-level constraints (issue #9) — pass null/empty to clear.
+    if (updates.constraints !== undefined) {
+      values.constraints = updates.constraints ? JSON.stringify(updates.constraints) : null;
+    }
 
     const result = await this.db
       .updateTable('_ion_objects')
@@ -366,6 +382,7 @@ export class MetadataStore {
       tableName: obj.table_name,
       isSystem: obj.is_system,
       managedBy: obj.managed_by as DataObjectDefinition['managedBy'],
+      constraints: (obj.constraints as DataObjectDefinition['constraints']) ?? undefined,
       fields: fields.map((f) => ({
         id: f.id,
         name: f.name,

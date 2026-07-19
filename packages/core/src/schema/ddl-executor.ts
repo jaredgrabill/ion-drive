@@ -52,6 +52,17 @@ export function renderDefaultExpression(rawValue: string | null | undefined): st
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** Canonical name of an Ion-managed UNIQUE constraint over a column group. */
+export function uniqueConstraintName(tableName: string, columns: string[]): string {
+  return `ion_uq_${tableName}_${columns.join('_')}`;
+}
+
+/** Renders the ADD CONSTRAINT … UNIQUE statement (shared with previews). */
+export function renderAddUniqueConstraint(tableName: string, columns: string[]): string {
+  const cols = columns.map((c) => `"${c}"`).join(', ');
+  return `ALTER TABLE "${tableName}" ADD CONSTRAINT "${uniqueConstraintName(tableName, columns)}" UNIQUE (${cols})`;
+}
+
 export class DdlExecutor {
   constructor(private readonly db: Kysely<Record<string, unknown>>) {}
 
@@ -258,10 +269,22 @@ export class DdlExecutor {
     return [statement];
   }
 
-  /** Adds a named UNIQUE constraint on a single column. */
-  async addUniqueConstraint(tableName: string, columnName: string): Promise<string[]> {
-    const constraintName = `ion_uq_${tableName}_${columnName}`;
-    const statement = `ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" UNIQUE ("${columnName}")`;
+  /**
+   * Adds a named UNIQUE constraint on one column or a column group
+   * (`ion_uq_<table>_<col1>[_<col2>…]`). Groups back the composite
+   * `constraints.uniqueTogether` feature (issue #9) and are valid upsert
+   * conflict targets.
+   */
+  async addUniqueConstraint(tableName: string, columns: string | string[]): Promise<string[]> {
+    const cols = Array.isArray(columns) ? columns : [columns];
+    const statement = renderAddUniqueConstraint(tableName, cols);
+    await sql.raw(statement).execute(this.db);
+    return [statement];
+  }
+
+  /** Drops a named constraint (no-op when absent). */
+  async dropConstraintByName(tableName: string, constraintName: string): Promise<string[]> {
+    const statement = `ALTER TABLE "${tableName}" DROP CONSTRAINT IF EXISTS "${constraintName}"`;
     await sql.raw(statement).execute(this.db);
     return [statement];
   }
@@ -296,6 +319,67 @@ export class DdlExecutor {
       LIMIT 1
     `.execute(this.db);
     return result.rows[0]?.conname ?? null;
+  }
+
+  /**
+   * Finds the name of the UNIQUE constraint covering exactly this column
+   * group (order-insensitive), whatever it was named. Used to drop composite
+   * constraints that may predate the `ion_uq_*` naming scheme.
+   */
+  async findUniqueConstraintForColumns(
+    tableName: string,
+    columns: string[],
+  ): Promise<string | null> {
+    const sorted = [...columns].sort();
+    const result = await sql<{ conname: string }>`
+      SELECT con.conname
+      FROM pg_constraint con
+      JOIN pg_class rel ON rel.oid = con.conrelid
+      JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+      WHERE nsp.nspname = 'public'
+        AND rel.relname = ${tableName}
+        AND con.contype = 'u'
+        AND (
+          SELECT array_agg(att.attname::text ORDER BY att.attname)
+          FROM unnest(con.conkey) AS k
+          JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = k
+        ) = ${sorted}::text[]
+      LIMIT 1
+    `.execute(this.db);
+    return result.rows[0]?.conname ?? null;
+  }
+
+  /**
+   * Sample of value combinations duplicated across a column group (the
+   * pre-check before adding a composite UNIQUE constraint — mirrors
+   * {@link findDuplicateValues} for single columns). Rows where any group
+   * column is NULL are skipped, matching UNIQUE's NULLs-are-distinct
+   * semantics.
+   */
+  async findDuplicateGroupValues(
+    tableName: string,
+    columns: string[],
+    limit = 5,
+  ): Promise<{ values: string; count: number }[]> {
+    const refs = sql.join(columns.map((c) => sql.ref(c)));
+    const rendered = sql.join(
+      columns.map((c) => sql`${sql.ref(c)}::text`),
+      sql.raw(` || ', ' || `),
+    );
+    const notNull = sql.join(
+      columns.map((c) => sql`${sql.ref(c)} IS NOT NULL`),
+      sql.raw(' AND '),
+    );
+    const result = await sql<{ values: string; count: string }>`
+      SELECT ${rendered} AS values, COUNT(*) AS count
+      FROM ${sql.table(tableName)}
+      WHERE ${notNull}
+      GROUP BY ${refs}
+      HAVING COUNT(*) > 1
+      ORDER BY COUNT(*) DESC
+      LIMIT ${limit}
+    `.execute(this.db);
+    return result.rows.map((r) => ({ values: r.values, count: Number.parseInt(r.count, 10) }));
   }
 
   // -------------------------------------------------------------------------
