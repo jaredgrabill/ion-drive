@@ -16,6 +16,8 @@
  */
 
 export { IonDriveClient, Resource, ResourceQuery, IonDriveError } from './client.js';
+export { AuthApi, AuthError } from './auth.js';
+export type { AnonymousUser, AuthTransport, SignInAnonymouslyResult } from './auth.js';
 export { EventsApi } from './events.js';
 export type {
   EventStreamHandle,

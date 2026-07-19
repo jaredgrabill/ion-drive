@@ -39,6 +39,7 @@
  * it uses the global `fetch`.
  */
 
+import { AuthApi } from './auth.js';
 import { EventsApi } from './events.js';
 import { QueryBuilder } from './query-builder.js';
 import type {
@@ -58,6 +59,9 @@ export class IonDriveClient {
   /** Realtime event streaming over SSE (Phase 12): `ion.events.stream(...)`. */
   readonly events: EventsApi;
 
+  /** Minimal auth surface: `ion.auth.signInAnonymously()` (guest sign-in). */
+  readonly auth: AuthApi;
+
   private readonly baseUrl: string;
   private readonly apiKey?: string;
   private readonly fetchImpl: typeof fetch;
@@ -75,14 +79,16 @@ export class IonDriveClient {
       );
     }
     this.fetchImpl = f.bind(globalThis);
-    this.events = new EventsApi({
+    const transport = {
       baseUrl: this.baseUrl,
       fetchImpl: this.fetchImpl,
       headers: () => ({
         ...this.extraHeaders,
         ...(this.apiKey ? { 'x-api-key': this.apiKey } : {}),
       }),
-    });
+    };
+    this.events = new EventsApi(transport);
+    this.auth = new AuthApi(transport);
   }
 
   /** Returns a typed accessor for one data object (e.g. `contacts`). */

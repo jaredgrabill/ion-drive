@@ -15,6 +15,11 @@ export interface AuthUser {
   email: string;
   name: string | null;
   emailVerified: boolean;
+  /**
+   * True for guest users minted by anonymous sign-in (ION_ANONYMOUS_AUTH).
+   * Optional so providers without a guest concept need not report it.
+   */
+  isAnonymous?: boolean;
 }
 
 export interface AuthSessionInfo {

@@ -99,6 +99,16 @@ const configSchema = z.object({
    */
   disableSignup: envBoolean(false),
 
+  /**
+   * Enables anonymous (guest) sign-in via Better Auth's `anonymous` plugin:
+   * `POST /api/auth/sign-in/anonymous` mints a real user (flagged
+   * `isAnonymous`) with a session and the seeded `anonymous` role, upgradeable
+   * later by signing up with a real credential (see docs/concepts/auth.md).
+   * Default OFF — letting unauthenticated visitors mint users is a security
+   * posture change, so it must be an explicit opt-in.
+   */
+  anonymousAuth: envBoolean(false),
+
   // --- Rate limiting ---
 
   /** Enable per-IP HTTP rate limiting (global bucket + stricter auth bucket). */
@@ -243,6 +253,7 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     requireAuth: process.env.ION_REQUIRE_AUTH,
     allowOpen: process.env.ION_ALLOW_OPEN,
     disableSignup: process.env.ION_DISABLE_SIGNUP,
+    anonymousAuth: process.env.ION_ANONYMOUS_AUTH,
     rateLimitEnabled: process.env.ION_RATE_LIMIT_ENABLED,
     rateLimitMax: process.env.ION_RATE_LIMIT_MAX,
     rateLimitWindowMs: process.env.ION_RATE_LIMIT_WINDOW_MS,

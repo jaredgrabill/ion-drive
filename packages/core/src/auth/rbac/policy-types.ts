@@ -18,6 +18,14 @@ export type Action = (typeof ACTIONS)[number];
 export const RESOURCE_WILDCARD = '*';
 
 /**
+ * The seeded role auto-assigned to anonymous (guest) users. Its assignments are
+ * excluded from the first-admin bootstrap accounting (see RoleManager) so a
+ * guest arriving before the first real sign-up can neither become admin nor
+ * close the bootstrap window.
+ */
+export const ANONYMOUS_ROLE_NAME = 'anonymous';
+
+/**
  * Platform (non-data-object) resources that RBAC can protect. Data objects are
  * referenced by their own name; these cover administrative surfaces.
  */
@@ -71,5 +79,12 @@ export const DEFAULT_ROLES: {
     name: 'viewer',
     description: 'Read-only access to all data objects.',
     permissions: [{ resource: RESOURCE_WILDCARD, actions: ['read'] }],
+  },
+  {
+    name: ANONYMOUS_ROLE_NAME,
+    description:
+      'Guest users created by anonymous sign-in (ION_ANONYMOUS_AUTH). Starts with no ' +
+      'grants — deliberately minimal; edit this role to allow what guests may do.',
+    permissions: [],
   },
 ];

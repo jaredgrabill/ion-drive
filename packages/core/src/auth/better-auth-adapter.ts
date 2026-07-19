@@ -16,9 +16,37 @@ import { betterAuth } from 'better-auth';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { getMigrations } from 'better-auth/db/migration';
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node';
+import { anonymous } from 'better-auth/plugins/anonymous';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { AuthProvider, ProviderSession } from './types.js';
+
+/**
+ * A user as reported by Better Auth's create hook. `isAnonymous` is true for
+ * guests minted by the anonymous plugin, so `onUserCreated` consumers can route
+ * them (anonymous role) differently from real sign-ups (first-admin bootstrap).
+ */
+export interface CreatedAuthUser {
+  id: string;
+  isAnonymous: boolean;
+}
+
+/** Config for the optional anonymous (guest) sign-in support (issue #6). */
+export interface AnonymousAuthOptions {
+  /**
+   * Domain used for the placeholder email of anonymous users
+   * (`temp-<id>@<domain>`). Defaults to the hostname of `baseURL`.
+   */
+  emailDomainName?: string;
+  /**
+   * Called when an anonymous session signs up / signs in with a real
+   * credential, **before** Better Auth deletes the anonymous user. This is the
+   * data-continuity seam: Ion Drive migrates roles and actor-stamped rows from
+   * the anonymous user id to the new user id here. Note Better Auth's model is
+   * a *new* user + migration — the user id itself is not preserved.
+   */
+  onLinkAccount?: (link: { anonymousUserId: string; newUserId: string }) => Promise<void>;
+}
 
 export interface BetterAuthProviderOptions {
   /** pg Pool used by Better Auth for its own tables. */
@@ -32,13 +60,19 @@ export interface BetterAuthProviderOptions {
   /** Base path for auth routes. Defaults to `/api/auth`. */
   basePath?: string;
   /** Called after a new user is created — used to auto-grant the first admin. */
-  onUserCreated?: (userId: string) => Promise<void>;
+  onUserCreated?: (user: CreatedAuthUser) => Promise<void>;
   /**
    * When provided and it returns true, sign-up requests are rejected with 403
    * before reaching Better Auth. Evaluated per request so the caller can gate
    * on live state (e.g. "an admin already exists").
    */
   isSignupBlocked?: () => boolean | Promise<boolean>;
+  /**
+   * Enables Better Auth's `anonymous` plugin (guest sign-in at
+   * `POST <basePath>/sign-in/anonymous`). Absent → the plugin is not mounted
+   * and the endpoint 404s (`ION_ANONYMOUS_AUTH`, default off).
+   */
+  anonymous?: AnonymousAuthOptions;
 }
 
 /**
@@ -48,6 +82,7 @@ export interface BetterAuthProviderOptions {
  */
 function createAuthInstance(options: BetterAuthProviderOptions, basePath: string) {
   const isSignupBlocked = options.isSignupBlocked;
+  const anonymousOptions = options.anonymous;
   return betterAuth({
     database: options.pool,
     secret: options.secret,
@@ -55,6 +90,25 @@ function createAuthInstance(options: BetterAuthProviderOptions, basePath: string
     basePath,
     emailAndPassword: { enabled: true, autoSignIn: true },
     trustedOrigins: options.trustedOrigins,
+    // Anonymous (guest) sign-in — config-gated (ION_ANONYMOUS_AUTH). The
+    // plugin adds `POST /sign-in/anonymous`, an `isAnonymous` column on the
+    // user table (created by the same boot migration runner as every other
+    // Better Auth table), and an after-hook that fires `onLinkAccount` when an
+    // anonymous session authenticates with a real credential — after which the
+    // plugin deletes the anonymous user (its data has been migrated by then).
+    plugins: anonymousOptions
+      ? [
+          anonymous({
+            emailDomainName: anonymousOptions.emailDomainName,
+            onLinkAccount: async ({ anonymousUser, newUser }) => {
+              await anonymousOptions.onLinkAccount?.({
+                anonymousUserId: anonymousUser.user.id,
+                newUserId: newUser.user.id,
+              });
+            },
+          }),
+        ]
+      : [],
     hooks: {
       // Signup lockout (ION_DISABLE_SIGNUP) is enforced **inside Better Auth's
       // own router** (audit V5): `ctx.path` is the endpoint better-call already
@@ -74,7 +128,11 @@ function createAuthInstance(options: BetterAuthProviderOptions, basePath: string
       user: {
         create: {
           after: async (user) => {
-            await options.onUserCreated?.(user.id);
+            // `isAnonymous` only exists on the record when the anonymous
+            // plugin minted the user; Better Auth's hook types don't carry
+            // plugin fields, hence the narrow structural read.
+            const isAnonymous = (user as { isAnonymous?: boolean | null }).isAnonymous === true;
+            await options.onUserCreated?.({ id: user.id, isAnonymous });
           },
         },
       },
@@ -149,6 +207,9 @@ export class BetterAuthProvider implements AuthProvider {
         email: result.user.email,
         name: result.user.name ?? null,
         emailVerified: Boolean(result.user.emailVerified),
+        // Set by the anonymous plugin (absent → false). Surfaced so /api/v1/me
+        // and RBAC consumers can distinguish guests from registered users.
+        isAnonymous: (result.user as { isAnonymous?: boolean | null }).isAnonymous === true,
       },
       session: {
         id: result.session.id,

@@ -8,7 +8,7 @@
 
 import { type Kysely, sql } from 'kysely';
 import type { IonRole, PermissionGrant, SystemDatabase } from '../../db/types.js';
-import { DEFAULT_ROLES } from './policy-types.js';
+import { ANONYMOUS_ROLE_NAME, DEFAULT_ROLES } from './policy-types.js';
 
 export interface RoleInput {
   name: string;
@@ -155,12 +155,10 @@ export class RoleManager {
       if (marker) return false;
 
       // No marker yet. If assignments already exist (a pre-marker deployment),
-      // record the marker but do NOT grant a second admin.
-      const countRow = await trx
-        .selectFrom('_ion_user_roles')
-        .select((eb) => eb.fn.countAll<string>().as('count'))
-        .executeTakeFirst();
-      if (Number(countRow?.count ?? 0) > 0) {
+      // record the marker but do NOT grant a second admin. Anonymous-role
+      // assignments are excluded: guests minted before the first real sign-up
+      // (ION_ANONYMOUS_AUTH) must not close the bootstrap window.
+      if ((await this.countBootstrapAssignments(trx)) > 0) {
         await this.writeBootstrapMarker(trx);
         return false;
       }
@@ -195,7 +193,7 @@ export class RoleManager {
       .where('key', '=', BOOTSTRAP_COMPLETE_KEY)
       .executeTakeFirst();
     if (marker) return true;
-    return (await this.assignmentCount()) > 0;
+    return (await this.countBootstrapAssignments(this.db)) > 0;
   }
 
   /**
@@ -210,7 +208,26 @@ export class RoleManager {
       .where('key', '=', BOOTSTRAP_COMPLETE_KEY)
       .executeTakeFirst();
     if (marker) return;
-    if ((await this.assignmentCount()) > 0) await this.writeBootstrapMarker(this.db);
+    if ((await this.countBootstrapAssignments(this.db)) > 0) {
+      await this.writeBootstrapMarker(this.db);
+    }
+  }
+
+  /**
+   * Number of role assignments that count toward first-admin bootstrap — i.e.
+   * everything except assignments of the built-in `anonymous` role. Guests
+   * minted by anonymous sign-in receive that role automatically, and treating
+   * those grants as "an admin exists" would permanently lock a fresh server
+   * out of its first admin (and, with ION_DISABLE_SIGNUP, out of signup).
+   */
+  private async countBootstrapAssignments(db: Kysely<SystemDatabase>): Promise<number> {
+    const row = await db
+      .selectFrom('_ion_user_roles')
+      .innerJoin('_ion_roles', '_ion_roles.id', '_ion_user_roles.role_id')
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .where('_ion_roles.name', '!=', ANONYMOUS_ROLE_NAME)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
   }
 
   /** Writes the durable bootstrap-complete marker (idempotent). */
