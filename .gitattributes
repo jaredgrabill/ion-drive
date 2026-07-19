@@ -1,13 +1,31 @@
-# Normalize line endings: text files are stored with LF in the repository;
-# working-tree endings follow each contributor's core.autocrlf/eol setting.
-# Added after CRLF blobs from mixed Windows/worktree development caused
-# phantom "modified" churn in git status (see ADR-021 session notes).
-* text=auto
+# Line-ending policy: LF everywhere, including Windows working trees.
+#
+# Biome formats to LF and two test suites compare committed bytes exactly
+# (the core registry-types JSON-Schema drift guard and the CLI sigstore
+# real-bundle SHA256 test), so a core.autocrlf=true checkout must not smudge
+# CRLF into the working tree. `eol=lf` overrides core.autocrlf/core.eol for
+# every contributor (issue #17; originally added after CRLF blobs caused
+# phantom "modified" churn, see ADR-021 session notes).
+* text=auto eol=lf
 
-# Files that must keep LF even on Windows checkouts (executed in Linux
-# containers / CI).
+# Explicit belt-and-braces entries for the formats Biome checks and the
+# tooling relies on being LF, so binary auto-detection can never opt one out.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
 *.sh text eol=lf
 Dockerfile text eol=lf
+
+# Byte-exact test fixtures: these MUST reach the working tree with the exact
+# committed bytes on every platform.
+packages/core/schemas/** text eol=lf
+packages/cli/src/registry/__fixtures__/** text eol=lf
 
 # Binary assets — never touch.
 *.png binary

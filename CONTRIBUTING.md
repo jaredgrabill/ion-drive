@@ -20,6 +20,27 @@ pnpm dev
 - The repo is a **pnpm + Turborepo** monorepo; most commands fan out to every
   package.
 
+### Windows checkouts
+
+`.gitattributes` forces **LF line endings in the working tree on every
+platform** (overriding `core.autocrlf`), so a fresh clone just works. This
+matters here: Biome formats to LF (a CRLF checkout produces hundreds of
+phantom `pnpm lint` diagnostics), and two test suites compare committed bytes
+exactly (the core registry-types JSON-Schema drift guard and the CLI sigstore
+real-bundle SHA256 test), which CRLF-smudged fixtures break.
+
+If you have an **existing clone** made before the `eol=lf` rules (symptom:
+`pnpm lint` reports CRLF formatting errors on files you never touched),
+re-clone, or refresh the working tree in place:
+
+```bash
+git config core.autocrlf false
+git rm --cached -r .   # drop the smudged index entries (keeps your files)
+git reset --hard       # re-checkout everything through the eol=lf rules
+```
+
+(`git reset --hard` discards uncommitted changes — commit or stash first.)
+
 ## Repository layout
 
 | Package | What it is |
