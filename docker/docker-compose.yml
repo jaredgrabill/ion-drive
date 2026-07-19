@@ -12,7 +12,11 @@ services:
     container_name: ion-drive-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      # Host port is overridable for machines that already run a Postgres on
+      # 5432: `ION_PG_PORT=55432 docker compose -f docker/docker-compose.yml up -d`
+      # (or put ION_PG_PORT in docker/.env). Keep ION_DATABASE_URL in the repo
+      # root .env pointing at the same port.
+      - "${ION_PG_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ion
       POSTGRES_PASSWORD: ion

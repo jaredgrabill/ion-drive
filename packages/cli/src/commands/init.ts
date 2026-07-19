@@ -17,7 +17,7 @@ import {
   readConfig,
   writeConfig,
 } from '../config.js';
-import { scaffoldProject } from '../project-scaffold.js';
+import { DEFAULT_PG_PORT, detectPgPort, scaffoldProject } from '../project-scaffold.js';
 import { reportStarter, writeStarter } from '../scaffold.js';
 import { banner, box, c, log, sym } from '../ui.js';
 import { warnOnVersionSkew } from '../version-check.js';
@@ -49,10 +49,19 @@ export async function initCommand(
   );
   log.raw();
 
-  const result = scaffoldProject(dir);
+  // A busy 5432 (native Postgres, another compose stack) would fail the very
+  // first `docker compose up` — probe and scaffold a free host port instead.
+  const pgPort = await detectPgPort();
+
+  const result = scaffoldProject(dir, { pgPort });
   for (const path of result.created) log.raw(`  ${sym.check} ${c.cyan(path)}`);
   if (result.skipped.length > 0) {
     log.dim(`  ${sym.dot} kept existing: ${result.skipped.join(', ')}`);
+  }
+  if (pgPort !== DEFAULT_PG_PORT && result.created.includes('.env')) {
+    log.warn(
+      `Port ${DEFAULT_PG_PORT} is in use on this machine — the compose Postgres will publish on ${c.cyan(String(pgPort))} instead (ION_PG_PORT in .env; change that one line to move it).`,
+    );
   }
 
   // The CLI's own config: add/remove/list target the local dev server.
