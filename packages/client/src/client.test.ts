@@ -95,6 +95,53 @@ describe('IonDriveClient — fluent reads', () => {
     await expect(many.from('contacts').select().single()).rejects.toMatchObject({ status: 400 });
   });
 
+  it('aggregate() hits /aggregate with fn/field plus the chained conditions', async () => {
+    const { fetch, calls } = fakeFetch({
+      json: { data: { fn: 'avg', field: 'damage_dealt', value: 1234.5, filteredCount: 812 } },
+    });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+
+    const result = await ion
+      .from('players')
+      .query()
+      .gte('match_count', 10)
+      .search('clan')
+      .aggregate('avg', 'damage_dealt');
+
+    expect(result).toEqual({ fn: 'avg', field: 'damage_dealt', value: 1234.5, filteredCount: 812 });
+    const call = calls[0];
+    expect(call?.url.startsWith('http://x:3000/api/v1/data/players/aggregate?')).toBe(true);
+    const qs = new URLSearchParams(call?.url.split('?')[1]);
+    expect(qs.get('fn')).toBe('avg');
+    expect(qs.get('field')).toBe('damage_dealt');
+    expect(qs.get('match_count[gte]')).toBe('10');
+    expect(qs.get('search')).toBe('clan');
+  });
+
+  it('aggregate() omits field for a bare count', async () => {
+    const { fetch, calls } = fakeFetch({
+      json: { data: { fn: 'count', field: null, value: 3, filteredCount: 3 } },
+    });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+    const result = await ion.from('players').query().aggregate('count');
+    expect(result.filteredCount).toBe(3);
+    const qs = new URLSearchParams(calls[0]?.url.split('?')[1]);
+    expect(qs.get('fn')).toBe('count');
+    expect(qs.has('field')).toBe(false);
+  });
+
+  it('count() returns the filtered count (the rank-pattern building block)', async () => {
+    const { fetch, calls } = fakeFetch({
+      json: { data: { fn: 'count', field: null, value: 1237, filteredCount: 1237 } },
+    });
+    const ion = new IonDriveClient({ baseUrl: 'http://x:3000', fetch });
+    const rank = (await ion.from('players').query().gt('wins', 42).count()) + 1;
+    expect(rank).toBe(1238);
+    const qs = new URLSearchParams(calls[0]?.url.split('?')[1]);
+    expect(qs.get('wins[gt]')).toBe('42');
+    expect(qs.get('fn')).toBe('count');
+  });
+
   it('maybeSingle() returns null for none and throws for multiple', async () => {
     const none = new IonDriveClient({
       baseUrl: 'http://x:3000',

@@ -24,6 +24,12 @@ type Query {
     page: Int
     pageSize: Int
   ): ContactsListResult!
+  contacts_aggregate(
+    fn: AggregateFunction!      # count | sum | avg | min | max
+    field: String               # required for sum/avg/min/max (numeric fields)
+    filter: [FilterInput!]
+    search: String
+  ): AggregateResult!           # { fn field value filteredCount }
   contacts_by_id(id: ID!): Contacts
 }
 
@@ -143,6 +149,28 @@ query {
   `in`, `nin`, `is_null`, `is_not_null`).
 - `sort: [SortInput!]` — each `{ field, direction }` with direction `asc`/`desc`.
 - `page` / `pageSize` — pagination (pageSize is clamped to 100 server-side).
+
+### Aggregates
+
+`<object>_aggregate` computes a single `count`/`sum`/`avg`/`min`/`max` over the
+rows matching the same `filter`/`search` conditions as the list query:
+
+```graphql
+query {
+  players_aggregate(
+    fn: avg
+    field: "damage_dealt"
+    filter: [{ field: "match_count", operator: gte, value: 10 }]
+  ) {
+    value          # null when no rows matched
+    filteredCount  # the matching-row count (= the list query's totalCount)
+  }
+}
+```
+
+`count` needs no `field`; the others require a numeric field. See the
+[Leaderboards & aggregates guide](querying.md#leaderboards--aggregates) for
+the rank/percentile patterns this enables.
 
 ## Mutations
 

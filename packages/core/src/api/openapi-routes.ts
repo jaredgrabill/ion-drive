@@ -203,6 +203,35 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
       },
     };
 
+    // Aggregate (issue #13)
+    paths[`/api/v1/data/${obj.name}/aggregate`] = {
+      get: {
+        summary: `Aggregate ${obj.displayName}`,
+        operationId: `aggregate${schemaName}`,
+        tags: [tag],
+        description:
+          'Computes a single count/sum/avg/min/max over the rows matching the same filter/search conditions as the list endpoint. Rank pattern: filter on the score being beaten and read filteredCount + 1 (equivalently, the list endpoint pagination.totalCount + 1).',
+        parameters: generateAggregateParameters(obj),
+        responses: {
+          '200': {
+            description: 'The aggregate result',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { data: { $ref: '#/components/schemas/AggregateResult' } },
+                },
+              },
+            },
+          },
+          '400': {
+            description:
+              'Unknown fn, missing/unknown field, or non-numeric field for sum/avg/min/max',
+          },
+        },
+      },
+    };
+
     // Get + Update + Delete
     paths[`/api/v1/data/${obj.name}/{id}`] = {
       get: {
@@ -283,6 +312,26 @@ function generateOpenApiSpec(registry: SchemaRegistry): Record<string, unknown> 
   }
 
   // --- Shared schemas ---
+  schemas.AggregateResult = {
+    type: 'object',
+    properties: {
+      fn: { type: 'string', enum: ['count', 'sum', 'avg', 'min', 'max'] },
+      field: {
+        type: ['string', 'null'],
+        description: 'The aggregated field, or null for a bare count',
+      },
+      value: {
+        type: ['number', 'null'],
+        description: 'The aggregate value; null when no rows matched (sum/avg/min/max)',
+      },
+      filteredCount: {
+        type: 'integer',
+        description:
+          'Rows matching the filters + search — the same number the list endpoint reports as pagination.totalCount',
+      },
+    },
+  };
+
   schemas.PaginationMeta = {
     type: 'object',
     properties: {
@@ -669,7 +718,14 @@ function generateListParameters(obj: DataObjectDefinition): Record<string, unkno
     },
   ];
 
-  // Add filter params for each non-system field
+  params.push(...generateFilterParameters(obj));
+
+  return params;
+}
+
+/** The per-field `field[op]=value` filter parameters (shared by list + aggregate). */
+function generateFilterParameters(obj: DataObjectDefinition): Record<string, unknown>[] {
+  const params: Record<string, unknown>[] = [];
   for (const field of obj.fields) {
     if (field.isSystem) continue;
     params.push({
@@ -680,8 +736,49 @@ function generateListParameters(obj: DataObjectDefinition): Record<string, unkno
       description: `Filter by ${field.displayName}. Use field[op]=value; operators (case-insensitive): eq, neq, gt, gte, lt, lte, like, ilike, in, nin, is_null, is_not_null.`,
     });
   }
-
   return params;
+}
+
+/**
+ * Parameters of the aggregate endpoint (issue #13): `fn`/`field` plus the same
+ * search + filter grammar as the list endpoint (sort/pagination don't apply).
+ */
+function generateAggregateParameters(obj: DataObjectDefinition): Record<string, unknown>[] {
+  const numericFields = obj.fields
+    .filter((f) => !f.isSystem && isNumericFieldType(f.columnType))
+    .map((f) => f.name);
+  return [
+    {
+      name: 'fn',
+      in: 'query',
+      required: true,
+      schema: { type: 'string', enum: ['count', 'sum', 'avg', 'min', 'max'] },
+      description:
+        'The aggregate function. count needs no field; the rest require a numeric field.',
+    },
+    {
+      name: 'field',
+      in: 'query',
+      schema: { type: 'string' },
+      description:
+        numericFields.length > 0
+          ? `Field to aggregate (required for sum/avg/min/max). Numeric fields: ${numericFields.join(', ')}.`
+          : 'Field to aggregate (required for sum/avg/min/max; this object has no numeric fields).',
+    },
+    {
+      name: 'search',
+      in: 'query',
+      schema: { type: 'string' },
+      description: 'Free-text search across all text-like columns (case-insensitive). Alias: q.',
+    },
+    ...generateFilterParameters(obj),
+  ];
+}
+
+/** Whether a column type is aggregatable by sum/avg/min/max (mirrors DataService). */
+function isNumericFieldType(columnType: string): boolean {
+  const category = COLUMN_TYPES[columnType as ColumnTypeName]?.category;
+  return category === 'number' || columnType === 'rating' || columnType === 'auto_increment';
 }
 
 /**

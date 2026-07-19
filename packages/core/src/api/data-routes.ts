@@ -7,6 +7,7 @@
  * resolve the target object from the Schema Registry on each request:
  *
  *   GET    /api/v1/data/:object          — List with filtering, sorting, pagination
+ *   GET    /api/v1/data/:object/aggregate — count/sum/avg/min/max over the filtered rows
  *   POST   /api/v1/data/:object          — Create
  *   POST   /api/v1/data/:object/bulk     — Bulk create
  *   DELETE /api/v1/data/:object/bulk     — Bulk delete
@@ -26,7 +27,7 @@
 import type { FastifyInstance, FastifyPluginCallback, FastifyReply } from 'fastify';
 import type { DataService } from '../data/data-service.js';
 import { DataServiceError } from '../data/data-service.js';
-import { parseQueryParams } from '../data/query-parser.js';
+import { parseAggregateParams, parseQueryParams } from '../data/query-parser.js';
 import type { SchemaRegistry } from '../schema/schema-registry.js';
 import type { DataObjectDefinition } from '../schema/types.js';
 
@@ -70,6 +71,7 @@ export function registerDataRoutes(options: DataRoutesOptions): FastifyPluginCal
           displayName: obj.displayName,
           endpoints: {
             list: `GET /api/v1/data/${obj.name}`,
+            aggregate: `GET /api/v1/data/${obj.name}/aggregate`,
             get: `GET /api/v1/data/${obj.name}/:id`,
             create: `POST /api/v1/data/${obj.name}`,
             update: `PATCH /api/v1/data/${obj.name}/:id`,
@@ -92,6 +94,30 @@ export function registerDataRoutes(options: DataRoutesOptions): FastifyPluginCal
       try {
         const queryOptions = parseQueryParams(request.query as Record<string, unknown>);
         return await dataService.list(obj.name, queryOptions);
+      } catch (err) {
+        return handleError(err, reply);
+      }
+    });
+
+    // --- AGGREGATE (issue #13) ---
+    // Registered before `/:object/:id`; the static `aggregate` segment wins,
+    // like `/bulk`. Same filter/search grammar (and RBAC read permission) as
+    // the list endpoint; `fn`/`field` address the aggregate itself.
+    fastify.get<{ Params: { object: string } }>('/:object/aggregate', async (request, reply) => {
+      const obj = resolveObject(request.params.object, reply);
+      if (!obj) return reply;
+      try {
+        const { fn, field, options } = parseAggregateParams(
+          request.query as Record<string, unknown>,
+        );
+        if (!fn) {
+          return reply.code(400).send({
+            error: 'Validation Error',
+            message: 'Missing required query parameter "fn" (one of: count, sum, avg, min, max)',
+          });
+        }
+        const result = await dataService.aggregate(obj.name, fn, field, options);
+        return { data: result };
       } catch (err) {
         return handleError(err, reply);
       }

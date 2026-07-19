@@ -32,13 +32,17 @@ import {
 } from '../schema/types.js';
 import { DataServiceError, translatePgError } from './errors.js';
 import { type RelationKey, findRelationKey, listRelationKeys } from './relation-keys.js';
-import type {
-  BulkResult,
-  FilterCondition,
-  PaginationMeta,
-  QueryOptions,
-  QueryResult,
-  SingleResult,
+import {
+  AGGREGATE_FUNCTIONS,
+  type AggregateFunction,
+  type AggregateOptions,
+  type AggregateResult,
+  type BulkResult,
+  type FilterCondition,
+  type PaginationMeta,
+  type QueryOptions,
+  type QueryResult,
+  type SingleResult,
 } from './types.js';
 
 /** Column-type categories whose values are worth matching in a free-text search. */
@@ -133,6 +137,83 @@ export class DataService {
     };
 
     return { data: rows as Record<string, unknown>[], pagination };
+  }
+
+  /**
+   * Computes a single aggregate (`count`/`sum`/`avg`/`min`/`max`) over the rows
+   * matching the same filter + search conditions as {@link list} — one shared
+   * `applyConditions` pipeline, so an aggregate always agrees with the list
+   * endpoint's `pagination.totalCount` for the same query (issue #13).
+   *
+   * - `count` needs no field; with one it counts the field's non-null values.
+   * - `sum`/`avg`/`min`/`max` require a numeric field (400 otherwise).
+   * - One fn per call — a scalar in, a scalar out. Batching several fns was
+   *   considered and skipped: it complicates every surface's response shape
+   *   for a saving of one indexed query.
+   *
+   * The `filteredCount` in the result is always the matching-row count, so
+   * `avg` callers get their denominator (and rank/percentile callers their
+   * numerator) without a second request.
+   */
+  async aggregate(
+    objectName: string,
+    fn: string,
+    field: string | undefined,
+    options: AggregateOptions = {},
+  ): Promise<AggregateResult> {
+    const tableName = this.resolveTable(objectName);
+
+    if (!(AGGREGATE_FUNCTIONS as readonly string[]).includes(fn)) {
+      throw new DataServiceError(
+        `Unknown aggregate function "${fn}" — expected one of: ${AGGREGATE_FUNCTIONS.join(', ')}`,
+        'INVALID_AGGREGATE_FUNCTION',
+        400,
+      );
+    }
+    const aggregateFn = fn as AggregateFunction;
+
+    for (const filter of options.filters ?? []) this.validateField(objectName, filter.field);
+
+    // Resolve + validate the aggregated field. count works bare; the numeric
+    // fns demand a numeric column (min/max over dates/text is deliberately out
+    // of scope for the wedge — filtered sort+limit covers those reads).
+    let fieldDef: FieldDefinition | undefined;
+    if (field !== undefined) {
+      fieldDef = this.resolveFieldDef(objectName, field);
+    } else if (aggregateFn !== 'count') {
+      throw new DataServiceError(
+        `Aggregate function "${aggregateFn}" requires a "field" parameter naming a numeric field`,
+        'AGGREGATE_FIELD_REQUIRED',
+        400,
+      );
+    }
+    if (fieldDef && aggregateFn !== 'count' && !isNumericColumn(fieldDef.columnType)) {
+      throw new DataServiceError(
+        `Field "${fieldDef.name}" on object "${objectName}" is not numeric (${fieldDef.columnType}) — "${aggregateFn}" requires a numeric field`,
+        'AGGREGATE_FIELD_NOT_NUMERIC',
+        400,
+      );
+    }
+
+    const column = fieldDef?.columnName;
+    const query = this.applyConditions(
+      this.db.selectFrom(tableName).select(
+        // biome-ignore lint/suspicious/noExplicitAny: Kysely expression builder is dynamic here
+        (eb: any) => {
+          const selections = [eb.fn.countAll().as('total')];
+          if (column) selections.push(eb.fn[aggregateFn](column).as('value'));
+          return selections;
+        },
+      ),
+      objectName,
+      options,
+    );
+
+    const row = (await query.executeTakeFirst()) as { total: unknown; value?: unknown } | undefined;
+    const filteredCount = Number(row?.total ?? 0);
+    const value = column ? toNumericValue(row?.value) : filteredCount;
+
+    return { fn: aggregateFn, field: fieldDef?.name ?? null, value, filteredCount };
   }
 
   /**
@@ -627,6 +708,24 @@ export class DataService {
   }
 
   /**
+   * Resolves a field definition by API name or physical column name, throwing
+   * the same UNKNOWN_FIELD error shape as {@link validateField}.
+   */
+  private resolveFieldDef(objectName: string, fieldName: string): FieldDefinition {
+    const fields = this.registry.getFields(objectName);
+    const def =
+      fields.find((f) => f.name === fieldName) ?? fields.find((f) => f.columnName === fieldName);
+    if (!def) {
+      throw new DataServiceError(
+        `Unknown field "${fieldName}" on object "${objectName}"`,
+        'UNKNOWN_FIELD',
+        400,
+      );
+    }
+    return def;
+  }
+
+  /**
    * Sanitizes input data by filtering to only known, writable columns.
    * Strips system fields (id, created_at, updated_at) from input.
    */
@@ -1041,6 +1140,29 @@ function groupLinkedRecords(
 
 /** Numeric column types where min/max bound the value (not the length). */
 const NUMERIC_CATEGORIES = new Set(['number']);
+
+/**
+ * Whether a column type holds numbers an aggregate can sum/average. Mirrors
+ * the constraint layer's numeric detection, plus `auto_increment` (a SERIAL —
+ * min/max over it is a legitimate read).
+ */
+function isNumericColumn(columnType: string): boolean {
+  const category = COLUMN_TYPES[columnType as keyof typeof COLUMN_TYPES]?.category;
+  return (
+    NUMERIC_CATEGORIES.has(category) || columnType === 'rating' || columnType === 'auto_increment'
+  );
+}
+
+/**
+ * Coerces an aggregate value from the driver to a JSON number. Postgres
+ * returns NUMERIC/BIGINT aggregates as strings (sum/avg always, min/max for
+ * those column types); `null` means no rows matched.
+ */
+function toNumericValue(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const num = Number(raw);
+  return Number.isNaN(num) ? null : num;
+}
 
 /**
  * Checks one value against a field's constraints. Returns a human-readable

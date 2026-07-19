@@ -35,6 +35,8 @@
 import { EventsApi } from './events.js';
 import { QueryBuilder } from './query-builder.js';
 import type {
+  AggregateFunction,
+  AggregateResult,
   BulkResult,
   IonDriveClientOptions,
   QueryResult,
@@ -308,6 +310,34 @@ export class ResourceQuery<T extends Record_ = Record_>
       throw new IonDriveError('single(): expected exactly one row, got multiple', 400);
     }
     return result.data[0] as T;
+  }
+
+  /**
+   * Aggregate terminal (issue #13): computes one `count`/`sum`/`avg`/`min`/
+   * `max` over the rows matching the chained filters + search. `count` needs
+   * no field; the value fns require a numeric field. The result also carries
+   * `filteredCount` (the matching-row count).
+   *
+   *   const { value } = await ion.from('players').query().aggregate('avg', 'damage_dealt');
+   *   // Rank pattern — count the players ahead of you, add one:
+   *   const rank = (await ion.from('players').query().gt('wins', mine).aggregate('count')).filteredCount + 1;
+   */
+  async aggregate(fn: AggregateFunction, field?: string): Promise<AggregateResult> {
+    const params = this.toSearchParams();
+    params.set('fn', fn);
+    if (field !== undefined) params.set('field', field);
+    const res = await this.client.request<{ data: AggregateResult }>(
+      'GET',
+      `${this.basePath}/aggregate`,
+      undefined,
+      params.toString(),
+    );
+    return res.data;
+  }
+
+  /** Counts the rows matching the chained filters + search (aggregate sugar). */
+  async count(): Promise<number> {
+    return (await this.aggregate('count')).filteredCount;
   }
 
   /**

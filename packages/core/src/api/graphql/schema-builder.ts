@@ -59,6 +59,7 @@ import type { DataObjectDefinition, FieldDefinition } from '../../schema/types.j
 import type { RelationLoaderContext } from './relation-loader.js';
 import {
   makeActionResolver,
+  makeAggregateResolver,
   makeCreateResolver,
   makeDeleteResolver,
   makeGetResolver,
@@ -110,6 +111,36 @@ const SortInput = new GraphQLInputObjectType({
   fields: {
     field: { type: new GraphQLNonNull(GraphQLString) },
     direction: { type: new GraphQLNonNull(SortDirectionEnum) },
+  },
+});
+
+const AggregateFunctionEnum = new GraphQLEnumType({
+  name: 'AggregateFunction',
+  description:
+    'Aggregate functions over the filtered rows (issue #13). count needs no field; the rest require a numeric field.',
+  values: { count: {}, sum: {}, avg: {}, min: {}, max: {} },
+});
+
+const AggregateResult = new GraphQLObjectType({
+  name: 'AggregateResult',
+  description:
+    'A single aggregate over the rows matching the same filter/search conditions as the list query.',
+  fields: {
+    fn: { type: new GraphQLNonNull(AggregateFunctionEnum) },
+    field: {
+      type: GraphQLString,
+      description: 'The aggregated field, or null for a bare count.',
+    },
+    value: {
+      type: GraphQLFloat,
+      description:
+        'The aggregate value; null when no rows matched (sum/avg/min/max over an empty set).',
+    },
+    filteredCount: {
+      type: new GraphQLNonNull(GraphQLInt),
+      description:
+        'Rows matching the conditions — the same number the list query reports as pagination.totalCount.',
+    },
   },
 });
 
@@ -425,6 +456,25 @@ export function buildGraphQLSchema(
       },
       resolve: makeListResolver(dataService, obj.name),
     } as GraphQLFieldConfig<unknown, unknown>;
+
+    queryFields[`${obj.name}_aggregate`] = {
+      type: new GraphQLNonNull(AggregateResult),
+      description: `Aggregate over ${obj.displayName} records matching the same filter/search conditions as the list query. Rank pattern: filter on the score being beaten and read filteredCount + 1.`,
+      args: {
+        fn: { type: new GraphQLNonNull(AggregateFunctionEnum) },
+        field: {
+          type: GraphQLString,
+          description:
+            'The field to aggregate — required for sum/avg/min/max (numeric fields only).',
+        },
+        filter: { type: new GraphQLList(new GraphQLNonNull(FilterInput)) },
+        search: {
+          type: GraphQLString,
+          description: 'Free-text search across text-like columns.',
+        },
+      },
+      resolve: makeAggregateResolver(dataService, obj.name),
+    };
 
     queryFields[`${obj.name}_by_id`] = {
       type: objectType,

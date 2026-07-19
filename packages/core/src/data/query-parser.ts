@@ -18,6 +18,7 @@
  */
 
 import type {
+  AggregateOptions,
   FilterCondition,
   FilterOperator,
   PaginationOptions,
@@ -87,6 +88,38 @@ export function parseQueryParams(query: Record<string, unknown>): QueryOptions {
     pagination: parsePagination(query),
     expand: parseExpand(query),
     select: parseSelect(query),
+  };
+}
+
+/** The aggregate endpoint's own query keys — not filters there. */
+const AGGREGATE_KEYS = new Set(['fn', 'field']);
+
+/**
+ * Parses the query string of the aggregate endpoint
+ * (`GET /api/v1/data/:object/aggregate?fn=avg&field=damage&…`).
+ *
+ * `fn` and `field` address the aggregate itself; everything else is the same
+ * filter + search grammar as the list endpoint (sort/pagination keys are
+ * accepted but meaningless for a scalar result, so they are dropped). A column
+ * literally named `fn` or `field` can still be filtered with explicit operator
+ * syntax (`fn[eq]=…`) — only the bare keys are reserved here.
+ */
+export function parseAggregateParams(query: Record<string, unknown>): {
+  fn?: string;
+  field?: string;
+  options: AggregateOptions;
+} {
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (!AGGREGATE_KEYS.has(key)) rest[key] = value;
+  }
+  const fn = typeof query.fn === 'string' && query.fn.trim() !== '' ? query.fn.trim() : undefined;
+  const field =
+    typeof query.field === 'string' && query.field.trim() !== '' ? query.field.trim() : undefined;
+  return {
+    fn,
+    field,
+    options: { filters: parseFilters(rest), search: parseSearch(rest) },
   };
 }
 

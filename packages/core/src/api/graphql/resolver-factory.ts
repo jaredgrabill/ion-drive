@@ -58,6 +58,31 @@ export function makeListResolver(
     });
 }
 
+/** Arguments accepted by a generated aggregate query (issue #13). */
+interface AggregateArgs {
+  fn: string;
+  field?: string | null;
+  filter?: FilterCondition[];
+  search?: string;
+}
+
+/**
+ * Aggregate resolver — a single count/sum/avg/min/max over the rows matching
+ * the same filter/search conditions as the list query. Field validation
+ * (numeric-only for the value fns) lives in `DataService.aggregate`, shared
+ * with REST and MCP.
+ */
+export function makeAggregateResolver(
+  dataService: DataService,
+  objectName: string,
+): GraphQLFieldResolver<unknown, unknown, AggregateArgs> {
+  return async (_source, args) =>
+    dataService.aggregate(objectName, args.fn, args.field ?? undefined, {
+      filters: args.filter,
+      search: args.search,
+    });
+}
+
 /**
  * Single-record resolver — returns the row (column-keyed) or null.
  */

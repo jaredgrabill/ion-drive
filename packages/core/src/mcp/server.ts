@@ -556,6 +556,66 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   );
 
   server.tool(
+    'aggregate_data',
+    'Compute a single aggregate (count, sum, avg, min, max) over the records matching the same filters/search as query_data. count needs no field; sum/avg/min/max require a numeric field. The result always includes filteredCount (the matching-row count). Rank pattern: filter on the score being beaten (e.g. wins gt <mine>) with fn=count — rank is filteredCount + 1.',
+    {
+      object_name: z.string().describe('Name of the data object to aggregate'),
+      fn: z
+        .enum(['count', 'sum', 'avg', 'min', 'max'])
+        .describe('The aggregate function to compute'),
+      field: z
+        .string()
+        .optional()
+        .describe(
+          'Field to aggregate — required for sum/avg/min/max (numeric fields only); optional for count (counts non-null values of the field)',
+        ),
+      search: z
+        .string()
+        .optional()
+        .describe('Free-text search across the object text-like columns (case-insensitive)'),
+      filters: z
+        .array(
+          z.object({
+            field: z.string(),
+            operator: z.enum([
+              'eq',
+              'neq',
+              'gt',
+              'gte',
+              'lt',
+              'lte',
+              'like',
+              'ilike',
+              'in',
+              'nin',
+              'is_null',
+              'is_not_null',
+            ]),
+            value: z.unknown(),
+          }),
+        )
+        .optional()
+        .describe('Filter conditions (same shape as query_data)'),
+    },
+    async ({ object_name, fn, field, search, filters }) => {
+      try {
+        const result = await dataService.aggregate(object_name, fn, field, {
+          filters: filters as NonNullable<Parameters<typeof dataService.aggregate>[3]>['filters'],
+          search,
+        });
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
     'get_record',
     'Get a single record by its ID, optionally expanding related records.',
     {
