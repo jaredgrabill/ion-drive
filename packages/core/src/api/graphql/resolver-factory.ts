@@ -13,6 +13,44 @@ import { ActionError, type ActionExecutor } from '../../blocks/action-executor.j
 import type { DataService } from '../../data/data-service.js';
 import type { FilterCondition, SortOption } from '../../data/types.js';
 
+/**
+ * Anonymous-access guard for generated resolvers (issue #8). Present only when
+ * RBAC enforcement is on: query resolvers then require the anonymous (null)
+ * principal to hold a public read grant on the object, and mutation resolvers
+ * reject anonymous callers outright. Authenticated principals pass — the
+ * transport-level gate (`read` on `data`) already covered them.
+ */
+export interface AnonReadGuard {
+  engine: PermissionEngine;
+}
+
+/** Extracts the request principal from the yoga context (null = anonymous). */
+function contextAuth(context: unknown): AuthPrincipal | null {
+  return (context as AuthCarryingContext | null)?.req?.auth ?? null;
+}
+
+/**
+ * Throws unless an anonymous caller holds a public read grant on the object.
+ * No-op without a guard (enforcement off) or for authenticated callers.
+ */
+export async function assertAnonymousCanRead(
+  guard: AnonReadGuard | undefined,
+  context: unknown,
+  objectName: string,
+): Promise<void> {
+  if (!guard || contextAuth(context)) return;
+  if (!(await guard.engine.can(null, 'read', objectName))) {
+    throw new GraphQLError(`Missing permission: read on "${objectName}"`);
+  }
+}
+
+/** Throws for anonymous callers when enforcement is on — writes need a credential. */
+function assertNotAnonymous(guard: AnonReadGuard | undefined, context: unknown): void {
+  if (guard && !contextAuth(context)) {
+    throw new GraphQLError('Authentication required');
+  }
+}
+
 /** Arguments accepted by a generated list query. */
 interface ListArgs {
   filter?: FilterCondition[];
@@ -50,9 +88,11 @@ interface UpsertArgs {
 export function makeListResolver(
   dataService: DataService,
   objectName: string,
+  guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, ListArgs> {
-  return async (_source, args) =>
-    dataService.list(objectName, {
+  return async (_source, args, context) => {
+    await assertAnonymousCanRead(guard, context, objectName);
+    return dataService.list(objectName, {
       filters: args.filter,
       search: args.search,
       sort: args.sort,
@@ -63,6 +103,7 @@ export function makeListResolver(
         offset: args.offset,
       },
     });
+  };
 }
 
 /** Arguments accepted by a generated aggregate query (issue #13). */
@@ -82,12 +123,15 @@ interface AggregateArgs {
 export function makeAggregateResolver(
   dataService: DataService,
   objectName: string,
+  guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, AggregateArgs> {
-  return async (_source, args) =>
-    dataService.aggregate(objectName, args.fn, args.field ?? undefined, {
+  return async (_source, args, context) => {
+    await assertAnonymousCanRead(guard, context, objectName);
+    return dataService.aggregate(objectName, args.fn, args.field ?? undefined, {
       filters: args.filter,
       search: args.search,
     });
+  };
 }
 
 /**
@@ -96,8 +140,10 @@ export function makeAggregateResolver(
 export function makeGetResolver(
   dataService: DataService,
   objectName: string,
+  guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, IdArg> {
-  return async (_source, args) => {
+  return async (_source, args, context) => {
+    await assertAnonymousCanRead(guard, context, objectName);
     const result = await dataService.getById(objectName, args.id);
     return result?.data ?? null;
   };
@@ -106,8 +152,10 @@ export function makeGetResolver(
 export function makeCreateResolver(
   dataService: DataService,
   objectName: string,
+  guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, CreateArgs> {
-  return async (_source, args) => {
+  return async (_source, args, context) => {
+    assertNotAnonymous(guard, context);
     const result = await dataService.create(objectName, args.input);
     return result.data;
   };
@@ -123,8 +171,10 @@ export function makeCreateResolver(
 export function makeUpdateResolver(
   dataService: DataService,
   objectName: string,
+  guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, UpdateArgs> {
-  return async (_source, args) => {
+  return async (_source, args, context) => {
+    assertNotAnonymous(guard, context);
     const data: Record<string, unknown> = { ...(args.input ?? {}) };
     for (const [field, amount] of Object.entries(args.increment ?? {})) {
       if (amount == null) continue;
@@ -146,19 +196,29 @@ export function makeUpdateResolver(
 /**
  * Upsert resolver (issue #9) — `INSERT … ON CONFLICT (onConflict) DO UPDATE`
  * through the shared DataService path; resolves to `{ data, created }`.
+ * Anonymous callers are rejected like every other write (issue #8) — an
+ * anon-guarded create must not be reachable through upsert.
  */
 export function makeUpsertResolver(
   dataService: DataService,
   objectName: string,
+  guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, UpsertArgs> {
-  return async (_source, args) => dataService.upsert(objectName, args.input, args.onConflict);
+  return async (_source, args, context) => {
+    assertNotAnonymous(guard, context);
+    return dataService.upsert(objectName, args.input, args.onConflict);
+  };
 }
 
 export function makeDeleteResolver(
   dataService: DataService,
   objectName: string,
+  guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, IdArg> {
-  return async (_source, args) => dataService.delete(objectName, args.id);
+  return async (_source, args, context) => {
+    assertNotAnonymous(guard, context);
+    return dataService.delete(objectName, args.id);
+  };
 }
 
 interface LinkArgs {
@@ -223,9 +283,12 @@ export function makeLinkResolver(
   objectName: string,
   relKey: string,
   mode: 'link' | 'unlink',
+  guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, LinkArgs> {
-  return async (_source, args) =>
-    mode === 'link'
+  return async (_source, args, context) => {
+    assertNotAnonymous(guard, context);
+    return mode === 'link'
       ? (await dataService.addLinks(objectName, args.id, relKey, args.ids)).added
       : (await dataService.removeLinks(objectName, args.id, relKey, args.ids)).removed;
+  };
 }

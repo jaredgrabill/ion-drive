@@ -74,6 +74,9 @@ export {
   DEFAULT_ROLES,
   ANONYMOUS_ROLE_NAME,
   migrateAnonymousUser,
+  PUBLIC_ROLE_NAME,
+  RoleValidationError,
+  validatePublicRoleGrants,
 } from './auth/index.js';
 export type {
   AuthProvider,

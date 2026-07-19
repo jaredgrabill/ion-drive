@@ -237,6 +237,12 @@ mutation {
 - All three data surfaces (REST, GraphQL, MCP) run through the same
   `DataService`, so behaviour — coercion, search semantics, pagination — is
   identical across them.
+- Under `ION_REQUIRE_AUTH=true`, authenticated access requires `read` on the
+  `data` platform resource. Anonymous (no-credential) requests are honored
+  only for objects granted to the built-in `public` role: the granted list /
+  `_by_id` / `_aggregate` queries work, ungranted objects and relation fields
+  error, and every mutation answers "Authentication required" — see
+  [Public read access](../concepts/public-read.md).
 - The engine is graphql-js + graphql-yoga (not Pothos/Apollo): the schema shape
   is only known at runtime, so a reflected schema is a better fit than a
   compile-time builder.
