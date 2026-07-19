@@ -22,13 +22,19 @@ import { registerStatsRoutes } from './api/stats-routes.js';
 import { registerTaskRoutes } from './api/task-routes.js';
 import { registerWebhookRoutes } from './api/webhook-admin-routes.js';
 import {
+  ANONYMOUS_ROLE_NAME,
   ApiKeyManager,
   BetterAuthProvider,
   PermissionEngine,
   RoleManager,
+  createAnonymousCleanupHandler,
+  deriveEmailDomain,
+  ensureAnonymousCleanupTask,
   installRbacEnforcement,
   installSessionMiddleware,
+  migrateAnonymousUser,
 } from './auth/index.js';
+import type { AnonymousAuthOptions } from './auth/index.js';
 import { ACTION_REGISTRY, ActionExecutor, ActionRegistry, BlockEngine } from './blocks/index.js';
 import { CACHE_SERVICE, MemoryCache } from './cache/index.js';
 import {
@@ -195,6 +201,85 @@ function buildSignupGuard(
   // Gate on the durable "bootstrap complete" marker, not a live count, so
   // removing every role assignment can't re-open public signup (audit V4).
   return async () => roleManager.isBootstrapComplete();
+}
+
+/**
+ * Builds the user-created hook: the very first user to sign up becomes an
+ * admin, so there is always a way in without a pre-seeded account. The grant
+ * is serialized (see RoleManager.grantAdminIfFirstUser) so concurrent
+ * first-boot sign-ups can't both become admin (audit V3). Anonymous (guest)
+ * users are excluded from that bootstrap entirely — they get the seeded
+ * `anonymous` role instead, and RoleManager ignores that role when deciding
+ * whether the first admin exists.
+ */
+function buildUserCreatedHandler(
+  server: FastifyInstance,
+  roleManager: RoleManager,
+): (user: { id: string; isAnonymous: boolean }) => Promise<void> {
+  return async (user) => {
+    if (user.isAnonymous) {
+      const guestRole = await roleManager.getByName(ANONYMOUS_ROLE_NAME);
+      if (guestRole) await roleManager.assign(user.id, guestRole.id);
+      return;
+    }
+    if (await roleManager.grantAdminIfFirstUser(user.id)) {
+      server.log.info(`Granted admin role to first user ${user.id}`);
+    }
+  };
+}
+
+/**
+ * Seeds the disabled-by-default guest TTL cleanup task when anonymous auth is
+ * on (idempotent by name; admins enable/tune it like any other task).
+ */
+async function seedAnonymousCleanupTask(
+  config: IonDriveConfig,
+  taskEngine: TaskEngine,
+): Promise<void> {
+  if (!config.anonymousAuth) return;
+  await ensureAnonymousCleanupTask(taskEngine);
+}
+
+/**
+ * Builds the Better Auth `anonymous` plugin options when ION_ANONYMOUS_AUTH is
+ * on (undefined keeps the plugin unmounted and its endpoint a 404). On upgrade
+ * (guest signs up with a real credential) Better Auth creates a NEW user and
+ * deletes the guest; migrateAnonymousUser moves roles, API keys, and
+ * created_by/updated_by stamps to the new id first, so the guest's data
+ * survives the upgrade. See docs/concepts/auth.md for the semantics.
+ */
+function buildAnonymousOptions(
+  config: IonDriveConfig,
+  deps: {
+    server: FastifyInstance;
+    baseURL: string;
+    systemDb: ReturnType<typeof createSystemDb>;
+    tenantDb: ReturnType<typeof createTenantDb>;
+    roleManager: RoleManager;
+    schemaManager: SchemaManager;
+  },
+): AnonymousAuthOptions | undefined {
+  if (!config.anonymousAuth) return undefined;
+  const { server, baseURL, systemDb, tenantDb, roleManager, schemaManager } = deps;
+  return {
+    emailDomainName: deriveEmailDomain(baseURL),
+    onLinkAccount: async ({ anonymousUserId, newUserId }) => {
+      await migrateAnonymousUser(
+        {
+          systemDb,
+          tenantDb,
+          roleManager,
+          listObjects: () => schemaManager.listObjects(),
+          logger: {
+            info: (msg) => server.log.info(msg),
+            warn: (msg) => server.log.warn(msg),
+          },
+        },
+        anonymousUserId,
+        newUserId,
+      );
+    },
+  };
 }
 
 /**
@@ -461,8 +546,15 @@ export async function createServer(
     warn: (msg, extra) => server.log.warn(extra ?? {}, msg),
     error: (msg, extra) => server.log.error(extra ?? {}, msg),
   };
-  const taskEngine = new TaskEngine(systemDb, { logger: taskLogger });
+  const taskEngine = new TaskEngine(systemDb, {
+    logger: taskLogger,
+    // The anonymous-cleanup handler is registered unconditionally so a stored
+    // task definition always validates, even after ION_ANONYMOUS_AUTH is
+    // turned back off (the handler no-ops when the column doesn't exist).
+    handlers: [createAnonymousCleanupHandler({ tenantDb, systemDb })],
+  });
   await taskEngine.initialize();
+  await seedAnonymousCleanupTask(config, taskEngine);
 
   // --- Phase 6: building-blocks engine (installs domain blocks at runtime) ---
   const blockEngine = new BlockEngine(systemDb, {
@@ -500,15 +592,18 @@ export async function createServer(
     // Hardening (ION_DISABLE_SIGNUP): close public signup once the first
     // admin exists.
     isSignupBlocked: buildSignupGuard(config, roleManager),
-    // First-run bootstrap: the very first user to sign up becomes an admin,
-    // so there is always a way in without a pre-seeded account. The grant is
-    // serialized (see RoleManager.grantAdminIfFirstUser) so concurrent
-    // first-boot sign-ups can't both become admin (audit V3).
-    onUserCreated: async (userId) => {
-      if (await roleManager.grantAdminIfFirstUser(userId)) {
-        server.log.info(`Granted admin role to first user ${userId}`);
-      }
-    },
+    // First-run bootstrap + guest routing — see buildUserCreatedHandler.
+    onUserCreated: buildUserCreatedHandler(server, roleManager),
+    // Anonymous (guest) sign-in — opt-in via ION_ANONYMOUS_AUTH; undefined
+    // keeps the plugin (and its endpoint) unmounted.
+    anonymous: buildAnonymousOptions(config, {
+      server,
+      baseURL,
+      systemDb,
+      tenantDb,
+      roleManager,
+      schemaManager,
+    }),
   });
   await authProvider.initialize();
   server.log.info(`Auth provider "${authProvider.name}" initialized`);

@@ -70,6 +70,8 @@ export {
   installRbacEnforcement,
   requirePermission,
   DEFAULT_ROLES,
+  ANONYMOUS_ROLE_NAME,
+  migrateAnonymousUser,
 } from './auth/index.js';
 export type {
   AuthProvider,
@@ -77,6 +79,7 @@ export type {
   AuthUser,
   Action,
   PermissionGrant,
+  AnonymousMigrationSummary,
 } from './auth/index.js';
 
 // Config, secrets, encryption

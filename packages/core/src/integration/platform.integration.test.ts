@@ -166,6 +166,14 @@ describe('platform lifecycle (integration)', () => {
     expect(bogus.status).toBe(401);
   });
 
+  it('does not mount anonymous sign-in when ION_ANONYMOUS_AUTH is off (default)', async () => {
+    // This server booted with defaults — the Better Auth anonymous plugin is
+    // absent, so its endpoint must not exist (see the anonymous-auth suite for
+    // the flag-on lifecycle).
+    const res = await request('POST', '/api/auth/sign-in/anonymous');
+    expect(res.status).toBe(404);
+  });
+
   it('makes the first signup an admin and mints an API key', async () => {
     if (!app) throw new Error('Server not booted');
     // Raw inject so we can read the Set-Cookie of the auto-signed-in session.

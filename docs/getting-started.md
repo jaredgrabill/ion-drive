@@ -132,6 +132,14 @@ curl -H 'x-api-key: iond_…' \
 
 See the [Querying guide](api/querying.md) for the full operator list.
 
+### Guest (anonymous) users
+
+Building a play-first / try-first app? Set `ION_ANONYMOUS_AUTH=true` and
+visitors can start with zero sign-up friction — `POST
+/api/auth/sign-in/anonymous` (SDK: `ion.auth.signInAnonymously()`) mints a
+real, RBAC-governed guest user that can later upgrade to an email account and
+keep its data. See [Authentication & guest users](concepts/auth.md).
+
 ### Calling the API from scripts
 
 For anything scripted (seed scripts, CI, cron), use an **API key** — send it as
