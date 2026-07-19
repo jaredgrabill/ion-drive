@@ -73,6 +73,23 @@ export interface BulkResult {
   ids: string[];
 }
 
+/** Aggregate functions accepted by `.aggregate()` (mirrors the server). */
+export type AggregateFunction = 'count' | 'sum' | 'avg' | 'min' | 'max';
+
+/** Result of an aggregate query (`GET /api/v1/data/:object/aggregate`). */
+export interface AggregateResult {
+  fn: AggregateFunction;
+  /** The aggregated field, or null for a bare `count`. */
+  field: string | null;
+  /** The aggregate value; null when no rows matched (sum/avg/min/max). */
+  value: number | null;
+  /**
+   * Rows matching the query's filters + search — the same number a list
+   * would report as `pagination.totalCount`.
+   */
+  filteredCount: number;
+}
+
 /** Options for constructing an {@link IonDriveClient}. */
 export interface IonDriveClientOptions {
   /** Base URL of the Ion Drive server, e.g. `http://localhost:3000`. */

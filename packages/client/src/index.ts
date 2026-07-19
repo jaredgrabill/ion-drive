@@ -25,6 +25,8 @@ export type {
 } from './events.js';
 export { QueryBuilder, QueryBuilderError, query } from './query-builder.js';
 export type {
+  AggregateFunction,
+  AggregateResult,
   IonDriveClientOptions,
   FilterOperator,
   OperatorAlias,

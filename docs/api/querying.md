@@ -9,6 +9,7 @@ you in a type-safe way.
 - [Property filters & operators](#property-filters--operators)
 - [Sorting](#sorting)
 - [Pagination](#pagination)
+- [Leaderboards & aggregates](#leaderboards--aggregates)
 - [Field selection & expansion](#field-selection--expansion)
 - [The client query builder](#the-client-query-builder)
 - [GraphQL & MCP](#graphql--mcp)
@@ -140,6 +141,122 @@ GET /api/v1/data/contacts?limit=50&offset=50       # offset-based (same window)
 
 ---
 
+## Leaderboards & aggregates
+
+The query language has no group-by or window functions — deliberately. The
+standard leaderboard reads compose from two primitives you already have
+(**sort + filtered `totalCount`**) plus one small aggregate endpoint.
+
+### Top N — sort + pageSize
+
+```
+GET /api/v1/data/players?sort=-wins&pageSize=100
+```
+
+That is the leaderboard page itself (`pageSize` caps at 100; page through for
+more).
+
+### Rank — filtered totalCount
+
+`pagination.totalCount` respects filters and search, and the list query runs a
+real `COUNT(*)` under the same conditions — so a **count-where is already a
+first-class, cheap read**. A player's rank is the number of players ahead of
+them, plus one:
+
+```bash
+# "My rank" for a player with 42 wins: count players with more wins.
+curl 'http://localhost:3000/api/v1/data/players?wins[gt]=42&pageSize=1'
+# -> { "data": [ ... 1 row ... ], "pagination": { "totalCount": 1237, ... } }
+# rank = totalCount + 1 = 1238
+```
+
+`pageSize=1` keeps the payload minimal — you only want the count. Ties: with
+`wins[gt]=` equal scores share the best rank (standard competition ranking,
+"1224"); use a tie-breaker filter (e.g. `&created_at[lt]=…`) if you need total
+order.
+
+The aggregate endpoint below returns the same number without fetching any rows
+(`fn=count` → `filteredCount`), which reads more clearly:
+
+```bash
+curl 'http://localhost:3000/api/v1/data/players/aggregate?fn=count&wins[gt]=42'
+# -> { "data": { "fn": "count", "field": null, "value": 1237, "filteredCount": 1237 } }
+```
+
+### Percentile — two counts
+
+```
+percentile = 100 * (1 - countAbove / countTotal)
+```
+
+`countAbove` is the rank query above; `countTotal` is the same query without
+the filter (`fn=count` with no conditions).
+
+### Aggregates — `GET /api/v1/data/:object/aggregate`
+
+A single `count` / `sum` / `avg` / `min` / `max` over the rows matching the
+**same filter + search parameters as the list endpoint** — one condition
+pipeline, so an aggregate always agrees with `pagination.totalCount` for the
+same query.
+
+```
+GET /api/v1/data/:object/aggregate?fn=<fn>[&field=<field>][&filters…][&search=…]
+```
+
+| Parameter | Meaning |
+|:---|:---|
+| `fn` | **Required.** One of `count`, `sum`, `avg`, `min`, `max`. One fn per call. |
+| `field` | The field to aggregate. Required for `sum`/`avg`/`min`/`max` (numeric fields only — 400 otherwise). Optional for `count`: with a field it counts that field's **non-null** values. |
+| anything else | The list endpoint's filter operators and `search`/`q`, applied identically. Sort/pagination keys are ignored (a scalar has no order or pages). |
+
+```bash
+curl 'http://localhost:3000/api/v1/data/players/aggregate?fn=avg&field=damage_dealt&match_count[gte]=10'
+```
+
+```json
+{
+  "data": {
+    "fn": "avg",
+    "field": "damage_dealt",
+    "value": 1234.5,
+    "filteredCount": 812
+  }
+}
+```
+
+- `value` is `null` when no rows match (`sum`/`avg`/`min`/`max` over an empty
+  set, SQL semantics). Values are JSON numbers; astronomically large
+  `BIGINT`/`NUMERIC` results (beyond 2⁵³) lose precision.
+- `filteredCount` is always the matching-row count — `avg` callers get their
+  denominator, rank callers their numerator, in one request.
+- RBAC: same `read` permission as listing the object.
+
+**On the other surfaces** (same shape everywhere):
+
+```graphql
+{ players_aggregate(fn: avg, field: "damage_dealt",
+    filter: [{ field: "match_count", operator: gte, value: 10 }]) {
+    value filteredCount } }
+```
+
+```ts
+// Client SDK — aggregate() is a chain terminator like .single():
+const { value } = await ion.from('players').query()
+  .gte('match_count', 10)
+  .aggregate('avg', 'damage_dealt');
+
+// Rank, in one line (.count() is sugar for .aggregate('count')):
+const rank = (await ion.from('players').query().gt('wins', mine).count()) + 1;
+```
+
+MCP agents get the same capability as the `aggregate_data` tool (same
+`filters`/`search` shape as `query_data`).
+
+There is deliberately no group-by, multi-fn batching, or window/rank SQL —
+if you need those, reach for a SQL view or report endpoint of your own.
+
+---
+
 ## Field selection & expansion
 
 - `select` — comma-separated list of fields to return (projection).
@@ -253,6 +370,8 @@ await fetch(`${baseUrl}/api/v1/data/contacts?${qs}`);
 | `.expand(...rels)` / `.select(cols)` | expansion / projection |
 | **`await` / `.list()`** | execute → `{ data, pagination }` |
 | `.all()` / `.first()` / `.single()` / `.maybeSingle()` | execute → rows / one |
+| `.aggregate(fn, field?)` | execute → `{ fn, field, value, filteredCount }` |
+| `.count()` | execute → the matching-row count (number) |
 | `.toQueryString()` | the raw query string (no fetch) |
 
 ---

@@ -39,6 +39,7 @@ claude mcp add --transport http ion-drive http://localhost:3000/api/v1/mcp \
 | Tool | Description |
 |:---|:---|
 | `query_data` | List records with `search`, `filters`, `sort`, pagination, and `expand`. |
+| `aggregate_data` | A single `count`/`sum`/`avg`/`min`/`max` over the filtered rows (same `filters`/`search` as `query_data`; rank = `filteredCount + 1` when filtering on the score being beaten). |
 | `get_record` | Fetch a single record by id, optionally with `expand`. |
 | `create_record` | Create a record. |
 | `update_record` | Update a record by id. |

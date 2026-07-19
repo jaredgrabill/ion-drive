@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseQueryParams } from './query-parser.js';
+import { parseAggregateParams, parseQueryParams } from './query-parser.js';
 
 describe('parseQueryParams', () => {
   it('parses a bare field as an equality filter with coerced value', () => {
@@ -121,5 +121,40 @@ describe('parseQueryParams', () => {
   it('does not treat reserved keys as filters', () => {
     const { filters } = parseQueryParams({ sort: 'name', page: '2', expand: 'company' });
     expect(filters).toEqual([]);
+  });
+});
+
+describe('parseAggregateParams', () => {
+  it('extracts fn and field without treating them as filters', () => {
+    const { fn, field, options } = parseAggregateParams({
+      fn: 'avg',
+      field: 'damage_dealt',
+      'wins[gte]': '10',
+    });
+    expect(fn).toBe('avg');
+    expect(field).toBe('damage_dealt');
+    expect(options.filters).toEqual([{ field: 'wins', operator: 'gte', value: 10 }]);
+  });
+
+  it('passes the search term through alongside the filters', () => {
+    const { options } = parseAggregateParams({ fn: 'count', q: 'ada', status: 'active' });
+    expect(options.search).toBe('ada');
+    expect(options.filters).toEqual([{ field: 'status', operator: 'eq', value: 'active' }]);
+  });
+
+  it('returns undefined for a missing or blank fn/field', () => {
+    expect(parseAggregateParams({}).fn).toBeUndefined();
+    expect(parseAggregateParams({ fn: '  ' }).fn).toBeUndefined();
+    expect(parseAggregateParams({ fn: 'count', field: '' }).field).toBeUndefined();
+  });
+
+  it('does not validate fn here (unknown values pass through to DataService)', () => {
+    expect(parseAggregateParams({ fn: 'count,max' }).fn).toBe('count,max');
+  });
+
+  it('still allows filtering a column literally named fn via operator syntax', () => {
+    const { fn, options } = parseAggregateParams({ fn: 'count', 'fn[eq]': 'x' });
+    expect(fn).toBe('count');
+    expect(options.filters).toEqual([{ field: 'fn', operator: 'eq', value: 'x' }]);
   });
 });

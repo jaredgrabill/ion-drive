@@ -95,6 +95,51 @@ describe('data-routes', () => {
     expect(list).toHaveBeenCalledWith('contacts', expect.objectContaining({ search: 'acme' }));
   });
 
+  it('routes /:object/aggregate ahead of /:object/:id and delegates to the DataService', async () => {
+    const aggregate = vi
+      .fn()
+      .mockResolvedValue({ fn: 'avg', field: 'age', value: 33.5, filteredCount: 2 });
+    ({ app } = buildApp({ aggregate } as unknown as DataService));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/data/contacts/aggregate?fn=avg&field=age&full_name[like]=a&search=acme',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      data: { fn: 'avg', field: 'age', value: 33.5, filteredCount: 2 },
+    });
+    expect(aggregate).toHaveBeenCalledWith('contacts', 'avg', 'age', {
+      filters: [{ field: 'full_name', operator: 'like', value: 'a' }],
+      search: 'acme',
+    });
+  });
+
+  it('rejects an aggregate request without fn', async () => {
+    const aggregate = vi.fn();
+    ({ app } = buildApp({ aggregate } as unknown as DataService));
+
+    const res = await app.inject({ method: 'GET', url: '/api/v1/data/contacts/aggregate' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toContain('"fn"');
+    expect(aggregate).not.toHaveBeenCalled();
+  });
+
+  it('maps DataService aggregate validation errors to their status codes', async () => {
+    const { DataServiceError } = await import('../data/data-service.js');
+    const aggregate = vi
+      .fn()
+      .mockRejectedValue(new DataServiceError('not numeric', 'AGGREGATE_FIELD_NOT_NUMERIC', 400));
+    ({ app } = buildApp({ aggregate } as unknown as DataService));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/data/contacts/aggregate?fn=avg&field=full_name',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('AGGREGATE_FIELD_NOT_NUMERIC');
+  });
+
   it('rejects a create with a non-object body', async () => {
     ({ app } = buildApp({} as DataService));
     const res = await app.inject({

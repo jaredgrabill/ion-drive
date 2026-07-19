@@ -96,6 +96,39 @@ describe('buildGraphQLSchema', () => {
     });
   });
 
+  it('reflects an aggregate query field per object', () => {
+    const sdl = printSchema(buildGraphQLSchema(registryWithContacts(), {} as DataService));
+    expect(sdl).toContain('contacts_aggregate(');
+    expect(sdl).toContain('enum AggregateFunction');
+    expect(sdl).toMatch(/type AggregateResult \{[^}]*filteredCount: Int!/s);
+  });
+
+  it('resolves aggregate queries through DataService.aggregate', async () => {
+    const aggregate = vi
+      .fn()
+      .mockResolvedValue({ fn: 'avg', field: 'age', value: 33.5, filteredCount: 2 });
+    const dataService = { aggregate } as unknown as DataService;
+
+    const schema = buildGraphQLSchema(registryWithContacts(), dataService);
+    const result = await graphql({
+      schema,
+      source:
+        '{ contacts_aggregate(fn: avg, field: "age", filter: [{ field: "age", operator: gte, value: 18 }], search: "acme") { fn field value filteredCount } }',
+    });
+
+    expect(result.errors).toBeUndefined();
+    expect((result.data as Record<string, unknown>).contacts_aggregate).toEqual({
+      fn: 'avg',
+      field: 'age',
+      value: 33.5,
+      filteredCount: 2,
+    });
+    expect(aggregate).toHaveBeenCalledWith('contacts', 'avg', 'age', {
+      filters: [{ field: 'age', operator: 'gte', value: 18 }],
+      search: 'acme',
+    });
+  });
+
   it('returns a boolean from delete mutations', async () => {
     const dataService = { delete: async () => true } as unknown as DataService;
     const schema = buildGraphQLSchema(registryWithContacts(), dataService);

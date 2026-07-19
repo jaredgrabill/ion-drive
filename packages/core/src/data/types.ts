@@ -68,6 +68,43 @@ export interface PaginationOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Aggregates (leaderboard-shaped reads — issue #13)
+// ---------------------------------------------------------------------------
+
+/**
+ * The supported aggregate functions. Deliberately minimal: no group-by, no
+ * window functions — rank/percentile derive from filtered counts (see
+ * docs/api/querying.md "Leaderboards & aggregates").
+ */
+export const AGGREGATE_FUNCTIONS = ['count', 'sum', 'avg', 'min', 'max'] as const;
+
+export type AggregateFunction = (typeof AGGREGATE_FUNCTIONS)[number];
+
+/**
+ * Options accepted by an aggregate query — the same filter + search subset of
+ * {@link QueryOptions} the list endpoint takes (sort/pagination/expand/select
+ * do not apply to a single scalar result).
+ */
+export interface AggregateOptions {
+  filters?: FilterCondition[];
+  search?: string;
+}
+
+export interface AggregateResult {
+  fn: AggregateFunction;
+  /** The aggregated field (API name), or null for a bare `count`. */
+  field: string | null;
+  /**
+   * The aggregate value. `null` when no rows matched (SQL semantics for
+   * sum/avg/min/max over an empty set). Values are coerced to JSON numbers;
+   * NUMERIC/BIGINT results beyond 2^53 lose precision.
+   */
+  value: number | null;
+  /** Rows matching the filters + search — same number the list endpoint reports as `pagination.totalCount`. */
+  filteredCount: number;
+}
+
+// ---------------------------------------------------------------------------
 // Query Results
 // ---------------------------------------------------------------------------
 

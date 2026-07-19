@@ -25,6 +25,7 @@ A machine-readable, always-current [OpenAPI 3.1 spec](#openapi) is served at
 |:---|:---|:---|
 | `GET` | `/api/v1/data` | Discovery — list available objects + their endpoints |
 | `GET` | `/api/v1/data/:object` | List records (search, filter, sort, paginate) |
+| `GET` | `/api/v1/data/:object/aggregate` | Aggregate the filtered rows (`fn=count\|sum\|avg\|min\|max`) |
 | `POST` | `/api/v1/data/:object` | Create a record |
 | `POST` | `/api/v1/data/:object/bulk` | Bulk create (`{ "data": [...] }`) |
 | `DELETE` | `/api/v1/data/:object/bulk` | Bulk delete (`{ "ids": [...] }`) |
@@ -47,6 +48,18 @@ GET /api/v1/data/contacts?search=acme&status[neq]=archived&sort=-created_at&page
 The query language (`search`, `field[operator]=value`, `sort`, `page`,
 `pageSize`, `select`, `expand`) is documented in full in the
 [Querying guide](querying.md).
+
+### Aggregate
+
+```
+GET /api/v1/data/players/aggregate?fn=avg&field=damage_dealt&match_count[gte]=10
+```
+
+A single `count`/`sum`/`avg`/`min`/`max` over the rows matching the same
+filter + search parameters as the list endpoint. Returns
+`{ "data": { "fn", "field", "value", "filteredCount" } }`. See the
+[Leaderboards & aggregates guide](querying.md#leaderboards--aggregates) for
+the full reference and the rank-via-`totalCount` pattern.
 
 ```json
 {
