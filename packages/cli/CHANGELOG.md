@@ -1,5 +1,11 @@
 # @ion-drive/cli
 
+## 0.5.0
+
+### Patch Changes
+
+- `init` golden path (#12): the scaffolded Postgres port is a single `ION_PG_PORT` knob (compose + `.env` + `DATABASE_URL`), with automatic free-port detection when 5432 is taken; docs cover calling the API from scripts (Origin header, API-key bootstrap).
+
 ## 0.4.1
 
 ### Patch Changes

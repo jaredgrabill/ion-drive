@@ -19,7 +19,10 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "NOTICE"],
+  "files": [
+    "dist",
+    "NOTICE"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -30,7 +33,14 @@
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist *.tsbuildinfo"
   },
-  "keywords": ["ion-drive", "plugin", "redis", "cache", "message-bus", "streams"],
+  "keywords": [
+    "ion-drive",
+    "plugin",
+    "redis",
+    "cache",
+    "message-bus",
+    "streams"
+  ],
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
     "ioredis": "^5.4.0"
