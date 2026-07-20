@@ -126,9 +126,15 @@ export function registerAdminRoutes(services: AdminRoutesServices): FastifyPlugi
           return reply.code(400).send({ error: 'Validation Error', issues: parsed.error.issues });
         }
         try {
+          // Partial-update semantics (issue #23): only fields present in the
+          // body reach the manager — `description ?? null` here used to wipe
+          // the description on a permissions-only PATCH. An explicit
+          // `description: null` still clears it.
           const role = await roleManager.update(request.params.id, {
             name: parsed.data.name,
-            description: parsed.data.description ?? null,
+            ...(parsed.data.description !== undefined
+              ? { description: parsed.data.description }
+              : {}),
             permissions: parsed.data.permissions,
           });
           if (!role) return reply.code(404).send({ error: 'Not Found', message: 'Role not found' });
