@@ -12,6 +12,10 @@ A machine-readable, always-current [OpenAPI 3.1 spec](#openapi) is served at
 
 - **Base URL:** `http://localhost:3000` in development.
 - **Content type:** `application/json`.
+- **curl and `field[op]=` filters:** pass `-g` (`--globoff`) — curl otherwise
+  parses the brackets as its own globbing syntax and rejects the URL
+  (`curl: (3) bad range in URL`). See the note in
+  [Querying](querying.md#property-filters--operators).
 - **Auth:** when `ION_REQUIRE_AUTH` is enabled, send an API key as
   `X-API-Key: iond_…` (or `Authorization: Bearer iond_…`), or a session cookie.
   Objects granted `read` to the built-in `public` role are also readable with

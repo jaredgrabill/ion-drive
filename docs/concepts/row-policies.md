@@ -82,6 +82,18 @@ authenticated principal's reads like always (read-only rails still apply).
 System code — scheduled tasks, event dispatch, boot — runs outside any
 request and is unaffected.
 
+> **Keep `contains` columns server-written.** A `contains` policy grants
+> *visibility* by array membership — it does not restrict who may write the
+> array. If the column is client-writable, any writer can include your id and
+> **plant rows into your view** (spam/noise — not exfiltration: planting
+> grants the writer no read access to anything of yours). This is also why the
+> write guard that stops an `equals` column from being reassigned to a foreign
+> id deliberately leaves `contains` columns alone: writing *other* principals'
+> ids into a membership array is exactly the column's legitimate use (the
+> server stamping a match's participants, below). Keep such columns writable
+> only by trusted principals — like `participant_ids` in the worked example,
+> which only the service key writes.
+
 ## Worked example: a game backend
 
 The three policies from issue #7 (a multiplayer game with an anti-cheat

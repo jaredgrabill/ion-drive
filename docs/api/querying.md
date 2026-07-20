@@ -60,6 +60,18 @@ GET /api/v1/data/contacts?status[neq]=archived&age[gte]=21
 GET /api/v1/data/contacts?status=active          # same as status[eq]=active
 ```
 
+> **Testing with curl? Pass `-g` (`--globoff`).** curl treats `[` and `]` in a
+> URL as its own *globbing* syntax, so a `field[op]=value` query fails with
+> `curl: (3) bad range in URL` (quoting the URL does not help — globbing is
+> curl's, not the shell's). Disable it:
+>
+> ```bash
+> curl -g 'http://localhost:3000/api/v1/data/contacts?age[gte]=21'
+> ```
+>
+> Every bracketed example on this page (and the [REST reference](rest.md))
+> assumes it.
+
 ### Operators
 
 | Operator | Meaning | Aliases | Example |
@@ -165,7 +177,7 @@ them, plus one:
 
 ```bash
 # "My rank" for a player with 42 wins: count players with more wins.
-curl 'http://localhost:3000/api/v1/data/players?wins[gt]=42&pageSize=1'
+curl -g 'http://localhost:3000/api/v1/data/players?wins[gt]=42&pageSize=1'
 # -> { "data": [ ... 1 row ... ], "pagination": { "totalCount": 1237, ... } }
 # rank = totalCount + 1 = 1238
 ```
@@ -179,7 +191,7 @@ The aggregate endpoint below returns the same number without fetching any rows
 (`fn=count` → `filteredCount`), which reads more clearly:
 
 ```bash
-curl 'http://localhost:3000/api/v1/data/players/aggregate?fn=count&wins[gt]=42'
+curl -g 'http://localhost:3000/api/v1/data/players/aggregate?fn=count&wins[gt]=42'
 # -> { "data": { "fn": "count", "field": null, "value": 1237, "filteredCount": 1237 } }
 ```
 
@@ -210,7 +222,7 @@ GET /api/v1/data/:object/aggregate?fn=<fn>[&field=<field>][&filters…][&search=
 | anything else | The list endpoint's filter operators and `search`/`q`, applied identically. Sort/pagination keys are ignored (a scalar has no order or pages). |
 
 ```bash
-curl 'http://localhost:3000/api/v1/data/players/aggregate?fn=avg&field=damage_dealt&match_count[gte]=10'
+curl -g 'http://localhost:3000/api/v1/data/players/aggregate?fn=avg&field=damage_dealt&match_count[gte]=10'
 ```
 
 ```json
