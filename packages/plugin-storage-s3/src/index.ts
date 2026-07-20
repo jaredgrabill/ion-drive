@@ -37,9 +37,20 @@ export interface S3StoragePluginOptions extends Partial<Omit<S3StorageOptions, '
   secretAccessKey?: string;
 }
 
-function envFlag(value: string | undefined, fallback: boolean): boolean {
-  if (value === undefined || value.trim() === '') return fallback;
-  return !['false', '0', 'no', 'off'].includes(value.trim().toLowerCase());
+/**
+ * Strict boolean env parsing, mirroring core's `envBool` (issue #25): unknown
+ * spellings are a boot-time error naming the variable — previously any
+ * unrecognised value silently meant `true`. (Local copy rather than a core
+ * import so the plugin keeps its wide core peer-dependency range.)
+ */
+function envFlag(name: string, value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off', ''].includes(normalized)) return false;
+  throw new Error(
+    `${name} must be a boolean — got "${value}". Accepted values: true, 1, yes, on (enable) or false, 0, no, off (disable), case-insensitive. Unset the variable to use its default.`,
+  );
 }
 
 /** Creates the plugin. Options fall back to `ION_S3_*` environment variables. */
@@ -62,7 +73,11 @@ export function s3StoragePlugin(options: S3StoragePluginOptions = {}): IonPlugin
         endpoint,
         forcePathStyle:
           options.forcePathStyle ??
-          envFlag(process.env.ION_S3_FORCE_PATH_STYLE, endpoint !== undefined),
+          envFlag(
+            'ION_S3_FORCE_PATH_STYLE',
+            process.env.ION_S3_FORCE_PATH_STYLE,
+            endpoint !== undefined,
+          ),
         credentials: accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : undefined,
       });
 

@@ -61,8 +61,20 @@ export interface RedisPluginOptions {
   connection?: RedisApi;
 }
 
-function envFlag(value: string | undefined): boolean {
-  return ['1', 'true', 'yes', 'on'].includes((value ?? '').trim().toLowerCase());
+/**
+ * Strict boolean env parsing, mirroring core's `envBool` (issue #25): unknown
+ * spellings are a boot-time error naming the variable, never a silent default.
+ * (Local copy rather than a core import so the plugin keeps its wide core
+ * peer-dependency range.)
+ */
+function envFlag(name: string, value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off', ''].includes(normalized)) return false;
+  throw new Error(
+    `${name} must be a boolean — got "${value}". Accepted values: true, 1, yes, on (enable) or false, 0, no, off (disable), case-insensitive. Unset the variable to use its default.`,
+  );
 }
 
 /** Swaps in the Streams bus + dispatcher when opted in (and events are on). */
@@ -72,7 +84,7 @@ function setupBus(
   keyPrefix: string,
   options: RedisPluginOptions,
 ): RedisDispatcher | undefined {
-  const busRequested = options.bus ?? envFlag(process.env.ION_REDIS_BUS);
+  const busRequested = options.bus ?? envFlag('ION_REDIS_BUS', process.env.ION_REDIS_BUS);
   if (!busRequested) return undefined;
   if (!ctx.config.eventsEnabled) {
     ctx.logger.warn('Redis bus requested but ION_EVENTS_ENABLED=false — bus not swapped');
