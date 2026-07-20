@@ -15,6 +15,7 @@ import type {
 } from 'fastify';
 import { type Kysely, sql } from 'kysely';
 import { z } from 'zod';
+import { type AdminClaimService, isReservedAdminClaimConfigKey } from '../auth/admin-claim.js';
 import type { ApiKeyManager } from '../auth/api-key-manager.js';
 import { requirePermission } from '../auth/rbac/middleware.js';
 import type { PermissionEngine } from '../auth/rbac/permission-engine.js';
@@ -31,6 +32,8 @@ export interface AdminRoutesServices {
   configStore: ConfigStore;
   apiKeyManager: ApiKeyManager;
   systemDb: Kysely<SystemDatabase>;
+  /** Reports pending-claim state on `/me` (issue #32). */
+  claimService: AdminClaimService;
   /** When true, endpoints are protected by RBAC permissions. */
   enforce: boolean;
 }
@@ -72,8 +75,15 @@ function sendRoleValidationError(reply: FastifyReply, err: unknown): FastifyRepl
 }
 
 export function registerAdminRoutes(services: AdminRoutesServices): FastifyPluginCallback {
-  const { roleManager, permissionEngine, secretsManager, configStore, apiKeyManager, systemDb } =
-    services;
+  const {
+    roleManager,
+    permissionEngine,
+    secretsManager,
+    configStore,
+    apiKeyManager,
+    systemDb,
+    claimService,
+  } = services;
 
   /** Returns an RBAC guard, or a no-op when enforcement is disabled. */
   const guard = (action: Action, resource: string): preHandlerHookHandler => {
@@ -86,12 +96,20 @@ export function registerAdminRoutes(services: AdminRoutesServices): FastifyPlugi
     fastify.get('/me', async (request) => {
       if (!request.auth) return { authenticated: false };
       const roles = await permissionEngine.getEffectiveRoleNames(request.auth);
+      // Pending-claim (issue #32) is a human-admin-UI concern only: only ever
+      // computed for a real session, never for an API key, and it does not
+      // affect anything else this endpoint reports.
+      const pendingClaim =
+        request.auth.via === 'session' && request.auth.userId
+          ? await claimService.isPendingClaim(request.auth.userId)
+          : false;
       return {
         authenticated: true,
         via: request.auth.via,
         user: request.auth.user,
         userId: request.auth.userId,
         roles,
+        pendingClaim,
       };
     });
 
@@ -260,6 +278,17 @@ export function registerAdminRoutes(services: AdminRoutesServices): FastifyPlugi
       '/config/:key',
       { preHandler: guard('manage', 'config') },
       async (request, reply) => {
+        // The admin-claim pending-claim marker (issue #32) is reserved: it is
+        // set and cleared exclusively by AdminClaimService, never through the
+        // generic config API — even for a caller holding `manage:config` —
+        // so it can never be forged or replayed through this route.
+        if (isReservedAdminClaimConfigKey(request.params.key)) {
+          return reply.code(403).send({
+            error: 'Forbidden',
+            message:
+              'This config key is reserved for the admin-claim flow and cannot be set directly',
+          });
+        }
         if (request.body?.value === undefined) {
           return reply.code(400).send({ error: 'Validation Error', message: 'value is required' });
         }
@@ -272,6 +301,16 @@ export function registerAdminRoutes(services: AdminRoutesServices): FastifyPlugi
       '/config/:key',
       { preHandler: guard('manage', 'config') },
       async (request, reply) => {
+        // Same reservation as the PUT handler above — the marker can only be
+        // cleared atomically by AdminClaimService.completeClaim, never by a
+        // direct config delete (issue #32 invariant 2: one-time, one-way).
+        if (isReservedAdminClaimConfigKey(request.params.key)) {
+          return reply.code(403).send({
+            error: 'Forbidden',
+            message:
+              'This config key is reserved for the admin-claim flow and cannot be cleared directly',
+          });
+        }
         const deleted = await configStore.delete(request.params.key);
         if (!deleted)
           return reply.code(404).send({ error: 'Not Found', message: 'Config key not found' });

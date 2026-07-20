@@ -36,11 +36,22 @@ export interface AdminBootstrapAuthProvider {
   createUser(input: { email: string; password: string; name?: string }): Promise<string>;
 }
 
+/** The slice of `AdminClaimService` the bootstrap needs (eases testing). */
+export interface AdminBootstrapClaimMarker {
+  markPendingClaim(userId: string): Promise<void>;
+}
+
 export interface AdminBootstrapDeps {
   /** Tenant DB handle — Better Auth's `user` table lives there. */
   tenantDb: Kysely<Record<string, unknown>>;
   authProvider: AdminBootstrapAuthProvider;
   roleManager: RoleManager;
+  /**
+   * Marks the newly bootstrapped admin pending-claim (issue #32) — the
+   * durable, service-only marker the first-login claim flow gates on. This is
+   * the ONLY call site that ever sets it; see auth/admin-claim.ts.
+   */
+  claimMarker: AdminBootstrapClaimMarker;
   log: { info: (msg: string) => void; warn: (msg: string) => void };
 }
 
@@ -133,7 +144,7 @@ export async function bootstrapAdminFromEnv(
 ): Promise<void> {
   const credentials = resolveAdminBootstrapCredentials(config);
   if (!credentials) return;
-  const { tenantDb, authProvider, roleManager, log } = deps;
+  const { tenantDb, authProvider, roleManager, claimMarker, log } = deps;
 
   const existing = await countCredentialedUsers(tenantDb);
   if (existing > 0) {
@@ -175,6 +186,13 @@ export async function bootstrapAdminFromEnv(
   } else {
     log.warn('Admin bootstrap: admin role not found — account created without a role grant');
   }
+
+  // Mark pending-claim (issue #32): the bootstrapped admin must complete
+  // one-time first-login onboarding — set a real display name, rotate off
+  // the env password — before other admin UI surfaces are reachable. Runs on
+  // both the normal path and the wipe-and-re-heal path above, so a
+  // recreated admin is re-marked pending-claim exactly like a fresh one.
+  await claimMarker.markPendingClaim(userId);
 
   log.info(
     `Admin bootstrap: created admin account ${credentials.email} from environment; public signup is ${

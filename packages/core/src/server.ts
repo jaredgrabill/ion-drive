@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import pg from 'pg';
 import pino from 'pino';
 import pretty from 'pino-pretty';
+import { registerAdminClaimRoutes } from './api/admin-claim-routes.js';
 import { registerAdminRoutes } from './api/admin-routes.js';
 import { installAdminStatic } from './api/admin-static.js';
 import { registerBlockRoutes } from './api/block-routes.js';
@@ -23,6 +24,7 @@ import { registerTaskRoutes } from './api/task-routes.js';
 import { registerWebhookRoutes } from './api/webhook-admin-routes.js';
 import {
   ANONYMOUS_ROLE_NAME,
+  AdminClaimService,
   ApiKeyManager,
   BetterAuthProvider,
   PermissionEngine,
@@ -667,6 +669,13 @@ export async function createServer(
   await authProvider.initialize();
   server.log.info(`Auth provider "${authProvider.name}" initialized`);
 
+  // --- Admin claim service (issue #32) ---
+  // Owns the durable, service-only pending-claim marker (`_ion_config`, keyed
+  // to the bootstrapped user's id) and the race-proof claim-completion logic.
+  // Built before the bootstrap call below so it can mark the freshly created
+  // admin pending-claim in the same boot sequence.
+  const adminClaimService = new AdminClaimService({ systemDb, authProvider });
+
   // --- Env admin bootstrap (issue #26) ---
   // ION_ADMIN_EMAIL/ION_ADMIN_PASSWORD[_FILE]: on a database with zero
   // credentialed users, create the admin through the normal signup path (the
@@ -674,11 +683,14 @@ export async function createServer(
   // Runs here — after Better Auth's tables exist, before the server ever
   // listens — so no external request can race the zero-users check. When the
   // vars are set, ION_DISABLE_SIGNUP defaults to true (see loadConfig), so
-  // the server comes up locked with a working admin in one step.
+  // the server comes up locked with a working admin in one step. The account
+  // is also marked pending-claim (issue #32): first sign-in with the env
+  // credential must complete onboarding before other admin UI is reachable.
   await bootstrapAdminFromEnv(config, {
     tenantDb,
     authProvider,
     roleManager,
+    claimMarker: adminClaimService,
     log: {
       info: (msg) => server.log.info(msg),
       warn: (msg) => server.log.warn(msg),
@@ -831,10 +843,21 @@ export async function createServer(
       configStore,
       apiKeyManager,
       systemDb,
+      claimService: adminClaimService,
       enforce: config.requireAuth,
     }),
     { prefix: '/api/v1' },
   );
+
+  // --- Admin claim routes (issue #32 first-login onboarding) ---
+  // Self-guarded on the requester's own session (see admin-claim-routes.ts);
+  // deliberately NOT part of `installRbacEnforcement`'s requirement map, so
+  // claim state can never gate the data/schema/GraphQL/MCP surfaces or
+  // API-key access — see the module doc for why that is structural, not just
+  // a convention.
+  await server.register(registerAdminClaimRoutes({ claimService: adminClaimService }), {
+    prefix: '/api/v1',
+  });
 
   // --- Stats + version routes (dashboard snapshot, traffic, recent errors) ---
   await server.register(
@@ -972,6 +995,7 @@ export async function createServer(
     authProvider,
     permissionEngine,
     roleManager,
+    adminClaimService,
     secretsManager,
     apiKeyManager,
     taskEngine,

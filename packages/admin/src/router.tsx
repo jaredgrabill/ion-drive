@@ -2,8 +2,12 @@
  * Router — code-based TanStack Router setup.
  *
  * The root route gates on the session: while loading it shows a spinner, when
- * signed out it renders the Login screen, and when signed in it renders the
- * AppShell (whose Outlet hosts the child routes below). Phase 8 added the
+ * signed out it renders the Login screen, when signed in but pending-claim
+ * (issue #32 — an unclaimed env-bootstrap admin) it renders the Onboarding
+ * screen, and otherwise it renders the AppShell (whose Outlet hosts the child
+ * routes below). Because `RootGate` wraps the entire route tree, the
+ * onboarding gate applies regardless of which URL was requested — there is no
+ * child route that can render before it. Phase 8 added the
  * Tasks/Blocks/Logs/Metrics/API Keys routes and the task detail view.
  */
 
@@ -11,10 +15,12 @@ import { Outlet, createRootRoute, createRoute, createRouter } from '@tanstack/re
 import { type FC, lazy } from 'react';
 import { AppShell } from './components/layout';
 import { Spinner } from './components/ui';
+import { resolveRootView } from './lib/root-view';
 import { useSession } from './lib/session';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
 import { ObjectsList } from './pages/ObjectsList';
+import { Onboarding } from './pages/Onboarding';
 import { Roles } from './pages/Roles';
 import { Secrets } from './pages/Secrets';
 import { SettingsPage } from './pages/Settings';
@@ -38,16 +44,22 @@ const Tasks = lazy(() => import('./pages/tasks').then((m) => ({ default: m.Tasks
 const Webhooks = lazy(() => import('./pages/webhooks').then((m) => ({ default: m.Webhooks })));
 
 function RootGate() {
-  const { isLoading, isAuthenticated } = useSession();
-  if (isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <Spinner className="h-8 w-8" />
-      </div>
-    );
+  const { isLoading, isAuthenticated, pendingClaim } = useSession();
+  const view = resolveRootView({ isLoading, isAuthenticated, pendingClaim });
+  switch (view) {
+    case 'loading':
+      return (
+        <div className="flex h-screen items-center justify-center bg-background">
+          <Spinner className="h-8 w-8" />
+        </div>
+      );
+    case 'login':
+      return <Login />;
+    case 'onboarding':
+      return <Onboarding />;
+    case 'app':
+      return <AppShell />;
   }
-  if (!isAuthenticated) return <Login />;
-  return <AppShell />;
 }
 
 const rootRoute = createRootRoute({ component: RootGate });

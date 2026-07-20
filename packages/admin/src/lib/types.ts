@@ -208,6 +208,12 @@ export interface CurrentUser {
   user?: { id: string; email: string; name: string | null } | null;
   userId?: string | null;
   roles?: string[];
+  /**
+   * True when this session's account was created by env-var admin bootstrap
+   * and has not yet completed first-login onboarding (issue #32). The admin
+   * shell routes exclusively to the onboarding screen while this is true.
+   */
+  pendingClaim?: boolean;
 }
 
 // --- Stats & version (Phase 8) ---
