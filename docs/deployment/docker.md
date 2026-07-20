@@ -41,8 +41,10 @@ sign up — the first user becomes admin.
 
 ## Configuration
 
-All configuration is via environment variables (validated at boot). The most
-important ones:
+All configuration is via environment variables (validated at boot). Boolean
+variables are parsed strictly: `true`/`1`/`yes`/`on` enable, `false`/`0`/`no`/`off`
+disable (case-insensitive); any other value refuses to boot with an error naming
+the variable. The most important ones:
 
 | Variable | Default | Purpose |
 |:---|:---|:---|

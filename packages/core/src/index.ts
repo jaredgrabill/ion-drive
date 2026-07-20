@@ -7,7 +7,7 @@
 
 export { createServer } from './server.js';
 export type { CreateServerOptions, IonDriveServer } from './server.js';
-export { loadConfig } from './config/index.js';
+export { envBool, loadConfig, parseEnvBool } from './config/index.js';
 export type { IonDriveConfig } from './config/index.js';
 
 // Schema engine

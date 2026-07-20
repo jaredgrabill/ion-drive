@@ -20,11 +20,7 @@
     },
     "./package.json": "./package.json"
   },
-  "files": [
-    "dist",
-    "schemas",
-    "NOTICE"
-  ],
+  "files": ["dist", "schemas", "NOTICE"],
   "publishConfig": {
     "access": "public"
   },

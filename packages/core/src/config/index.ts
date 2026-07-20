@@ -1,20 +1,62 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+/** Guidance appended to every strict-boolean rejection message. */
+const ENV_BOOL_HINT =
+  'Accepted values: true, 1, yes, on (enable) or false, 0, no, off (disable), case-insensitive. Unset the variable to use its default.';
+
+/** Spellings accepted as `true` by {@link envBool} (case-insensitive, trimmed). */
+const ENV_BOOL_TRUE = new Set(['true', '1', 'yes', 'on']);
+/** Spellings accepted as `false` by {@link envBool}. Empty string counts as false. */
+const ENV_BOOL_FALSE = new Set(['false', '0', 'no', 'off', '']);
+
 /**
- * Parses a boolean from an environment string. Unlike `z.coerce.boolean`
- * (which treats every non-empty string as `true`, so `"false"` becomes `true`),
- * this recognises the usual falsy spellings — essential for flags that default
- * to `true` and must be switchable off via an env var.
+ * Strictly parses a boolean env value. Never use `z.coerce.boolean` for env
+ * flags: it is `Boolean(value)`, so every non-empty string — including
+ * `"false"`, `"0"`, and `"no"` — is `true` (issue #25; `ION_OTEL_ENABLED=false`
+ * used to *enable* telemetry, and for security flags the footgun cuts in the
+ * dangerous direction).
+ *
+ * Accepted (case-insensitive, trimmed): `true`/`1`/`yes`/`on` → `true`;
+ * `false`/`0`/`no`/`off`/`""` → `false`. Anything else fails config validation
+ * at boot with a message naming the variable and the accepted values. Unset
+ * still yields `defaultValue`.
+ *
+ * @param envVar - The environment variable name, used in the rejection message.
+ * @param defaultValue - Value when the variable is unset.
  */
-const envBoolean = (defaultValue: boolean) =>
+export const envBool = (envVar: string, defaultValue: boolean) =>
   z
     .union([z.boolean(), z.string()])
     .default(defaultValue)
-    .transform((v) => {
+    .transform((v, ctx) => {
       if (typeof v === 'boolean') return v;
-      return !['false', '0', 'no', 'off', ''].includes(v.trim().toLowerCase());
+      const normalized = v.trim().toLowerCase();
+      if (ENV_BOOL_TRUE.has(normalized)) return true;
+      if (ENV_BOOL_FALSE.has(normalized)) return false;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${envVar} must be a boolean — got "${v}". ${ENV_BOOL_HINT}`,
+      });
+      return z.NEVER;
     });
+
+/**
+ * Non-schema variant of {@link envBool} for code that reads `process.env`
+ * outside the config schema (e.g. first-party plugins). Same accepted
+ * spellings; throws on anything else.
+ */
+export function parseEnvBool(
+  envVar: string,
+  value: string | undefined,
+  defaultValue: boolean,
+): boolean {
+  const parsed = envBool(envVar, defaultValue).safeParse(value);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? `${envVar} must be a boolean`);
+  }
+  return parsed.data;
+}
 
 /**
  * Ion Drive configuration schema.
@@ -76,11 +118,11 @@ const configSchema = z.object({
 
   /**
    * When true, RBAC is enforced on data/schema/admin endpoints. Parsed with
-   * `envBoolean` so `ION_REQUIRE_AUTH=false` actually disables enforcement
-   * (`z.coerce.boolean()` treats every non-empty string — including "false" —
-   * as true, which silently ignored the documented off switch).
+   * the strict {@link envBool} so `ION_REQUIRE_AUTH=false` actually disables
+   * enforcement (`z.coerce.boolean()` treats every non-empty string —
+   * including "false" — as true, which silently ignored the off switch).
    */
-  requireAuth: envBoolean(false),
+  requireAuth: envBool('ION_REQUIRE_AUTH', false),
 
   /**
    * Explicit acknowledgement that this server is intended to run with RBAC
@@ -90,7 +132,7 @@ const configSchema = z.object({
    * loud error is logged. Never set this on an internet-facing deployment
    * unless you truly mean "no authentication at all".
    */
-  allowOpen: envBoolean(false),
+  allowOpen: envBool('ION_ALLOW_OPEN', false),
 
   /**
    * Whether the built-in `public` role is evaluated for anonymous requests
@@ -101,14 +143,14 @@ const configSchema = z.object({
    * this on adds no exposure beyond what an admin deliberately grants. Set
    * false to hard-disable anonymous evaluation even when grants exist.
    */
-  publicRole: envBoolean(true),
+  publicRole: envBool('ION_PUBLIC_ROLE', true),
 
   /**
    * When true, public signup closes once the first admin exists: the very
    * first user can still sign up (and becomes admin), after which
    * `/api/auth/sign-up/*` returns 403. Admins create further users directly.
    */
-  disableSignup: envBoolean(false),
+  disableSignup: envBool('ION_DISABLE_SIGNUP', false),
 
   /**
    * Enables anonymous (guest) sign-in via Better Auth's `anonymous` plugin:
@@ -118,12 +160,12 @@ const configSchema = z.object({
    * Default OFF — letting unauthenticated visitors mint users is a security
    * posture change, so it must be an explicit opt-in.
    */
-  anonymousAuth: envBoolean(false),
+  anonymousAuth: envBool('ION_ANONYMOUS_AUTH', false),
 
   // --- Rate limiting ---
 
   /** Enable per-IP HTTP rate limiting (global bucket + stricter auth bucket). */
-  rateLimitEnabled: envBoolean(true),
+  rateLimitEnabled: envBool('ION_RATE_LIMIT_ENABLED', true),
 
   /** Max requests per IP per window for the global bucket. */
   rateLimitMax: z.coerce.number().int().positive().default(300),
@@ -143,7 +185,7 @@ const configSchema = z.object({
   // --- Phase 5: Observability (OpenTelemetry) ---
 
   /** Master switch for the OpenTelemetry SDK (traces + metrics + logs export). */
-  otelEnabled: z.coerce.boolean().default(false),
+  otelEnabled: envBool('ION_OTEL_ENABLED', false),
 
   /** Logical service name reported on every span/metric/log. */
   otelServiceName: z.string().default('ion-drive'),
@@ -155,16 +197,16 @@ const configSchema = z.object({
   otelExporterOtlpEndpoint: z.string().url().default('http://localhost:4318'),
 
   /** Export spans over OTLP/HTTP. Requires otelEnabled. */
-  otelTracesEnabled: envBoolean(true),
+  otelTracesEnabled: envBool('ION_OTEL_TRACES_ENABLED', true),
 
   /** Export logs over OTLP/HTTP (bridged from the Fastify/pino logger). Requires otelEnabled. */
-  otelLogsEnabled: z.coerce.boolean().default(false),
+  otelLogsEnabled: envBool('ION_OTEL_LOGS_ENABLED', false),
 
   /**
    * Expose a Prometheus scrape endpoint at `/metrics` on the main server.
    * Independent of otelEnabled so metrics work even without an OTLP backend.
    */
-  metricsEnabled: envBoolean(true),
+  metricsEnabled: envBool('ION_METRICS_ENABLED', true),
 
   /**
    * Optional bearer token protecting `GET /metrics`. When set, scrapes must
@@ -175,7 +217,7 @@ const configSchema = z.object({
   metricsToken: z.string().min(1).optional(),
 
   /** Also push metrics over OTLP/HTTP (in addition to the Prometheus endpoint). Requires otelEnabled. */
-  otelMetricsEnabled: z.coerce.boolean().default(false),
+  otelMetricsEnabled: envBool('ION_OTEL_METRICS_ENABLED', false),
 
   /** Max entries held by the in-memory log buffer backing `/api/v1/logs`. */
   logBufferSize: z.coerce.number().int().positive().default(2000),
@@ -183,7 +225,7 @@ const configSchema = z.object({
   // --- Phase 5: Scheduled tasks ---
 
   /** Enable the background task scheduler (cron-driven task execution). */
-  tasksEnabled: envBoolean(true),
+  tasksEnabled: envBool('ION_TASKS_ENABLED', true),
 
   // --- Phase 14: Admin console static serving ---
 
@@ -191,7 +233,7 @@ const configSchema = z.object({
    * Serve the built admin console SPA at `/admin` when the
    * `@ion-drive/admin` package (or `ION_ADMIN_DIST`) is present.
    */
-  adminEnabled: envBoolean(true),
+  adminEnabled: envBool('ION_ADMIN_ENABLED', true),
 
   /**
    * Explicit path to a built admin `dist/` directory. Overrides the default
@@ -203,7 +245,7 @@ const configSchema = z.object({
   // --- Phase 6: Building blocks ---
 
   /** Enable the building-blocks install surface (`/api/v1/blocks`). */
-  blocksEnabled: envBoolean(true),
+  blocksEnabled: envBool('ION_BLOCKS_ENABLED', true),
 
   // --- Phase 9: Extensibility (plugins + message bus) ---
 
@@ -231,7 +273,7 @@ const configSchema = z.object({
   storageDir: z.string().default('.ion-storage'),
 
   /** Enable the message bus and CRUD change events (outbox + dispatcher). */
-  eventsEnabled: envBoolean(true),
+  eventsEnabled: envBool('ION_EVENTS_ENABLED', true),
 
   /**
    * How often (ms) the event dispatcher polls the outbox for undelivered
