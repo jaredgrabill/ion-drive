@@ -29,6 +29,7 @@ import {
   Textarea,
 } from './components/ui';
 import { Login } from './pages/Login';
+import { Onboarding } from './pages/Onboarding';
 
 // jsdom does not apply the app's CSS, so computed colors are meaningless —
 // contrast is validated separately by the design-token palette checks.
@@ -125,6 +126,15 @@ describe('accessibility (axe)', () => {
     const { container } = render(
       <QueryClientProvider client={new QueryClient()}>
         <Login />
+      </QueryClientProvider>,
+    );
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('Onboarding (admin claim) page has no violations', async () => {
+    const { container } = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <Onboarding />
       </QueryClientProvider>,
     );
     expect(await axe(container)).toHaveNoViolations();

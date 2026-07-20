@@ -10,8 +10,23 @@ export type {
   ProviderSession,
 } from './types.js';
 export { bootstrapAdminFromEnv, resolveAdminBootstrapCredentials } from './admin-bootstrap.js';
-export type { AdminBootstrapCredentials, AdminBootstrapDeps } from './admin-bootstrap.js';
-export { BETTER_AUTH_TABLES, BetterAuthProvider } from './better-auth-adapter.js';
+export type {
+  AdminBootstrapClaimMarker,
+  AdminBootstrapCredentials,
+  AdminBootstrapDeps,
+} from './admin-bootstrap.js';
+export {
+  AdminClaimNotPendingError,
+  AdminClaimService,
+  isReservedAdminClaimConfigKey,
+  PENDING_CLAIM_KEY_PREFIX,
+} from './admin-claim.js';
+export type { AdminClaimAuthProvider, AdminClaimServiceDeps } from './admin-claim.js';
+export {
+  AdminClaimPasswordPolicyError,
+  BETTER_AUTH_TABLES,
+  BetterAuthProvider,
+} from './better-auth-adapter.js';
 export type {
   AnonymousAuthOptions,
   BetterAuthProviderOptions,

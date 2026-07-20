@@ -37,6 +37,22 @@ export interface CreatedAuthUser {
   isAnonymous: boolean;
 }
 
+/**
+ * Raised by {@link BetterAuthProvider.completeAdminClaim} when `newPassword`
+ * fails Better Auth's configured min/max length policy. Mirrors the
+ * plain-Error rewrap admin-bootstrap.ts uses for the same underlying policy —
+ * the message names the constraint Better Auth reports, never a stricter
+ * policy invented here.
+ */
+export class AdminClaimPasswordPolicyError extends Error {
+  readonly statusCode = 400;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'AdminClaimPasswordPolicyError';
+  }
+}
+
 /** Config for the optional anonymous (guest) sign-in support (issue #6). */
 export interface AnonymousAuthOptions {
   /**
@@ -280,5 +296,59 @@ export class BetterAuthProvider implements AuthProvider {
     } finally {
       this.administrativeCreationActive = false;
     }
+  }
+
+  /**
+   * Server-side admin-claim completion (issue #32): sets the account's
+   * display name and rotates its password to `newPassword` — WITHOUT
+   * requiring the current password. No public Better Auth endpoint does this
+   * for an account that already holds a credential: `changePassword` demands
+   * `currentPassword`, and `setPassword` refuses once one exists
+   * (`PASSWORD_ALREADY_SET`). Proof of possession of the *old* credential was
+   * already established out-of-band — the only caller, `AdminClaimService`,
+   * only reaches this method for a session that is both (a) authenticated and
+   * (b) still holds the pending-claim marker, which only the bootstrap that
+   * created this exact account can set.
+   *
+   * Mirrors Better Auth's own token-gated `/reset-password` completion: same
+   * hashing (`ctx.password.hash`), same min/max length policy, via the
+   * `internalAdapter` the framework's own bundled endpoints use — reached
+   * through the documented `$context` promise, not a private API.
+   */
+  async completeAdminClaim(input: {
+    userId: string;
+    name: string;
+    newPassword: string;
+  }): Promise<void> {
+    const ctx = await this.auth.$context;
+    const { minPasswordLength, maxPasswordLength } = ctx.password.config;
+    if (input.newPassword.length < minPasswordLength) {
+      throw new AdminClaimPasswordPolicyError(
+        `Password must be at least ${minPasswordLength} characters`,
+      );
+    }
+    if (input.newPassword.length > maxPasswordLength) {
+      throw new AdminClaimPasswordPolicyError(
+        `Password must be at most ${maxPasswordLength} characters`,
+      );
+    }
+
+    const hashedPassword = await ctx.password.hash(input.newPassword);
+    const hasCredentialAccount = (await ctx.internalAdapter.findAccounts(input.userId)).some(
+      (account) => account.providerId === 'credential',
+    );
+    if (hasCredentialAccount) {
+      await ctx.internalAdapter.updatePassword(input.userId, hashedPassword);
+    } else {
+      // Defensive fallback — the bootstrapped account always has a credential
+      // account today, but this keeps the method correct if that ever changes.
+      await ctx.internalAdapter.createAccount({
+        userId: input.userId,
+        providerId: 'credential',
+        password: hashedPassword,
+        accountId: input.userId,
+      });
+    }
+    await ctx.internalAdapter.updateUser(input.userId, { name: input.name });
   }
 }

@@ -5,9 +5,9 @@
  *
  *   A — fresh DB + ION_ADMIN_EMAIL/ION_ADMIN_PASSWORD: boot creates the admin
  *       through the Better Auth signup path (sign-in works), grants admin like
- *       first-signup does, and signup starts LOCKED by default (no explicit
- *       ION_DISABLE_SIGNUP needed). A second boot against the same DB with the
- *       vars still set is a no-op.
+ *       first-signup does, marks it pending-claim (issue #32), and signup
+ *       starts LOCKED by default (no explicit ION_DISABLE_SIGNUP needed). A
+ *       second boot against the same DB with the vars still set is a no-op.
  *   B — fresh DB without the vars: first-signup-wins is unchanged; the
  *       bootstrap helper itself no-ops once users exist and surfaces Better
  *       Auth's own password policy (no invented policy) as a boot error.
@@ -16,6 +16,10 @@
  * There is no race window to test against: the bootstrap runs inside
  * `createServer()` — before `listen()` is ever called — so no external signup
  * can interleave with the zero-users check.
+ *
+ * The claim flow itself (forced onboarding, password rotation, and the full
+ * adversarial matrix) lives in integration/admin-claim.integration.test.ts;
+ * this file only covers where bootstrap marks/re-marks the account.
  *
  * Run with a reachable Postgres 17 (defaults match CI's service container).
  */
@@ -139,6 +143,14 @@ describe('A — fresh DB with ION_ADMIN_EMAIL/ION_ADMIN_PASSWORD', () => {
     expect(holders).toHaveLength(1);
   });
 
+  it('marks the bootstrapped admin pending-claim (issue #32)', async () => {
+    if (!app) throw new Error('Server not booted');
+    const adminRole = await app.roleManager.getByName('admin');
+    const holders = await app.roleManager.getUsersForRole((adminRole as { id: string }).id);
+    expect(holders).toHaveLength(1);
+    expect(await app.adminClaimService.isPendingClaim(holders[0] as string)).toBe(true);
+  });
+
   it('the bootstrapped admin can sign in through the normal auth route', async () => {
     if (!app) throw new Error('Server not booted');
     const res = await request(app, 'POST', '/api/auth/sign-in/email', {
@@ -201,11 +213,15 @@ describe('A — fresh DB with ION_ADMIN_EMAIL/ION_ADMIN_PASSWORD', () => {
     });
 
     // The admin is back, with the admin role granted (via the backstop —
-    // grantAdminIfFirstUser declines because the marker exists).
+    // grantAdminIfFirstUser declines because the marker exists), and
+    // re-marked pending-claim exactly like a fresh bootstrap (issue #32) —
+    // the recreated account gets a NEW user id, so this is not the same
+    // (now-orphaned) marker key a prior claim may have cleared.
     expect(await userCount(app)).toBe(1);
     const adminRole = await app.roleManager.getByName('admin');
     const holders = await app.roleManager.getUsersForRole((adminRole as { id: string }).id);
     expect(holders).toHaveLength(1);
+    expect(await app.adminClaimService.isPendingClaim(holders[0] as string)).toBe(true);
     const signin = await request(app, 'POST', '/api/auth/sign-in/email', {
       email: BOOTSTRAP_EMAIL,
       password: BOOTSTRAP_PASSWORD,
@@ -252,6 +268,7 @@ describe('B — fresh DB without the vars (first-signup-wins unchanged)', () => 
           tenantDb,
           authProvider: app.authProvider,
           roleManager: app.roleManager,
+          claimMarker: app.adminClaimService,
           log: { info: () => {}, warn: () => {} },
         },
       ),
@@ -281,6 +298,7 @@ describe('B — fresh DB without the vars (first-signup-wins unchanged)', () => 
         tenantDb,
         authProvider: app.authProvider,
         roleManager: app.roleManager,
+        claimMarker: app.adminClaimService,
         log: { info: (msg) => infoLines.push(msg), warn: () => {} },
       },
     );

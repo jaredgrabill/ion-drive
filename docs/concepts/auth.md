@@ -44,6 +44,29 @@ you out. Setting only one half of the pair
 (email without a password source, or vice versa) is a boot error rather than a
 silent fallback.
 
+**First-login claim.** The bootstrapped account is created *pending-claim* —
+a durable marker (an `_ion_config` row keyed to the account's user id, not a
+column on the `user` table) that only the bootstrap itself ever sets. Signing
+in to the admin console (`/admin`) with `ION_ADMIN_EMAIL`/`ION_ADMIN_PASSWORD`
+routes to a one-time onboarding screen — every other admin route redirects
+there until you finish — asking for a real display name and a new password.
+Submitting rotates the account off the env password (through the same Better
+Auth hashing/policy path) and clears the marker atomically: `ION_ADMIN_PASSWORD`
+stops working the moment you claim, so it no longer needs to live in your
+deploy dashboard afterward. The claim always targets the session that
+authenticated the request — never an id or email in the request body — so
+proving possession of the bootstrap password (by signing in with it) is a
+hard prerequisite, not just knowing the admin's email. Claiming is one-time:
+a second attempt, or two concurrent attempts, always leaves exactly one
+winner and a "no pending claim" response for everyone else, including
+replays. None of this touches API keys or the REST/GraphQL/MCP surfaces —
+they authenticate independently of claim state, so a service integration
+(e.g. a game's room server) keeps working through a fresh, unclaimed deploy.
+A wiped user table re-marks the recreated admin pending-claim exactly like a
+fresh bootstrap. *(Not yet built: an email-only bootstrap-input mode using a
+one-time token printed to the server log, as an alternative to typing the env
+password — tracked as a follow-up.)*
+
 **First-signup-wins (the default without the variables).** The **first user to
 sign up becomes admin**. This remains unchanged as the local-development path —
 but on a public deployment it leaves a window between boot and your signup

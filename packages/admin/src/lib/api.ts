@@ -88,6 +88,13 @@ export const api = {
   // --- Current user ---
   me: () => request<CurrentUser>('/me'),
 
+  // --- Admin claim (issue #32 first-login onboarding) ---
+  completeAdminClaim: (input: { name: string; newPassword: string; confirmPassword: string }) =>
+    request<{ success: boolean }>('/admin-claim', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+
   // --- Schema ---
   listObjects: () => request<{ data: ObjectSummary[] }>('/schema/objects').then((r) => r.data),
   getObject: (name: string) =>

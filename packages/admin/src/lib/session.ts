@@ -16,5 +16,8 @@ export function useSession() {
     isAuthenticated: me?.authenticated === true,
     roles: me?.roles ?? [],
     isAdmin: (me?.roles ?? []).includes('admin'),
+    // First-login claim gate (issue #32): true only for a real session whose
+    // bootstrap-created account has not yet completed onboarding.
+    pendingClaim: me?.pendingClaim === true,
   };
 }
