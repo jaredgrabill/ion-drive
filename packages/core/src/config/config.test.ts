@@ -29,6 +29,9 @@ const BOOL_FLAGS = [
 const ENV_KEYS = [
   'ION_TRUST_PROXY',
   'ION_METRICS_TOKEN',
+  'ION_ADMIN_EMAIL',
+  'ION_ADMIN_PASSWORD',
+  'ION_ADMIN_PASSWORD_FILE',
   ...BOOL_FLAGS.map(([envVar]) => envVar),
 ] as const;
 
@@ -177,5 +180,47 @@ describe('strict boolean env parsing (issue #25)', () => {
     expect(parseEnvBool('ION_X', 'YES', false)).toBe(true);
     expect(parseEnvBool('ION_X', 'off', true)).toBe(false);
     expect(() => parseEnvBool('ION_X', 'garbage', false)).toThrow(/ION_X.*"garbage"/);
+  });
+});
+
+describe('admin bootstrap config (issue #26)', () => {
+  it('leaves signup open by default when no bootstrap variable is set', () => {
+    const config = loadConfig();
+    expect(config.adminEmail).toBeUndefined();
+    expect(config.adminPassword).toBeUndefined();
+    expect(config.adminPasswordFile).toBeUndefined();
+    expect(config.disableSignup).toBe(false);
+  });
+
+  it.each([
+    ['ION_ADMIN_EMAIL', 'ops@example.com'],
+    ['ION_ADMIN_PASSWORD', 'a-long-password'],
+    ['ION_ADMIN_PASSWORD_FILE', '/run/secrets/pw'],
+  ] as const)('locks signup by default when %s is set', (envVar, value) => {
+    process.env[envVar] = value;
+    expect(loadConfig().disableSignup).toBe(true);
+  });
+
+  it('lets an explicit ION_DISABLE_SIGNUP=false keep signup open despite bootstrap vars', () => {
+    process.env.ION_ADMIN_EMAIL = 'ops@example.com';
+    process.env.ION_ADMIN_PASSWORD = 'a-long-password';
+    process.env.ION_DISABLE_SIGNUP = 'false';
+    expect(loadConfig().disableSignup).toBe(false);
+  });
+
+  it('lets a programmatic override keep signup open despite bootstrap vars', () => {
+    process.env.ION_ADMIN_EMAIL = 'ops@example.com';
+    expect(loadConfig({ disableSignup: false }).disableSignup).toBe(false);
+  });
+
+  it('maps the ION_ADMIN_* variables and validates the email shape', () => {
+    process.env.ION_ADMIN_EMAIL = 'ops@example.com';
+    process.env.ION_ADMIN_PASSWORD = 'a-long-password';
+    const config = loadConfig();
+    expect(config.adminEmail).toBe('ops@example.com');
+    expect(config.adminPassword).toBe('a-long-password');
+
+    process.env.ION_ADMIN_EMAIL = 'not-an-email';
+    expect(() => loadConfig()).toThrow(/adminEmail/);
   });
 });

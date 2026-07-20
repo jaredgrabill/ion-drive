@@ -28,6 +28,7 @@ import {
   PermissionEngine,
   RoleManager,
   RowPolicyResolver,
+  bootstrapAdminFromEnv,
   createAnonymousCleanupHandler,
   deriveEmailDomain,
   ensureAnonymousCleanupTask,
@@ -665,6 +666,24 @@ export async function createServer(
   });
   await authProvider.initialize();
   server.log.info(`Auth provider "${authProvider.name}" initialized`);
+
+  // --- Env admin bootstrap (issue #26) ---
+  // ION_ADMIN_EMAIL/ION_ADMIN_PASSWORD[_FILE]: on a database with zero
+  // credentialed users, create the admin through the normal signup path (the
+  // user-created hook grants first-admin exactly as a live signup would).
+  // Runs here — after Better Auth's tables exist, before the server ever
+  // listens — so no external request can race the zero-users check. When the
+  // vars are set, ION_DISABLE_SIGNUP defaults to true (see loadConfig), so
+  // the server comes up locked with a working admin in one step.
+  await bootstrapAdminFromEnv(config, {
+    tenantDb,
+    authProvider,
+    roleManager,
+    log: {
+      info: (msg) => server.log.info(msg),
+      warn: (msg) => server.log.warn(msg),
+    },
+  });
 
   // Session resolution runs for every request; RBAC enforcement is opt-in.
   installSessionMiddleware(server, { provider: authProvider, apiKeys: apiKeyManager });

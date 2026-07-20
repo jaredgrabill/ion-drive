@@ -53,7 +53,9 @@ the variable. The most important ones:
 | `ION_ENCRYPTION_KEY` | *(dev key)* | 32-byte hex; **set this in production** (encrypts secrets). |
 | `ION_AUTH_SECRET` | falls back to encryption key | Signs auth sessions/tokens. |
 | `ION_REQUIRE_AUTH` | `false` | Enforce RBAC on data/schema/admin endpoints. |
-| `ION_DISABLE_SIGNUP` | `false` | Close public signup once the first admin exists. |
+| `ION_ADMIN_EMAIL` | — | With `ION_ADMIN_PASSWORD*`: create this admin at boot on a fresh DB and lock signup ([details](../concepts/auth.md#bootstrapping-the-admin-account)). |
+| `ION_ADMIN_PASSWORD` | — | Password for the bootstrap admin (or `ION_ADMIN_PASSWORD_FILE` pointing at a secret mount). |
+| `ION_DISABLE_SIGNUP` | `false` (`true` when `ION_ADMIN_EMAIL` is set) | Close public signup once the first admin exists. |
 | `ION_PUBLIC_URL` | — | Public base URL (used as the auth base URL). |
 | `ION_CORS_ORIGINS` | _(unset)_ | Allowed CORS origins. Default: same-origin only. Set an explicit origin (e.g. `https://app.example.com`) for a separate frontend; a wildcard (`true`/`*`) is refused at boot. |
 | `ION_TRUST_PROXY` | `false` | Honor `X-Forwarded-*` behind a reverse proxy (`true`, hop count, or CIDR list). |

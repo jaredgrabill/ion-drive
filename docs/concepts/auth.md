@@ -5,10 +5,46 @@ pluggable provider interface: cookie sessions via `/api/auth/*`
 (email/password), bearer session tokens (`Authorization: Bearer <token>` —
 see [Verifying sessions from your own server](#verifying-sessions-from-your-own-server)),
 role-bound API keys (`X-API-Key: iond_…`), and RBAC roles with per-resource
-permission grants. The **first user to sign up becomes admin**; further users
-get no roles until an admin grants them. This page covers the one auth flow
-that is a product feature in its own right: **anonymous (guest) sign-in with
-an upgrade path to a real account**.
+permission grants. This page covers how the admin account is bootstrapped,
+and the one auth flow that is a product feature in its own right:
+**anonymous (guest) sign-in with an upgrade path to a real account**.
+
+## Bootstrapping the admin account
+
+There are two ways a fresh deployment gets its first admin:
+
+**Environment bootstrap (recommended for anything public).** Set
+
+```bash
+ION_ADMIN_EMAIL=you@example.com
+ION_ADMIN_PASSWORD=a-strong-password
+# or, for Docker/Kubernetes secret mounts (file contents, trimmed):
+ION_ADMIN_PASSWORD_FILE=/run/secrets/ion-admin-password
+```
+
+On a database with **zero credentialed users**, boot creates that account
+through the normal Better Auth signup path — same password hashing, same
+password policy (a too-weak password fails the boot with a clear error, the
+value is never logged) — and the account receives the admin role exactly as a
+first signup would. Because the bootstrap runs inside server assembly,
+*before* the HTTP listener starts, no outside request can race it.
+
+With the variables set, `ION_DISABLE_SIGNUP` **defaults to `true`**: the
+server comes up with a working admin and public signup already locked, in one
+step. An explicit `ION_DISABLE_SIGNUP=false` keeps signup open if that is
+really what you want. On a database that already has users the variables are
+ignored (one info line), so they are safe to leave set permanently — and a
+guest-only database (only `isAnonymous` users) still counts as fresh, since
+nobody credentialed can get in otherwise. Setting only one half of the pair
+(email without a password source, or vice versa) is a boot error rather than a
+silent fallback.
+
+**First-signup-wins (the default without the variables).** The **first user to
+sign up becomes admin**. This remains unchanged as the local-development path —
+but on a public deployment it leaves a window between boot and your signup
+where anyone who finds the URL becomes admin, and locking signup afterwards
+(`ION_DISABLE_SIGNUP=true`) is a second step that is easy to forget. Prefer
+the environment bootstrap for anything reachable by others.
 
 ## Why anonymous auth
 
