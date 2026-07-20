@@ -15,6 +15,7 @@
 
 import type { Kysely } from 'kysely';
 import { nanoid } from 'nanoid';
+import { translatePgError } from '../data/errors.js';
 import type { SystemDatabase } from '../db/types.js';
 import { ChangeValidator } from './change-validator.js';
 import { DdlExecutor } from './ddl-executor.js';
@@ -306,7 +307,16 @@ export class SchemaManager {
       }
     }
     for (const group of added) {
-      executed.push(...(await this.ddlExecutor.addUniqueConstraint(obj.tableName, group)));
+      try {
+        executed.push(...(await this.ddlExecutor.addUniqueConstraint(obj.tableName, group)));
+      } catch (err) {
+        // Drift guard (issue #23): when the physical ion_uq_* constraint
+        // survived but metadata lost the group, re-applying it raises 42P07
+        // ("relation already exists" — the constraint's backing index).
+        // Translate it to the platform contract (409 `already_exists`, naming
+        // the constraint) instead of letting a raw Postgres 500 escape.
+        throw translatePgError(err);
+      }
     }
 
     await this.metadataStore.updateObject(objectName, {

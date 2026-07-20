@@ -8,6 +8,7 @@
 
 import type { FastifyInstance, FastifyPluginCallback } from 'fastify';
 import { z } from 'zod';
+import { DataServiceError } from '../data/errors.js';
 import type { SchemaDoctor } from '../schema/doctor.js';
 import type { SchemaManager } from '../schema/index.js';
 import {
@@ -94,6 +95,22 @@ const createObjectSchema = z.object({
   fields: z.array(fieldSchema).default([]),
   constraints: objectConstraintsSchema.optional(),
 });
+
+/**
+ * Runs a schema mutation, capturing typed {@link DataServiceError}s (issue
+ * #23 — e.g. re-applying a drifted uniqueTogether group raises 42P07,
+ * translated to a 409 `already_exists`) so routes can render them as the flat
+ * error envelope the data routes use. Anything else rethrows into Fastify's
+ * generic 500 handler — a genuine server fault should stay a 500.
+ */
+async function catchDataServiceError<T>(run: () => Promise<T>): Promise<T | DataServiceError> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof DataServiceError) return err;
+    throw err;
+  }
+}
 
 /** Body of PATCH /objects/:name — today only object constraints are mutable. */
 const modifyObjectSchema = z.object({
@@ -235,11 +252,15 @@ export function registerSchemaRoutes(
       }
 
       const dryRun = request.query.dryRun === 'true';
-      const result = await schemaManager.setObjectConstraints(
-        request.params.name,
-        parsed.data.constraints,
-        { dryRun, force: request.query.force === 'true' },
+      const result = await catchDataServiceError(() =>
+        schemaManager.setObjectConstraints(request.params.name, parsed.data.constraints, {
+          dryRun,
+          force: request.query.force === 'true',
+        }),
       );
+      if (result instanceof DataServiceError) {
+        return reply.code(result.statusCode).send({ error: result.code, message: result.message });
+      }
 
       if (dryRun) {
         return { data: result.preview };
