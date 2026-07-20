@@ -26,6 +26,12 @@ Dockerfile text eol=lf
 # committed bytes on every platform.
 packages/core/schemas/** text eol=lf
 packages/cli/src/registry/__fixtures__/** text eol=lf
+# The intentionally-corrupt sigstore fixtures are byte salad, not text (#23):
+# treat them as binary (-text) so that if a regeneration ever produces a
+# legitimate 0x0D byte, no EOL machinery can normalize it away and silently
+# break the byte-exact SHA256 assertions in the sigstore verify tests.
+packages/cli/src/registry/__fixtures__/*corrupt-payload*.sigstore.json -text
+packages/cli/src/registry/__fixtures__/*truncated-sig*.sigstore.json -text
 
 # Binary assets — never touch.
 *.png binary
