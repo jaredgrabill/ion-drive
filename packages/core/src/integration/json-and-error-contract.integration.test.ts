@@ -109,6 +109,20 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app?.close();
+  // Wait for the scratch DB's sessions to drain before the FORCE drop —
+  // pg-pool's end() resolves before its sockets finish closing, and a FORCE
+  // drop that terminates a straggler surfaces an unhandled 57P01 that fails
+  // the run. Mirrors platform.integration.test.ts (this was the one suite
+  // missing the drain, and it flaked exactly this way in CI).
+  const started = Date.now();
+  while (adminClient && Date.now() - started < 10_000) {
+    const res = await adminClient.query(
+      'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1',
+      [SCRATCH_DB],
+    );
+    if (res.rows[0].n === 0) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
   if (adminClient) {
     await adminClient.query(`DROP DATABASE IF EXISTS ${SCRATCH_DB} WITH (FORCE)`);
     await adminClient.end();
