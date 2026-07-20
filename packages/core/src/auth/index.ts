@@ -9,6 +9,8 @@ export type {
   AuthSessionInfo,
   ProviderSession,
 } from './types.js';
+export { bootstrapAdminFromEnv, resolveAdminBootstrapCredentials } from './admin-bootstrap.js';
+export type { AdminBootstrapCredentials, AdminBootstrapDeps } from './admin-bootstrap.js';
 export { BETTER_AUTH_TABLES, BetterAuthProvider } from './better-auth-adapter.js';
 export type {
   AnonymousAuthOptions,

@@ -149,8 +149,39 @@ const configSchema = z.object({
    * When true, public signup closes once the first admin exists: the very
    * first user can still sign up (and becomes admin), after which
    * `/api/auth/sign-up/*` returns 403. Admins create further users directly.
+   *
+   * Defaults to `false` — **unless** env admin bootstrap is configured
+   * (`ION_ADMIN_EMAIL`/`ION_ADMIN_PASSWORD*`, issue #26), in which case the
+   * default flips to `true` so a bootstrapped server starts locked with no
+   * second configuration step. An explicit `ION_DISABLE_SIGNUP=false` always
+   * wins (see `loadConfig`).
    */
   disableSignup: envBool('ION_DISABLE_SIGNUP', false),
+
+  // --- Admin bootstrap (issue #26) ---
+
+  /**
+   * Email of the admin account to create at boot on a database with zero
+   * credentialed users (see auth/admin-bootstrap.ts). Ignored (with an info
+   * log) once any user exists, so it is safe to leave set. Requires
+   * ION_ADMIN_PASSWORD or ION_ADMIN_PASSWORD_FILE; setting it flips the
+   * {@link disableSignup} default to `true`.
+   */
+  adminEmail: z.string().email().optional(),
+
+  /**
+   * Password for the bootstrap admin account. Goes through the auth
+   * provider's normal signup path, so its password policy applies. Never
+   * logged. Mutually exclusive with {@link adminPasswordFile}.
+   */
+  adminPassword: z.string().min(1).optional(),
+
+  /**
+   * Path to a file whose (whitespace-trimmed) contents are the bootstrap
+   * admin password — for Docker/Kubernetes secret mounts. Mutually exclusive
+   * with {@link adminPassword}.
+   */
+  adminPasswordFile: z.string().min(1).optional(),
 
   /**
    * Enables anonymous (guest) sign-in via Better Auth's `anonymous` plugin:
@@ -307,6 +338,9 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     allowOpen: process.env.ION_ALLOW_OPEN,
     publicRole: process.env.ION_PUBLIC_ROLE,
     disableSignup: process.env.ION_DISABLE_SIGNUP,
+    adminEmail: process.env.ION_ADMIN_EMAIL,
+    adminPassword: process.env.ION_ADMIN_PASSWORD,
+    adminPasswordFile: process.env.ION_ADMIN_PASSWORD_FILE,
     anonymousAuth: process.env.ION_ANONYMOUS_AUTH,
     rateLimitEnabled: process.env.ION_RATE_LIMIT_ENABLED,
     rateLimitMax: process.env.ION_RATE_LIMIT_MAX,
@@ -334,10 +368,24 @@ export function loadConfig(overrides?: Partial<IonDriveConfig>): IonDriveConfig 
     eventsPollIntervalMs: process.env.ION_EVENTS_POLL_INTERVAL_MS,
   };
 
+  const merged: Record<string, unknown> = { ...envConfig, ...overrides };
+
+  // Env admin bootstrap (issue #26): when bootstrap credentials are provided
+  // and ION_DISABLE_SIGNUP was not set at all, default signup to LOCKED — the
+  // bootstrapped admin is the way in, and leaving public signup open would
+  // reintroduce the exposure window the feature exists to close. An explicit
+  // ION_DISABLE_SIGNUP=false (or override) still wins.
+  if (
+    merged.disableSignup === undefined &&
+    (merged.adminEmail !== undefined ||
+      merged.adminPassword !== undefined ||
+      merged.adminPasswordFile !== undefined)
+  ) {
+    merged.disableSignup = true;
+  }
+
   // Remove undefined values so Zod defaults kick in
-  const cleaned = Object.fromEntries(
-    Object.entries({ ...envConfig, ...overrides }).filter(([, v]) => v !== undefined),
-  );
+  const cleaned = Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined));
 
   const result = configSchema.safeParse(cleaned);
 

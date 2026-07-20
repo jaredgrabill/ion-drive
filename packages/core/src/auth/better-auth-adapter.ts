@@ -86,7 +86,11 @@ export interface BetterAuthProviderOptions {
  * `BetterAuthInstance` captures the precise inferred type (the generic default
  * `Auth<BetterAuthOptions>` is not assignable from the specialized instance).
  */
-function createAuthInstance(options: BetterAuthProviderOptions, basePath: string) {
+function createAuthInstance(
+  options: BetterAuthProviderOptions,
+  basePath: string,
+  isAdministrativeCreation: () => boolean,
+) {
   const isSignupBlocked = options.isSignupBlocked;
   const anonymousOptions = options.anonymous;
   return betterAuth({
@@ -139,6 +143,13 @@ function createAuthInstance(options: BetterAuthProviderOptions, basePath: string
       // with a 403 before an account is created.
       before: createAuthMiddleware(async (ctx) => {
         if (!isSignupBlocked) return;
+        // Administrative creation ({@link BetterAuthProvider.createUser}, the
+        // env admin bootstrap) is exempt: it is a pre-listen programmatic call,
+        // not a public signup, and must succeed even when the durable lockout
+        // marker predates a wiped user table (issue #26 QA). The latch is set
+        // only for the duration of that call and no HTTP is served while the
+        // bootstrap runs, so the PUBLIC lock is unaffected.
+        if (isAdministrativeCreation()) return;
         if (ctx.path === '/sign-up' || ctx.path.startsWith('/sign-up/')) {
           if (await isSignupBlocked()) {
             throw new APIError('FORBIDDEN', { message: 'Signup is disabled on this server' });
@@ -188,9 +199,17 @@ export class BetterAuthProvider implements AuthProvider {
   private readonly nodeHandler: (req: unknown, res: unknown) => void;
   private readonly basePath: string;
 
+  /**
+   * True while {@link createUser} is executing. Consulted by the signup-lock
+   * before-hook so administrative (programmatic, pre-listen) account creation
+   * is exempt from the PUBLIC signup lockout. Plain field, not a general
+   * bypass: nothing else sets it, and it is always cleared in a `finally`.
+   */
+  private administrativeCreationActive = false;
+
   constructor(options: BetterAuthProviderOptions) {
     this.basePath = options.basePath ?? '/api/auth';
-    this.auth = createAuthInstance(options, this.basePath);
+    this.auth = createAuthInstance(options, this.basePath, () => this.administrativeCreationActive);
     this.nodeHandler = toNodeHandler(this.auth) as (req: unknown, res: unknown) => void;
   }
 
@@ -243,11 +262,23 @@ export class BetterAuthProvider implements AuthProvider {
   /**
    * Creates a user directly (used for first-run seeding of the admin account).
    * Returns the new user's id, or throws if creation fails.
+   *
+   * Administrative creation: goes through the normal signup pipeline (same
+   * hashing, same password policy, same user-created hook) but is exempt from
+   * the PUBLIC signup lockout — a bootstrap against a database whose users
+   * were wiped after the durable lockout marker was written must still be able
+   * to re-create the admin (issue #26 QA). The exemption is scoped to this
+   * call via {@link administrativeCreationActive}.
    */
   async createUser(input: { email: string; password: string; name?: string }): Promise<string> {
-    const res = await this.auth.api.signUpEmail({
-      body: { email: input.email, password: input.password, name: input.name ?? input.email },
-    });
-    return res.user.id;
+    this.administrativeCreationActive = true;
+    try {
+      const res = await this.auth.api.signUpEmail({
+        body: { email: input.email, password: input.password, name: input.name ?? input.email },
+      });
+      return res.user.id;
+    } finally {
+      this.administrativeCreationActive = false;
+    }
   }
 }

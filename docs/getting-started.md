@@ -39,6 +39,23 @@ Production hardening knobs are documented in `.env.example`.)
 > a deliberately open deployment. Keep `ION_REQUIRE_AUTH=true` for anything
 > reachable by others.
 
+**Deploying somewhere public?** Don't race to be the first signup — provision
+the admin account from the environment instead:
+
+```bash
+ION_ADMIN_EMAIL=you@example.com
+ION_ADMIN_PASSWORD=a-strong-password   # or ION_ADMIN_PASSWORD_FILE=/run/secrets/pw
+```
+
+On a fresh database the server creates that admin at boot (before it starts
+listening, so there is no exposure window) and **public signup starts
+locked** — no second trip into your host's env settings afterwards. Once any
+user exists the variables are ignored with an info log, so they are safe to
+leave set. Set `ION_DISABLE_SIGNUP=false` explicitly if you really want
+public signup to stay open alongside a bootstrapped admin. See
+[Authentication](concepts/auth.md#bootstrapping-the-admin-account) for
+details.
+
 > **Contributor path:** working on Ion Drive itself? Clone
 > `jaredgrabill/ion-drive` and `pnpm dev` — see [CONTRIBUTING](https://github.com/jaredgrabill/ion-drive/blob/main/CONTRIBUTING.md).
 
