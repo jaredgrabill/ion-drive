@@ -1,6 +1,6 @@
 {
   "name": "@ion-drive/plugin-redis",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Ion Drive plugin: Redis cache and (opt-in) Redis Streams message bus — swaps the platform's CacheProvider for multi-node coherence and can replace the Postgres outbox bus for broker-based event delivery.",
   "license": "Apache-2.0",
   "author": "IonShift Technologies LLC",
@@ -19,7 +19,10 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "NOTICE"],
+  "files": [
+    "dist",
+    "NOTICE"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -30,7 +33,14 @@
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist *.tsbuildinfo"
   },
-  "keywords": ["ion-drive", "plugin", "redis", "cache", "message-bus", "streams"],
+  "keywords": [
+    "ion-drive",
+    "plugin",
+    "redis",
+    "cache",
+    "message-bus",
+    "streams"
+  ],
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
     "ioredis": "^5.4.0"

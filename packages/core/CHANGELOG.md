@@ -1,5 +1,81 @@
 # @ion-drive/core
 
+## 0.6.0
+
+### Minor Changes
+
+- cc5af94: Env-var admin bootstrap (issue #26). Set `ION_ADMIN_EMAIL` +
+  `ION_ADMIN_PASSWORD` (or `ION_ADMIN_PASSWORD_FILE`, whose contents are read
+  and trimmed — for secret mounts) and a fresh database gets its admin account
+  created **at boot**, through the normal Better Auth signup path (same hashing,
+  same password policy — a too-weak password fails the boot with a clear error;
+  the value is never logged), with the admin role granted exactly like
+  first-signup does today. The bootstrap runs before the server listens, so no
+  external request can race the zero-users check.
+
+  While the variables are set, `ION_DISABLE_SIGNUP` **defaults to `true`**: the
+  server comes up locked with a working admin in one step (an explicit
+  `ION_DISABLE_SIGNUP=false` keeps signup open). On a database that already has
+  credentialed users the variables are ignored with a single info line, so they
+  are safe to leave set permanently. Without the variables, first-signup-wins is
+  unchanged. Partial configuration (email without a password source, both
+  password sources, unreadable/empty password file) refuses to boot with a
+  message naming the variable.
+
+- d1cf26e: Bearer-token session verification (issue #24): Better Auth's `bearer` plugin
+  is now always mounted, so the `token` returned by sign-in endpoints (including
+  `POST /api/auth/sign-in/anonymous`) verifies via `Authorization: Bearer
+<token>` — on `/api/auth/*` and on Ion Drive's own session resolution
+  (`request.auth`, `GET /api/v1/me`). Bearer-presented sessions resolve the same
+  identity and roles as cookie sessions, letting a third-party server (e.g. a
+  Cloudflare Worker) verify a browser-held session it cannot read the HttpOnly
+  cookie of. API keys are unaffected: `Bearer iond_…` is still routed to the
+  API-key path by prefix.
+- 2cc7d16: Strict boolean env-var parsing (issue #25). Every `ION_*` boolean flag now goes
+  through one shared `envBool` schema: `true`/`1`/`yes`/`on` enable,
+  `false`/`0`/`no`/`off` (or an empty value) disable, case-insensitive and
+  trimmed. Any other value refuses to boot with an error naming the variable and
+  the accepted spellings. Unset variables keep their existing defaults. The
+  parser is exported (`envBool`, `parseEnvBool`) for plugin authors, and the
+  first-party Redis (`ION_REDIS_BUS`) and S3 (`ION_S3_FORCE_PATH_STYLE`) plugins
+  now reject unrecognised spellings the same way.
+
+  **Behavior change — check your deployments.** `ION_OTEL_ENABLED`,
+  `ION_OTEL_LOGS_ENABLED`, and `ION_OTEL_METRICS_ENABLED` previously used
+  `z.coerce.boolean`, which treats **every non-empty string as true**: a
+  deployment that set `ION_OTEL_ENABLED=false` was actually running with
+  telemetry export **enabled** (and spamming `ECONNREFUSED` without a local
+  collector). With this release such values now mean what they say, so those
+  deployments will see telemetry genuinely switch off. Deployments that set any
+  boolean flag to an unrecognised value (e.g. `ION_TASKS_ENABLED=enabled`) will
+  now fail to boot with a clear message instead of silently misreading the flag —
+  fix the value or unset the variable. `ION_S3_FORCE_PATH_STYLE` set to an empty
+  string now means `false` (previously it fell back to the endpoint-derived
+  default); unset is unchanged.
+
+### Patch Changes
+
+- 500dcf1: QA follow-ups from the Gravity Well dogfood sprint (issue #23):
+
+  - GraphQL CRUD resolvers now surface `DataServiceError`s as typed GraphQL
+    errors (`extensions.code` + the service's message and `field`) instead of a
+    masked INTERNAL_SERVER_ERROR — e.g. upsert's `INVALID_CONFLICT_TARGET` and
+    translated 409 `unique_violation`s.
+  - Re-applying a `uniqueTogether` group whose physical `ion_uq_*` constraint
+    exists but was lost from metadata (drift) now returns a 409
+    `already_exists` naming the constraint, instead of a raw Postgres 42P07 500.
+  - `$inc`/`$dec` aimed at system columns (`id`, `created_*`, `updated_*`) or
+    unknown columns is now a 400 `INVALID_ATOMIC_OP` instead of a silent no-op.
+  - `PATCH /api/v1/roles/:id` with a permissions-only body no longer wipes the
+    role's description (partial-update semantics; explicit `null` still clears).
+  - The intentionally-corrupt sigstore fixtures are marked `-text` in
+    `.gitattributes` so EOL normalization can never invalidate their byte-exact
+    SHA256 assertions.
+  - Docs: `-g`/`--globoff` note for curl's bracket globbing (querying + REST),
+    the node-SDK no-cookie-jar caveat, and the row-policy `contains` planting
+    consequence (plus a code comment on why the reassignment guard excludes
+    `contains`).
+
 ## 0.5.0
 
 ### Minor Changes
