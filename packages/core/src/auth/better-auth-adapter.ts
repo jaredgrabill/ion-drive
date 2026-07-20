@@ -9,6 +9,11 @@
  * HTTP endpoints are mounted at `/api/auth/*` inside an encapsulated Fastify
  * scope, where we disable JSON body parsing so Better Auth's handler can read
  * the raw request stream.
+ *
+ * The `bearer` plugin is always mounted (issue #24), so the session token a
+ * sign-in returns verifies via `Authorization: Bearer <token>` — on the
+ * `/api/auth/*` endpoints and on `getSession()` (which powers `request.auth`
+ * and `/api/v1/me`) alike.
  */
 
 import type { IncomingHttpHeaders } from 'node:http';
@@ -17,6 +22,7 @@ import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { getMigrations } from 'better-auth/db/migration';
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node';
 import { anonymous } from 'better-auth/plugins/anonymous';
+import { bearer } from 'better-auth/plugins/bearer';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { AuthProvider, ProviderSession } from './types.js';
@@ -90,25 +96,41 @@ function createAuthInstance(options: BetterAuthProviderOptions, basePath: string
     basePath,
     emailAndPassword: { enabled: true, autoSignIn: true },
     trustedOrigins: options.trustedOrigins,
-    // Anonymous (guest) sign-in — config-gated (ION_ANONYMOUS_AUTH). The
-    // plugin adds `POST /sign-in/anonymous`, an `isAnonymous` column on the
-    // user table (created by the same boot migration runner as every other
-    // Better Auth table), and an after-hook that fires `onLinkAccount` when an
-    // anonymous session authenticates with a real credential — after which the
-    // plugin deletes the anonymous user (its data has been migrated by then).
-    plugins: anonymousOptions
-      ? [
-          anonymous({
-            emailDomainName: anonymousOptions.emailDomainName,
-            onLinkAccount: async ({ anonymousUser, newUser }) => {
-              await anonymousOptions.onLinkAccount?.({
-                anonymousUserId: anonymousUser.user.id,
-                newUserId: newUser.user.id,
-              });
-            },
-          }),
-        ]
-      : [],
+    plugins: [
+      // Bearer sessions (issue #24) — always mounted. The `token` that sign-in
+      // endpoints return in their JSON body verifies as `Authorization:
+      // Bearer <token>`: the plugin's before-hook rewrites a verified bearer
+      // header into the session cookie for the rest of the pipeline, so both
+      // `/api/auth/*` and our server-side `getSession()` (hence
+      // `request.auth` and `/api/v1/me`) resolve bearer-presented sessions
+      // identically to cookie ones. This lets a third-party server (e.g. a
+      // game's own backend) verify a browser-held session whose HttpOnly
+      // cookie the browser JS cannot read. Ion Drive API keys stay
+      // unambiguous alongside this: the session middleware routes
+      // `Bearer iond_…` to the API-key path by prefix before the provider
+      // ever sees the header.
+      bearer(),
+      // Anonymous (guest) sign-in — config-gated (ION_ANONYMOUS_AUTH). The
+      // plugin adds `POST /sign-in/anonymous`, an `isAnonymous` column on the
+      // user table (created by the same boot migration runner as every other
+      // Better Auth table), and an after-hook that fires `onLinkAccount` when
+      // an anonymous session authenticates with a real credential — after
+      // which the plugin deletes the anonymous user (its data has been
+      // migrated by then).
+      ...(anonymousOptions
+        ? [
+            anonymous({
+              emailDomainName: anonymousOptions.emailDomainName,
+              onLinkAccount: async ({ anonymousUser, newUser }) => {
+                await anonymousOptions.onLinkAccount?.({
+                  anonymousUserId: anonymousUser.user.id,
+                  newUserId: newUser.user.id,
+                });
+              },
+            }),
+          ]
+        : []),
+    ],
     hooks: {
       // Signup lockout (ION_DISABLE_SIGNUP) is enforced **inside Better Auth's
       // own router** (audit V5): `ctx.path` is the endpoint better-call already
