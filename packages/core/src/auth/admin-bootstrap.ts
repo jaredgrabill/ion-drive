@@ -165,8 +165,10 @@ export async function bootstrapAdminFromEnv(
   // The signup path's user-created hook already ran grantAdminIfFirstUser
   // (this was the only user, so it won). The explicit assign is an idempotent
   // backstop for the edge where the durable bootstrap marker predates a wiped
-  // user table — without it the recreated admin would hold no role while
-  // signup stays locked.
+  // user table: grantAdminIfFirstUser sees the marker and declines, and
+  // createUser itself is exempt from the public signup lockout for exactly
+  // this reason (administrative pre-listen creation — see the adapter), so
+  // the recreated admin lands here and must be granted explicitly.
   const adminRole = await roleManager.getByName('admin');
   if (adminRole) {
     await roleManager.assign(userId, adminRole.id);

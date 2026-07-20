@@ -35,7 +35,12 @@ step. An explicit `ION_DISABLE_SIGNUP=false` keeps signup open if that is
 really what you want. On a database that already has users the variables are
 ignored (one info line), so they are safe to leave set permanently — and a
 guest-only database (only `isAnonymous` users) still counts as fresh, since
-nobody credentialed can get in otherwise. Setting only one half of the pair
+nobody credentialed can get in otherwise. The bootstrap's account creation is
+an **administrative** operation, exempt from the public signup lockout: even
+if every user row is later wiped while the durable "bootstrap completed"
+marker remains (which keeps *public* signup permanently closed), a reboot
+with the variables set re-creates and re-grants the admin instead of locking
+you out. Setting only one half of the pair
 (email without a password source, or vice versa) is a boot error rather than a
 silent fallback.
 

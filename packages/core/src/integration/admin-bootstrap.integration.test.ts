@@ -177,6 +177,50 @@ describe('A — fresh DB with ION_ADMIN_EMAIL/ION_ADMIN_PASSWORD', () => {
     });
     expect(res.status).toBe(200);
   }, 120_000);
+
+  it('re-creates the admin after a user-table wipe, despite the durable signup-lock marker', async () => {
+    if (!app) throw new Error('Server not booted');
+    // Simulate an operator wiping the auth tables AFTER bootstrap completed:
+    // the durable `bootstrap.completed` marker in _ion_config survives (it is
+    // what keeps PUBLIC signup permanently closed — audit V4). A reboot with
+    // the ION_ADMIN_* vars must not crash into that lock: the bootstrap's
+    // account creation is administrative and exempt from it.
+    await app.close();
+    const wipe = new pg.Client({ connectionString: scratchUrl(SCRATCH) });
+    await wipe.connect();
+    await wipe.query('DELETE FROM "_ion_user_roles"');
+    await wipe.query('DELETE FROM "session"');
+    await wipe.query('DELETE FROM "account"');
+    await wipe.query('DELETE FROM "user"');
+    await wipe.end();
+
+    app = await createServer({
+      ...baseOverrides(scratchUrl(SCRATCH)),
+      adminEmail: BOOTSTRAP_EMAIL,
+      adminPassword: BOOTSTRAP_PASSWORD,
+    });
+
+    // The admin is back, with the admin role granted (via the backstop —
+    // grantAdminIfFirstUser declines because the marker exists).
+    expect(await userCount(app)).toBe(1);
+    const adminRole = await app.roleManager.getByName('admin');
+    const holders = await app.roleManager.getUsersForRole((adminRole as { id: string }).id);
+    expect(holders).toHaveLength(1);
+    const signin = await request(app, 'POST', '/api/auth/sign-in/email', {
+      email: BOOTSTRAP_EMAIL,
+      password: BOOTSTRAP_PASSWORD,
+    });
+    expect(signin.status).toBe(200);
+
+    // PUBLIC signup on the very same booted server is still locked — the
+    // administrative exemption did not weaken the public lockout.
+    const signup = await request(app, 'POST', '/api/auth/sign-up/email', {
+      email: 'wiper@ion.test',
+      password: 'wiper-Passw0rd',
+    });
+    expect(signup.status).toBe(403);
+    expect(await userCount(app)).toBe(1);
+  }, 120_000);
 });
 
 describe('B — fresh DB without the vars (first-signup-wins unchanged)', () => {
