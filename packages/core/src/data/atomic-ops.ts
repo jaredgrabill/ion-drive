@@ -52,6 +52,53 @@ function hasOperatorKeys(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Rejects atomic operators aimed at columns `sanitizeInput` would silently
+ * drop (issue #23): system/primary columns (`id`, `created_at`, `created_by`,
+ * `updated_at`, `updated_by`) and unknown fields. Runs against the **raw**
+ * update body, before sanitization erases the evidence.
+ *
+ * Plain values on those keys keep the data layer's lenient drop-unknowns
+ * contract — but an explicit `{ "$inc": n }` is a statement of intent, and
+ * silently no-opping it turns a typo'd counter bump into a 200 that updated
+ * nothing. `json` columns stay exempt for the same reason as in
+ * {@link splitAtomicOperations}: an object value there is data — but a system
+ * or unknown key can never be a writable json column, so the check holds.
+ *
+ * `keepPrimary` mirrors the sanitizer's upsert mode: a kept primary key is
+ * writable there, and a `$inc` on it then fails the numeric-column rule in
+ * {@link splitAtomicOperations} instead.
+ */
+export function assertOperatorTargetsWritable(
+  fields: FieldDefinition[],
+  rawData: Record<string, unknown>,
+  options: { keepPrimary?: boolean } = {},
+): void {
+  for (const [key, value] of Object.entries(rawData)) {
+    if (!hasOperatorKeys(value)) continue;
+    const field = fields.find((f) => f.name === key || f.columnName === key);
+    if (!field) {
+      throw new DataServiceError(
+        `Cannot apply atomic operators to unknown field "${key}"`,
+        'INVALID_ATOMIC_OP',
+        400,
+        key,
+      );
+    }
+    const writable =
+      (!field.isSystem && !field.isPrimary) ||
+      (options.keepPrimary === true && field.isPrimary === true);
+    if (!writable) {
+      throw new DataServiceError(
+        `Cannot apply atomic operators to system field "${field.name}"`,
+        'INVALID_ATOMIC_OP',
+        400,
+        field.name,
+      );
+    }
+  }
+}
+
+/**
  * Splits sanitized (column-keyed) update data into plain sets and atomic
  * increments, validating operator shapes against the object's fields. Throws
  * a typed 400 {@link DataServiceError} on any malformed operator.

@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { FieldDefinition } from '../schema/types.js';
-import { splitAtomicOperations } from './atomic-ops.js';
+import { assertOperatorTargetsWritable, splitAtomicOperations } from './atomic-ops.js';
 import { DataServiceError } from './data-service.js';
 
 const fields: FieldDefinition[] = [
@@ -82,5 +82,91 @@ describe('splitAtomicOperations', () => {
     const { sets, increments } = splitAtomicOperations(fields, { name: { nested: true } });
     expect(increments).toEqual({});
     expect(sets).toEqual({ name: { nested: true } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operator targets that sanitization would silently drop (issue #23)
+// ---------------------------------------------------------------------------
+
+const fieldsWithSystem: FieldDefinition[] = [
+  ...fields,
+  {
+    name: 'id',
+    displayName: 'ID',
+    columnName: 'id',
+    columnType: 'uuid',
+    isPrimary: true,
+    isSystem: true,
+  },
+  {
+    name: 'created_at',
+    displayName: 'Created At',
+    columnName: 'created_at',
+    columnType: 'datetime',
+    isSystem: true,
+  },
+  {
+    name: 'updated_by',
+    displayName: 'Updated By',
+    columnName: 'updated_by',
+    columnType: 'text',
+    isSystem: true,
+  },
+];
+
+describe('assertOperatorTargetsWritable', () => {
+  function targetFailure(
+    data: Record<string, unknown>,
+    options: { keepPrimary?: boolean } = {},
+  ): DataServiceError {
+    try {
+      assertOperatorTargetsWritable(fieldsWithSystem, data, options);
+    } catch (err) {
+      if (err instanceof DataServiceError) return err;
+      throw err;
+    }
+    throw new Error('expected assertOperatorTargetsWritable to throw');
+  }
+
+  it('rejects $inc on unknown fields with a 400 naming the field', () => {
+    const err = targetFailure({ winz: { $inc: 1 } });
+    expect(err.statusCode).toBe(400);
+    expect(err.code).toBe('INVALID_ATOMIC_OP');
+    expect(err.message).toContain('unknown field "winz"');
+  });
+
+  it.each(['id', 'created_at', 'updated_by'])('rejects $inc on system field %s', (name) => {
+    const err = targetFailure({ [name]: { $inc: 1 } });
+    expect(err.statusCode).toBe(400);
+    expect(err.code).toBe('INVALID_ATOMIC_OP');
+    expect(err.message).toContain(`system field "${name}"`);
+  });
+
+  it('lets writable fields through — the operator shape is validated later', () => {
+    expect(() =>
+      assertOperatorTargetsWritable(fieldsWithSystem, { wins: { $inc: 1 }, name: 'Ada' }),
+    ).not.toThrow();
+  });
+
+  it('treats operator-shaped json values as data, like the splitter does', () => {
+    expect(() =>
+      assertOperatorTargetsWritable(fieldsWithSystem, { meta: { $inc: 1 } }),
+    ).not.toThrow();
+  });
+
+  it('ignores plain (non-operator) values on system and unknown keys', () => {
+    // The lenient drop-unknowns contract is unchanged for plain values.
+    expect(() =>
+      assertOperatorTargetsWritable(fieldsWithSystem, { id: 'abc', ghost: 1 }),
+    ).not.toThrow();
+  });
+
+  it('allows a kept primary key in upsert mode (numeric rule rejects it later)', () => {
+    expect(() =>
+      assertOperatorTargetsWritable(fieldsWithSystem, { id: { $inc: 1 } }, { keepPrimary: true }),
+    ).not.toThrow();
+    // Without keepPrimary the same body is a hard 400.
+    expect(targetFailure({ id: { $inc: 1 } }).code).toBe('INVALID_ATOMIC_OP');
   });
 });
