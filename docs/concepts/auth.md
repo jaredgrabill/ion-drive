@@ -50,6 +50,12 @@ const { user } = await ion.auth.signInAnonymously();
 // The session cookie now authenticates subsequent requests.
 ```
 
+> **Node caveat:** the zero-dependency client has **no cookie jar** — in the
+> browser the browser itself stores the session cookie, but in pure Node
+> nothing does. Node consumers must forward the session credential manually:
+> capture the sign-in response's returned `token` (or its `set-cookie` value)
+> and send it on subsequent requests themselves.
+
 `GET /api/v1/me` reports `user.isAnonymous` so apps (and the admin console)
 can tell guests from registered users.
 

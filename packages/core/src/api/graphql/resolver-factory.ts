@@ -10,8 +10,38 @@ import { GraphQLError, type GraphQLFieldResolver } from 'graphql';
 import type { PermissionEngine } from '../../auth/rbac/permission-engine.js';
 import type { AuthPrincipal } from '../../auth/types.js';
 import { ActionError, type ActionExecutor } from '../../blocks/action-executor.js';
-import type { DataService } from '../../data/data-service.js';
+import { type DataService, DataServiceError } from '../../data/data-service.js';
 import type { FilterCondition, SortOption } from '../../data/types.js';
+
+/**
+ * Wraps a resolver so {@link DataServiceError}s surface as *typed* GraphQL
+ * errors — `extensions.code` carries the platform error code (e.g.
+ * `INVALID_CONFLICT_TARGET`, `unique_violation`) and the message is the
+ * service's own, with the offending `field` attached when known. Without this,
+ * yoga's error masking hides them behind an opaque INTERNAL_SERVER_ERROR —
+ * a parity gap against REST, whose routes render the same errors as 4xx
+ * envelopes. Anything that is not a DataServiceError still masks (a genuine
+ * server fault should stay opaque).
+ */
+function withDataErrors<TArgs>(
+  resolver: GraphQLFieldResolver<unknown, unknown, TArgs>,
+): GraphQLFieldResolver<unknown, unknown, TArgs> {
+  return async (source, args, context, info) => {
+    try {
+      return await resolver(source, args, context, info);
+    } catch (err) {
+      if (err instanceof DataServiceError) {
+        throw new GraphQLError(err.message, {
+          extensions: {
+            code: err.code,
+            ...(err.field !== undefined ? { field: err.field } : {}),
+          },
+        });
+      }
+      throw err;
+    }
+  };
+}
 
 /**
  * Anonymous-access guard for generated resolvers (issue #8). Present only when
@@ -90,7 +120,7 @@ export function makeListResolver(
   objectName: string,
   guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, ListArgs> {
-  return async (_source, args, context) => {
+  return withDataErrors(async (_source, args, context) => {
     await assertAnonymousCanRead(guard, context, objectName);
     return dataService.list(objectName, {
       filters: args.filter,
@@ -103,7 +133,7 @@ export function makeListResolver(
         offset: args.offset,
       },
     });
-  };
+  });
 }
 
 /** Arguments accepted by a generated aggregate query (issue #13). */
@@ -125,13 +155,13 @@ export function makeAggregateResolver(
   objectName: string,
   guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, AggregateArgs> {
-  return async (_source, args, context) => {
+  return withDataErrors(async (_source, args, context) => {
     await assertAnonymousCanRead(guard, context, objectName);
     return dataService.aggregate(objectName, args.fn, args.field ?? undefined, {
       filters: args.filter,
       search: args.search,
     });
-  };
+  });
 }
 
 /**
@@ -142,11 +172,11 @@ export function makeGetResolver(
   objectName: string,
   guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, IdArg> {
-  return async (_source, args, context) => {
+  return withDataErrors(async (_source, args, context) => {
     await assertAnonymousCanRead(guard, context, objectName);
     const result = await dataService.getById(objectName, args.id);
     return result?.data ?? null;
-  };
+  });
 }
 
 export function makeCreateResolver(
@@ -154,11 +184,11 @@ export function makeCreateResolver(
   objectName: string,
   guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, CreateArgs> {
-  return async (_source, args, context) => {
+  return withDataErrors(async (_source, args, context) => {
     assertNotAnonymous(guard, context);
     const result = await dataService.create(objectName, args.input);
     return result.data;
-  };
+  });
 }
 
 /**
@@ -173,7 +203,7 @@ export function makeUpdateResolver(
   objectName: string,
   guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, UpdateArgs> {
-  return async (_source, args, context) => {
+  return withDataErrors(async (_source, args, context) => {
     assertNotAnonymous(guard, context);
     const data: Record<string, unknown> = { ...(args.input ?? {}) };
     for (const [field, amount] of Object.entries(args.increment ?? {})) {
@@ -190,7 +220,7 @@ export function makeUpdateResolver(
     }
     const result = await dataService.update(objectName, args.id, data);
     return result?.data ?? null;
-  };
+  });
 }
 
 /**
@@ -204,10 +234,10 @@ export function makeUpsertResolver(
   objectName: string,
   guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, UpsertArgs> {
-  return async (_source, args, context) => {
+  return withDataErrors(async (_source, args, context) => {
     assertNotAnonymous(guard, context);
     return dataService.upsert(objectName, args.input, args.onConflict);
-  };
+  });
 }
 
 export function makeDeleteResolver(
@@ -215,10 +245,10 @@ export function makeDeleteResolver(
   objectName: string,
   guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, IdArg> {
-  return async (_source, args, context) => {
+  return withDataErrors(async (_source, args, context) => {
     assertNotAnonymous(guard, context);
     return dataService.delete(objectName, args.id);
-  };
+  });
 }
 
 interface LinkArgs {
@@ -285,10 +315,10 @@ export function makeLinkResolver(
   mode: 'link' | 'unlink',
   guard?: AnonReadGuard,
 ): GraphQLFieldResolver<unknown, unknown, LinkArgs> {
-  return async (_source, args, context) => {
+  return withDataErrors(async (_source, args, context) => {
     assertNotAnonymous(guard, context);
     return mode === 'link'
       ? (await dataService.addLinks(objectName, args.id, relKey, args.ids)).added
       : (await dataService.removeLinks(objectName, args.id, relKey, args.ids)).removed;
-  };
+  });
 }

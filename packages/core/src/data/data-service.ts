@@ -60,7 +60,7 @@ import {
   type RelationshipDefinition,
 } from '../schema/types.js';
 import { matchesUniqueTogether } from '../schema/unique-together.js';
-import { splitAtomicOperations } from './atomic-ops.js';
+import { assertOperatorTargetsWritable, splitAtomicOperations } from './atomic-ops.js';
 import { DataServiceError, translatePgError } from './errors.js';
 import { type RelationKey, findRelationKey, listRelationKeys } from './relation-keys.js';
 import {
@@ -559,6 +559,9 @@ export class DataService {
     data: Record<string, unknown>,
   ): Promise<SingleResult | null> {
     const tableName = this.resolveTable(objectName);
+    // Operators aimed at system/unknown columns are a 400, not a silent no-op
+    // (issue #23) — checked on the raw body, before sanitization drops them.
+    assertOperatorTargetsWritable(this.registry.getFields(objectName), data);
     const cleanData = this.sanitizeInput(objectName, data);
     const { sets, increments } = splitAtomicOperations(
       this.registry.getFields(objectName),

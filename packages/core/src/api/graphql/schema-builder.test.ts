@@ -1,6 +1,6 @@
-import { graphql, printSchema } from 'graphql';
+import { GraphQLError, graphql, printSchema } from 'graphql';
 import { describe, expect, it, vi } from 'vitest';
-import type { DataService } from '../../data/data-service.js';
+import { type DataService, DataServiceError } from '../../data/data-service.js';
 import { SchemaRegistry } from '../../schema/schema-registry.js';
 import type { DataObjectDefinition, RelationshipDefinition } from '../../schema/types.js';
 import { RelationLoader } from './relation-loader.js';
@@ -465,5 +465,79 @@ describe('increments and upsert (issue #9)', () => {
       upsert_contacts: { created: true, data: { full_name: 'Ada' } },
     });
     expect(upsert).toHaveBeenCalledWith('contacts', { full_name: 'Ada' }, ['email']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DataServiceError → typed GraphQL errors (issue #23)
+// ---------------------------------------------------------------------------
+
+describe('DataServiceError mapping (issue #23)', () => {
+  it('surfaces upsert INVALID_CONFLICT_TARGET as a typed GraphQL error', async () => {
+    const dataService = {
+      upsert: vi.fn(async () => {
+        throw new DataServiceError(
+          'Upsert conflict target [age] must be the primary key, a unique field, or a uniqueTogether group',
+          'INVALID_CONFLICT_TARGET',
+          400,
+        );
+      }),
+    } as unknown as DataService;
+    const schema = buildGraphQLSchema(registryWithContacts(), dataService);
+
+    const result = await graphql({
+      schema,
+      source:
+        'mutation { upsert_contacts(input: { full_name: "Ada" }, onConflict: ["age"]) { created } }',
+    });
+
+    expect(result.data).toBeNull();
+    const error = result.errors?.[0];
+    expect(error?.extensions?.code).toBe('INVALID_CONFLICT_TARGET');
+    expect(error?.message).toContain('conflict target');
+    // A real GraphQLError with extensions — yoga's masking will let it through
+    // instead of collapsing it to INTERNAL_SERVER_ERROR.
+    expect(error).toBeInstanceOf(GraphQLError);
+  });
+
+  it('surfaces a translated unique violation (409) with its code and field', async () => {
+    const dataService = {
+      create: vi.fn(async () => {
+        throw new DataServiceError(
+          'A record with this email_address already exists',
+          'unique_violation',
+          409,
+          'email_address',
+        );
+      }),
+    } as unknown as DataService;
+    const schema = buildGraphQLSchema(registryWithContacts(), dataService);
+
+    const result = await graphql({
+      schema,
+      source: 'mutation { create_contacts(input: { full_name: "Ada" }) { id } }',
+    });
+
+    const error = result.errors?.[0];
+    expect(error?.extensions?.code).toBe('unique_violation');
+    expect(error?.extensions?.field).toBe('email_address');
+    expect(error?.message).toBe('A record with this email_address already exists');
+  });
+
+  it('leaves non-DataServiceErrors untouched (they still mask as unexpected)', async () => {
+    const dataService = {
+      getById: vi.fn(async () => {
+        throw new Error('connection reset');
+      }),
+    } as unknown as DataService;
+    const schema = buildGraphQLSchema(registryWithContacts(), dataService);
+
+    const result = await graphql({
+      schema,
+      source: '{ contacts_by_id(id: "1") { id } }',
+    });
+
+    // graphql-js wraps it, but no platform code is attached — yoga will mask.
+    expect(result.errors?.[0]?.extensions?.code).toBeUndefined();
   });
 });

@@ -79,10 +79,13 @@ function fieldFromConstraint(
  * | 23503 foreign key   | 409  | `foreign_key_violation` |
  * | 23502 not null      | 400  | `not_null_violation`    |
  * | 22P02/22007/22008   | 400  | `invalid_value`         |
+ * | 42P07 duplicate     | 409  | `already_exists`        |
  *
  * Anything else — including errors that are not Postgres errors — is returned
  * unchanged. Messages are rebuilt from the parsed column so internal
- * constraint names never surface (Postgres puts them in `message`).
+ * constraint names never surface (Postgres puts them in `message`) — except
+ * for 42P07, a schema-management error whose whole point is naming the
+ * already-existing constraint/index so the drift can be diagnosed.
  */
 export function translatePgError(err: unknown): unknown {
   if (err instanceof DataServiceError) return err;
@@ -92,6 +95,7 @@ export function translatePgError(err: unknown): unknown {
   if (pgErr.code === '23505') return uniqueViolation(pgErr);
   if (pgErr.code === '23503') return foreignKeyViolation(pgErr);
   if (pgErr.code === '23502') return notNullViolation(pgErr);
+  if (pgErr.code === '42P07') return duplicateRelation(pgErr);
   if (INVALID_VALUE_CODES.has(pgErr.code)) return invalidValue(pgErr);
   return err;
 }
@@ -138,6 +142,24 @@ function notNullViolation(pgErr: PgErrorLike): DataServiceError {
     'not_null_violation',
     400,
     field,
+  );
+}
+
+/**
+ * 42P07 duplicate relation → 409 `already_exists` (issue #23). Raised when DDL
+ * tries to create a relation that already physically exists — in practice,
+ * re-applying a `uniqueTogether` group whose `ion_uq_*` backing index survived
+ * a metadata loss (drift). The message names the constraint so the caller can
+ * diagnose the drift (schema doctor / snapshot) instead of staring at a 500.
+ */
+function duplicateRelation(pgErr: PgErrorLike): DataServiceError {
+  const name = pgErr.message?.match(/relation "([^"]+)" already exists/)?.[1];
+  return new DataServiceError(
+    name
+      ? `A constraint or index named "${name}" already exists on this table — the database and the schema metadata have likely drifted (see the schema doctor)`
+      : 'A constraint or index with this name already exists on this table',
+    'already_exists',
+    409,
   );
 }
 

@@ -141,6 +141,34 @@ describe('translatePgError', () => {
     });
   });
 
+  describe('42P07 duplicate relation (issue #23)', () => {
+    it('maps to 409 already_exists naming the constraint (drift diagnosis)', () => {
+      const result = translatePgError(
+        pgError({
+          code: '42P07',
+          message: 'relation "ion_uq_matches_room_code_seed" already exists',
+        }),
+      ) as DataServiceError;
+
+      expect(result).toBeInstanceOf(DataServiceError);
+      expect(result.statusCode).toBe(409);
+      expect(result.code).toBe('already_exists');
+      // Deliberately names the constraint — the caller needs it to diagnose
+      // metadata drift (unlike data-write errors, where names must not leak).
+      expect(result.message).toContain('ion_uq_matches_room_code_seed');
+      expect(result.message).toContain('drift');
+    });
+
+    it('still maps cleanly when the message shape is unrecognized', () => {
+      const result = translatePgError(
+        pgError({ code: '42P07', message: 'weird driver message' }),
+      ) as DataServiceError;
+
+      expect(result.statusCode).toBe(409);
+      expect(result.code).toBe('already_exists');
+    });
+  });
+
   describe('pass-through', () => {
     it('leaves unrelated SQLSTATEs untouched', () => {
       const original = pgError({ code: '42P01', message: 'relation does not exist' });

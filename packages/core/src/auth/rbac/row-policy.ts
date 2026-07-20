@@ -110,6 +110,19 @@ export interface CompiledRowCondition {
   column: string;
   /** The object's declared column type (drives the `contains` SQL flavor). */
   columnType: string;
+  /**
+   * How the column is matched against the actor id. Write-side guarding
+   * differs deliberately between the two (issue #23):
+   * `DataService.assertNoPolicyReassignment` blocks setting an `equals`
+   * column to a foreign id (that would hand the row to — or plant it on —
+   * another principal, and the single-id column has no other legitimate use),
+   * but it intentionally **excludes `contains`**: writing other principals'
+   * ids into a membership array is that column's legitimate collaborative use
+   * (e.g. a server stamping every participant of a match). The flip side —
+   * on a *client-writable* array column any writer can include your id and
+   * plant rows into your view (spam, not exfiltration) — is documented in
+   * docs/concepts/row-policies.md; keep `contains` columns server-written.
+   */
   op: 'equals' | 'contains';
   /** The acting principal's id the column is matched against. */
   value: string;
