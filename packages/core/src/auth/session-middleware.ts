@@ -4,7 +4,15 @@
  * Installed directly on the root Fastify instance (not as an encapsulated
  * plugin) so the `onRequest` hook and the `request.auth` decorator apply to all
  * routes. Authentication is attempted API-key-first (Authorization: Bearer
- * iond_… or X-API-Key), then falls back to a provider session cookie.
+ * iond_… or X-API-Key), then falls back to a provider session — a cookie, or
+ * a session token presented as `Authorization: Bearer <token>` via the
+ * provider's bearer support (issue #24).
+ *
+ * Precedence over the shared `Authorization: Bearer` header is decided by the
+ * `iond_` prefix alone: prefixed values are API keys and never reach the
+ * provider as session tokens (an invalid one falls through to `getSession`,
+ * where it matches no session and the request stays anonymous); unprefixed
+ * values are left for the provider to verify.
  *
  * This layer only *identifies* the caller; enforcement lives in the RBAC
  * middleware, which reads `request.auth`.

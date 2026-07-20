@@ -2,11 +2,13 @@
 
 Ion Drive's default auth is [Better Auth](https://better-auth.com) behind a
 pluggable provider interface: cookie sessions via `/api/auth/*`
-(email/password), role-bound API keys (`X-API-Key: iond_…`), and RBAC roles
-with per-resource permission grants. The **first user to sign up becomes
-admin**; further users get no roles until an admin grants them. This page
-covers the one auth flow that is a product feature in its own right:
-**anonymous (guest) sign-in with an upgrade path to a real account**.
+(email/password), bearer session tokens (`Authorization: Bearer <token>` —
+see [Verifying sessions from your own server](#verifying-sessions-from-your-own-server)),
+role-bound API keys (`X-API-Key: iond_…`), and RBAC roles with per-resource
+permission grants. The **first user to sign up becomes admin**; further users
+get no roles until an admin grants them. This page covers the one auth flow
+that is a product feature in its own right: **anonymous (guest) sign-in with
+an upgrade path to a real account**.
 
 ## Why anonymous auth
 
@@ -69,6 +71,57 @@ guest read and write only the score rows they created.
 
 Guests are excluded from the first-admin bootstrap: a guest arriving before
 your first real sign-up neither becomes admin nor closes the bootstrap window.
+
+## Verifying sessions from your own server
+
+Sessions are normally carried by a **signed HttpOnly cookie** — which browser
+JavaScript deliberately cannot read. That's a problem the moment a service
+*other than the browser* needs to verify a user's session: a game client signs
+in anonymously in the browser, sends a hello to its own backend (say, a
+Cloudflare Worker running the game's room server), and that backend must
+confirm the identity before trusting the user id.
+
+For exactly this, every sign-in response also returns the session token in its
+JSON body (`{ token, user }`), and the server accepts that token as a
+**bearer credential** — on `/api/auth/*` and on every Ion Drive API,
+including `GET /api/v1/me`:
+
+```ts
+// Browser: sign in and hand the token to your own backend.
+const res = await fetch(`${ION_URL}/api/auth/sign-in/anonymous`, { method: 'POST' });
+const { token, user } = await res.json();
+socket.send(JSON.stringify({ type: 'hello', token }));
+```
+
+```ts
+// Your backend (e.g. a Cloudflare Worker): verify it server-side.
+const me = await fetch(`${ION_URL}/api/v1/me`, {
+  headers: { authorization: `Bearer ${token}` },
+}).then((r) => r.json());
+if (me.authenticated) {
+  // me.userId / me.roles are exactly what the cookie session resolves.
+}
+```
+
+A bad or expired token is not an error — `/api/v1/me` answers
+`{ "authenticated": false }`, so treat that field as the verdict.
+
+Notes:
+
+- **API keys are unrelated and unaffected.** `Authorization: Bearer iond_…`
+  is always treated as an API key by its `iond_` prefix; session tokens never
+  carry that prefix, so the two credential kinds cannot be confused.
+- Auth responses that refresh the session also expose the current token in a
+  `set-auth-token` response header (Better Auth's bearer plugin behavior),
+  useful for non-browser clients that don't keep a cookie jar.
+- The zero-dependency `@ion-drive/client` SDK has **no cookie jar in Node** —
+  pure-Node consumers should capture the returned `token` and send it as the
+  bearer header themselves.
+- **Service-to-service URLs: prefer `127.0.0.1` over `localhost`.** Some
+  runtimes (e.g. Cloudflare's `workerd`) resolve `localhost` to IPv6 `::1`
+  while the Ion Drive server binds IPv4 — the connection then fails silently.
+  Point workers and other backends at an explicit `127.0.0.1` (or a real
+  hostname) instead.
 
 ## Upgrading a guest to a real account
 
